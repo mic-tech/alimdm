@@ -35,6 +35,7 @@ export const api = {
   createGroup: (body) => req("POST", "/groups", body),
   deleteGroup: (id) => req("DELETE", "/groups/" + id),
   moveDeviceGroup: (id, group_id) => req("POST", "/devices/" + id + "/group", { group_id }),
+  renameDevice: (id, name) => req("POST", "/devices/" + id + "/name", { name }),
   listAPKs: () => req("GET", "/apks"),
 
   // ── Own profile ──
@@ -51,6 +52,7 @@ export const api = {
   resetUserPassword: (email, new_password) =>
     req("POST", "/users/" + encodeURIComponent(email) + "/password", { new_password }),
   installAPK: (name, body) => req("POST", `/apks/${encodeURIComponent(name)}/install`, body),
+  deleteAPK: (name) => req("DELETE", `/apks/${encodeURIComponent(name)}`),
   uploadAPK: (file, name) => {
     const tok = getToken();
     const fd = new FormData();

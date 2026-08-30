@@ -329,6 +329,16 @@ function Devices({ onErr }) {
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
+  // Commit a label edit. Skips the round-trip when nothing changed so that
+  // simply tabbing through the field does not spam the API on every 10s reload.
+  async function renameDevice(id, name, previous) {
+    const next = name.trim().slice(0, 64);
+    if (next === (previous || "")) return;
+    setBusy(true);
+    try { await api.renameDevice(id, next); toast(next ? `Renamed ${id} to "${next}"` : `Cleared label on ${id}`); load(); }
+    catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
 
   const filtered = useMemo(() => {
     if (!devices) return [];
@@ -394,7 +404,17 @@ function Devices({ onErr }) {
             {filtered.map((d) => (
               <tr key={d.id}>
                 <td className="nowrap">
-                  <div className="mono strong">{d.id}</div>
+                  <input
+                    defaultValue={d.name || ""}
+                    placeholder="Add a label…"
+                    maxLength={64}
+                    disabled={busy}
+                    title="Shown in the corner of this tablet's kiosk screen"
+                    style={{ width: 180, height: 28, marginBottom: 4 }}
+                    onBlur={(e) => renameDevice(d.id, e.target.value, d.name)}
+                    onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                  />
+                  <div className="mono small subtle">{d.id}</div>
                   {d.model && <div className="small muted">{d.model}</div>}
                 </td>
                 <td>
@@ -476,6 +496,18 @@ function APKs({ onErr }) {
   function openPicker(apkName) {
     setInstallName(apkName); setInstallPkg(""); setSelected({}); setSelectAll(false);
   }
+  async function removeAPK(name) {
+    if (!confirm(`Delete ${name} from the server?\n\nTablets that already installed it keep it — this only removes the server copy and stops future installs.`)) return;
+    setBusy(true);
+    try {
+      await api.deleteAPK(name);
+      toast(`Deleted ${name}`);
+      // Close the install picker if it was targeting the APK just removed.
+      if (installName === name) setInstallName("");
+      load();
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
   function toggleDevice(id) {
     setSelected((prev) => { const n = { ...prev }; n[id] ? delete n[id] : (n[id] = true); return n; });
   }
@@ -536,6 +568,8 @@ function APKs({ onErr }) {
                         <IconPackage />Install to devices
                       </button>
                     )}
+                    <button className="btn danger-outline sm icon" title="Delete from server"
+                      disabled={busy} onClick={() => removeAPK(a.name)}><IconTrash /></button>
                   </div>
                 </td>
               </tr>

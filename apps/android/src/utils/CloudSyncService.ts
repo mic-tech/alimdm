@@ -21,6 +21,8 @@ import {
 } from './secureStorage';
 
 export const CONFIG_UPDATED_EVENT = 'ALIMDM_CONFIG_UPDATED';
+/** Fired when the operator changes this tablet's label in the console. */
+export const DEVICE_LABEL_UPDATED_EVENT = 'ALIMDM_DEVICE_LABEL_UPDATED';
 export const FORCE_UNENROLL_EVENT = 'ALIMDM_FORCE_UNENROLL';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -41,6 +43,8 @@ interface HeartbeatResponse {
   sensitive_config: SensitiveConfig | null;
   config_version: number;
   force_unenroll: boolean;
+  /** Operator-set label for this tablet. Absent on servers older than this field. */
+  device_label?: string;
 }
 
 async function simpleHash(str: string): Promise<string> {
@@ -230,6 +234,18 @@ class CloudSyncServiceClass {
         DeviceEventEmitter.emit(CONFIG_UPDATED_EVENT);
       } else if (data.config_version > configVersion) {
         await StorageService.saveConfigVersion(data.config_version);
+      }
+
+      // The label is per-device, so it arrives on every heartbeat rather than in
+      // the group config. Only write + notify when it actually changed, so the
+      // kiosk screen does not re-render on every tick. `undefined` means the
+      // server predates this field — leave whatever is stored alone.
+      if (data.device_label !== undefined) {
+        const storedLabel = await StorageService.getDeviceLabel();
+        if (data.device_label !== storedLabel) {
+          await StorageService.saveDeviceLabel(data.device_label);
+          DeviceEventEmitter.emit(DEVICE_LABEL_UPDATED_EVENT);
+        }
       }
 
       // Pull + execute any pending commands / APK updates. Fire-and-forget so

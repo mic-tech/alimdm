@@ -81,6 +81,23 @@ func (s *Store) Open(name string) (*os.File, error) {
 	return os.Open(full)
 }
 
+// Delete removes an APK from the store. It applies the same traversal guards as
+// Open, so a caller may pass a user-supplied name directly.
+func (s *Store) Delete(name string) error {
+	base := sanitize(name)
+	full := filepath.Join(s.root, base)
+	absRoot, _ := filepath.Abs(s.root)
+	absFull, _ := filepath.Abs(full)
+	if !strings.HasPrefix(absFull, absRoot+string(os.PathSeparator)) {
+		return os.ErrPermission
+	}
+	// Only ever remove APKs, never anything else that happens to sit in the root.
+	if !strings.HasSuffix(base, ".apk") {
+		return os.ErrPermission
+	}
+	return os.Remove(full)
+}
+
 // List returns the base names of all .apk files in the store root. Used to
 // match a managed app's package name against an uploaded APK so the server can
 // auto-queue installs on enrollment.

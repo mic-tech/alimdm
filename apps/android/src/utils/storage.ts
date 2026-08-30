@@ -180,6 +180,9 @@ export const KEYS = {
   CONFIG_UPDATED_AT: '@cloud_config_updated_at',
   CONFIG_VERSION: '@cloud_config_version',
   LAST_SENT_CONFIG_HASH: '@cloud_last_sent_hash',
+  // Operator-set label for this specific tablet, delivered on every heartbeat.
+  // Per-device, so it lives outside the group config the cloud pushes.
+  DEVICE_LABEL: '@cloud_device_label',
   // Full raw config last received from the cloud. Used to preserve fields this app
   // version doesn't model yet, so unknown settings survive an export round-trip
   // (prevents an older app from stripping newer settings when it echoes to the cloud).
@@ -2853,6 +2856,16 @@ export const StorageService = {
     catch (error) { console.error('Error saving config version:', error); }
   },
 
+  getDeviceLabel: async (): Promise<string> => {
+    try { return (await AsyncStorage.getItem(KEYS.DEVICE_LABEL)) || ''; }
+    catch { return ''; }
+  },
+
+  saveDeviceLabel: async (label: string): Promise<void> => {
+    try { await AsyncStorage.setItem(KEYS.DEVICE_LABEL, label); }
+    catch (error) { console.error('Error saving device label:', error); }
+  },
+
   getLastSentConfigHash: async (): Promise<string | null> => {
     try { return await AsyncStorage.getItem(KEYS.LAST_SENT_CONFIG_HASH); }
     catch { return null; }
@@ -2869,6 +2882,7 @@ export const StorageService = {
         KEYS.CONFIG_UPDATED_AT,
         KEYS.CONFIG_VERSION,
         KEYS.LAST_SENT_CONFIG_HASH,
+        KEYS.DEVICE_LABEL,
       ]);
     } catch (error) { console.error('Error resetting sync metadata:', error); }
   },

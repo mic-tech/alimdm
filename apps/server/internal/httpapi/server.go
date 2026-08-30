@@ -133,10 +133,12 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("PUT /api/v1/groups/{id}", s.requireOperator(s.updateGroup))
 	mux.HandleFunc("DELETE /api/v1/groups/{id}", s.requireOperator(s.deleteGroup))
 	mux.HandleFunc("POST /api/v1/devices/{id}/group", s.requireOperator(s.moveDeviceGroup))
+	mux.HandleFunc("POST /api/v1/devices/{id}/name", s.requireOperator(s.renameDevice))
 	mux.HandleFunc("POST /api/v1/apks", s.requireOperator(s.uploadAPK))
 	mux.HandleFunc("GET /api/v1/apks", s.requireOperator(s.listAPKs))
 	// Queue a silent install of an uploaded APK to one or all devices.
 	mux.HandleFunc("POST /api/v1/apks/{name}/install", s.requireOperator(s.installAPK))
+	mux.HandleFunc("DELETE /api/v1/apks/{name}", s.requireOperator(s.deleteAPK))
 
 	// Own profile (any signed-in operator)
 	mux.HandleFunc("GET /api/v1/me", s.requireOperator(s.getMe))
@@ -409,6 +411,9 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		"sensitive_config": nil,
 		"config_version":   group.ConfigVersion,
 		"force_unenroll":   false,
+		// Per-device label shown in the corner of the tablet's kiosk screen. It
+		// rides on every heartbeat rather than in config, which is group-wide.
+		"device_label": dev.Name,
 	}
 	if needSync {
 		resp["sync_action"] = "apply"
@@ -818,6 +823,36 @@ func (s *Server) moveDeviceGroup(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"id": id, "name": dev.Name, "group_id": req.GroupID})
 }
 
+// renameDevice sets the operator-facing label shown in the console and on the
+// tablet's own kiosk screen. An empty name is allowed and clears the label, in
+// which case the device falls back to displaying nothing.
+func (s *Server) renameDevice(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Name string `json:"name"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	// Bounded so a pathological label cannot break the tablet's layout or bloat
+	// every heartbeat response.
+	if len(name) > 64 {
+		name = name[:64]
+	}
+	if _, err := s.st.GetDevice(id); err != nil {
+		http.Error(w, "unknown device", http.StatusNotFound)
+		return
+	}
+	if err := s.st.SetDeviceName(id, name); err != nil {
+		http.Error(w, "rename failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"id": id, "name": name})
+}
+
 func (s *Server) uploadAPK(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(512 << 20); err != nil {
 		http.Error(w, "bad upload", http.StatusBadRequest)
@@ -849,6 +884,29 @@ func (s *Server) listAPKs(w http.ResponseWriter, r *http.Request) {
 		apks = []store.APK{}
 	}
 	json.NewEncoder(w).Encode(apks)
+}
+
+// deleteAPK removes an uploaded APK from both the catalogue and disk. Devices
+// that already installed it are unaffected — this only stops future installs
+// and frees the server-side copy.
+func (s *Server) deleteAPK(w http.ResponseWriter, r *http.Request) {
+	name := baseName(r.PathValue("name"))
+	if _, err := s.apks.Open(name); err != nil {
+		http.Error(w, "apk not found", http.StatusNotFound)
+		return
+	}
+	// Drop the row first: a stale catalogue entry pointing at a missing file is
+	// worse than an orphaned file, which List() simply stops reporting.
+	if err := s.st.DeleteAPK(name); err != nil {
+		http.Error(w, "delete failed", http.StatusInternalServerError)
+		return
+	}
+	if err := s.apks.Delete(name); err != nil {
+		http.Error(w, "delete failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"name": name, "deleted": true})
 }
 
 // installAPK queues a silent install of an uploaded APK. Body:

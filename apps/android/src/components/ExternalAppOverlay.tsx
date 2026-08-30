@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image, ScrollView, FlatList, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Image, ScrollView, FlatList, useWindowDimensions, DeviceEventEmitter } from 'react-native';
 import StatusBar from './StatusBar';
 import Icon from './Icon';
 import AppLauncherModule, { AppInfo } from '../utils/AppLauncherModule';
 import { ManagedApp } from '../types/managedApps';
+import { StorageService } from '../utils/storage';
+import { DEVICE_LABEL_UPDATED_EVENT } from '../utils/CloudSyncService';
 
 interface ExternalAppOverlayProps {
   /** Legacy single-app package (backward compat) */
@@ -78,6 +80,9 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
   const [appInstalled, setAppInstalled] = useState<Record<string, boolean>>({});
   // Timer handle for the periodic install-status recheck (cleared on unmount).
   const recheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Operator-set label for this tablet, shown bottom-right. Set from the console
+  // and delivered on the heartbeat; empty means "show nothing".
+  const [deviceLabel, setDeviceLabel] = useState<string>('');
   
   // Return to settings — same mechanism as WebView (tap_anywhere / button)
   const gridTapCountRef = useRef<number>(0);
@@ -208,6 +213,19 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
     };
   }, [homeScreenApps.length, externalAppPackage]);
 
+  // Load the device label once, then follow it live: CloudSyncService emits only
+  // when the operator actually changes it, so this does not fire every heartbeat.
+  useEffect(() => {
+    let cancelled = false;
+    const loadLabel = async () => {
+      const label = await StorageService.getDeviceLabel();
+      if (!cancelled) setDeviceLabel(label);
+    };
+    loadLabel();
+    const sub = DeviceEventEmitter.addListener(DEVICE_LABEL_UPDATED_EVENT, loadLabel);
+    return () => { cancelled = true; sub.remove(); };
+  }, []);
+
   const handleAppPress = (packageName: string) => {
     if (onLaunchApp) {
       onLaunchApp(packageName);
@@ -270,14 +288,6 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
             theme={statusBarTheme}
           />
         )}
-        <View style={styles.multiAppHeader}>
-          <Image
-            source={require('../assets/images/logo_circle.png')}
-            style={styles.miniLogo}
-            resizeMode="contain"
-          />
-          <Text style={styles.multiAppTitle}>Ali MDM</Text>
-        </View>
         <FlatList
           data={homeScreenApps}
           renderItem={renderAppIcon}
@@ -310,6 +320,20 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
           >
             <Icon name="arrow-u-left-top" size={28} color="#fff" style={{ opacity: returnButtonVisible ? 1 : 0 }} />
           </TouchableOpacity>
+        )}
+
+        {/* Operator-set device label. Shifted clear of the floating return
+            button when that button also sits in the bottom-right corner. */}
+        {!!deviceLabel && (
+          <Text
+            style={[
+              styles.deviceLabel,
+              returnMode === 'button' && returnButtonPosition === 'bottom-right' && styles.deviceLabelShifted,
+            ]}
+            numberOfLines={1}
+          >
+            {deviceLabel}
+          </Text>
         )}
       </View>
     );
@@ -569,21 +593,18 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   // Multi-app home screen styles
-  multiAppHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    gap: 10,
+  deviceLabel: {
+    position: 'absolute',
+    bottom: 12,
+    right: 20,
+    maxWidth: '50%',
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.6)',
   },
-  miniLogo: {
-    width: 32,
-    height: 32,
-  },
-  multiAppTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
+  // Clears the 50px floating return button (right: 20) when it shares the corner.
+  deviceLabelShifted: {
+    right: 80,
   },
   appGrid: {
     paddingHorizontal: 16,

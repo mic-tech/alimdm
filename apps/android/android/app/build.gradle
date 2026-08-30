@@ -64,6 +64,13 @@ react {
     //   The list of flags to pass to the Hermes compiler. By default is "-O", "-output-source-map"
     // hermesFlags = ["-O", "-output-source-map"]
 
+    //   Bundle the JS into the debug APK too. RN skips this for debuggable
+    //   variants and expects a Metro server, but the debug APK is what
+    //   apps/enroll/enroll_tablet.sh installs onto tablets — with no Metro on a
+    //   school LAN it would have no JS to load. An empty debuggableVariants
+    //   list turns bundling back on for debug.
+    debuggableVariants = []
+
     /* Autolinking */
     autolinkLibrariesWithApp()
 }

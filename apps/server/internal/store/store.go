@@ -288,6 +288,14 @@ func (s *Store) SetDeviceGroup(deviceID, groupID string) error {
 	return err
 }
 
+// SetDeviceName updates the operator-facing label for a device. Unlike
+// SetDeviceGroup this does not clear last_applied_hash: the label is per-device
+// and rides down on the heartbeat, so it needs no group config resync.
+func (s *Store) SetDeviceName(deviceID, name string) error {
+	_, err := s.db.Exec(`UPDATE devices SET name=? WHERE id=?`, name, deviceID)
+	return err
+}
+
 // ── Commands ─────────────────────────────────────────────────────────────────
 
 func (s *Store) EnqueueCommand(c *Command) error {
@@ -468,6 +476,13 @@ type APK struct {
 	SHA256 string `json:"sha256"`
 	Size   int64  `json:"size"`
 	Path   string `json:"-"`
+}
+
+// DeleteAPK drops the catalogue row for an APK. The file itself is removed
+// separately via the apk store; this only forgets the record.
+func (s *Store) DeleteAPK(name string) error {
+	_, err := s.db.Exec(`DELETE FROM apks WHERE name=?`, name)
+	return err
 }
 
 // SaveAPK records a stored APK.
