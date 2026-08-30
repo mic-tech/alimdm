@@ -1,0 +1,159 @@
+package com.alimdm
+
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.os.PowerManager
+import android.util.Log
+import android.view.WindowManager
+
+/**
+ * BroadcastReceiver to detect screen ON/OFF events
+ * Used to track actual screen state for REST API
+ *
+ * Note: This receiver stores the screen state and can be queried by KioskModule
+ * to get the current screen state for the REST API.
+ *
+ * When "Auto Wake on Screen Off" is enabled in SharedPreferences, this receiver
+ * will immediately re-wake the screen after detecting ACTION_SCREEN_OFF.
+ */
+class ScreenStateReceiver : BroadcastReceiver() {
+
+    companion object {
+        private const val TAG = "ScreenStateReceiver"
+        private const val WAKE_LOCK_TIMEOUT = 10_000L // 10 seconds
+        @Volatile
+        var isScreenOn = true  // Assume screen is on initially
+            private set
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        when (intent.action) {
+            Intent.ACTION_SCREEN_ON -> {
+                Log.d(TAG, "Screen turned ON")
+                isScreenOn = true
+                publishMqttStatus()
+            }
+            Intent.ACTION_SCREEN_OFF -> {
+                Log.d(TAG, "Screen turned OFF")
+                isScreenOn = false
+                publishMqttStatus()
+
+                // Dismiss the soft keyboard so it doesn't persist after the screen wakes up.
+                // Needed when the user leaves a focused input (e.g. Force Numeric mode) and the
+                // screen times out — without this the keyboard reappears on the next screen-on.
+                dismissKeyboard(context)
+
+                // Check if auto-wake is enabled
+                val prefs = context.getSharedPreferences("AliMdmSettings", Context.MODE_PRIVATE)
+                val autoWakeEnabled = prefs.getBoolean("auto_wake_on_screen_off", false)
+                if (autoWakeEnabled) {
+                    Log.d(TAG, "Auto-wake enabled — turning screen back ON")
+                    wakeScreen(context)
+                }
+            }
+        }
+    }
+
+    /**
+     * #155: push the new screen state to MQTT immediately.
+     *
+     * The state topic is retained and otherwise only refreshed by the 30s timer, so Home
+     * Assistant kept the old value and its Screen Power toggle snapped back to ON a couple
+     * of seconds after being switched off. This is the authoritative moment: the screen has
+     * actually changed state, whoever asked for it, and this runs natively so it also works
+     * once lockNow() has suspended the JS thread.
+     */
+    private fun publishMqttStatus() {
+        try {
+            com.alimdm.mqtt.MqttModule.publishStatusNow()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not publish MQTT status on screen change: ${e.message}")
+        }
+    }
+
+    private fun dismissKeyboard(context: Context) {
+        try {
+            val reactApp = context.applicationContext
+            if (reactApp is com.facebook.react.ReactApplication) {
+                val reactContext = reactApp.reactNativeHost.reactInstanceManager?.currentReactContext
+                val activity = reactContext?.currentActivity
+                if (activity != null) {
+                    KeyboardUtils.dismiss(activity)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not dismiss keyboard on screen off: ${e.message}")
+        }
+    }
+
+    private fun wakeScreen(context: Context) {
+        try {
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+
+            // Acquire a WakeLock to physically turn the screen on
+            @Suppress("DEPRECATION")
+            val wakeLock = powerManager.newWakeLock(
+                PowerManager.FULL_WAKE_LOCK or
+                PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                PowerManager.ON_AFTER_RELEASE,
+                "AliMDM:AutoWake"
+            )
+            wakeLock.acquire(WAKE_LOCK_TIMEOUT)
+            Log.d(TAG, "Auto-wake WakeLock acquired — screen should be turning on")
+
+            // Try to set activity flags (dismiss keyguard, keep screen on)
+            try {
+                val reactApp = context.applicationContext
+                if (reactApp is com.facebook.react.ReactApplication) {
+                    val reactHost = reactApp.reactNativeHost
+                    val reactContext = reactHost.reactInstanceManager?.currentReactContext
+                    val activity = reactContext?.currentActivity
+                    if (activity != null) {
+                        activity.runOnUiThread {
+                            try {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                                    activity.setShowWhenLocked(true)
+                                    activity.setTurnScreenOn(true)
+                                    val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                                    keyguardManager.requestDismissKeyguard(activity, null)
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    activity.window.addFlags(
+                                        WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                                        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                                    )
+                                }
+
+                                // Restore FLAG_KEEP_SCREEN_ON if enabled
+                                val prefs = context.getSharedPreferences("AliMdmSettings", Context.MODE_PRIVATE)
+                                val keepScreenOn = prefs.getBoolean("keep_screen_on", true)
+                                if (keepScreenOn) {
+                                    activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                                }
+
+                                // Restore brightness to system default
+                                val layoutParams = activity.window.attributes
+                                layoutParams.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                                activity.window.attributes = layoutParams
+
+                                Log.d(TAG, "Auto-wake activity flags restored")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Auto-wake: failed to set activity flags: ${e.message}")
+                            }
+                        }
+                    } else {
+                        Log.w(TAG, "Auto-wake: no current activity — WakeLock alone will handle wake")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Auto-wake: could not access activity: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Auto-wake failed: ${e.message}", e)
+        }
+    }
+}

@@ -1,0 +1,1628 @@
+package com.alimdm
+
+import android.app.ActivityManager
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.app.usage.UsageStats
+import android.app.usage.UsageStatsManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.net.wifi.WifiManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.bluetooth.BluetoothManager
+import android.media.AudioManager
+import android.os.BatteryManager
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.provider.Settings
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.core.app.NotificationCompat
+import com.facebook.react.ReactApplication
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.modules.core.DeviceEventManagerModule
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+class OverlayService : Service() {
+
+    companion object {
+        // Opacité du bouton indicateur visuel (0.0 = invisible, 1.0 = opaque)
+        // Note: Le 5-tap fonctionne partout grâce à l'overlay invisible 1x1 pixel avec FLAG_WATCH_OUTSIDE_TOUCH
+        @Volatile
+        var buttonOpacity = 0.0f
+
+        // Status bar enabled/disabled
+        @Volatile
+        var statusBarEnabled = false
+        
+        // Status bar items visibility
+        @Volatile
+        var showBattery = true
+        @Volatile
+        var showWifi = true
+        @Volatile
+        var showBluetooth = true
+        @Volatile
+        var showVolume = true
+        @Volatile
+        var showTime = true
+
+        // Instance du service pour pouvoir mettre à jour le bouton
+        @Volatile
+        private var instance: OverlayService? = null
+
+        fun updateButtonOpacity(opacity: Float) {
+            buttonOpacity = opacity
+            instance?.updateButtonAlpha()
+        }
+
+        fun updateStatusBarEnabled(enabled: Boolean) {
+            statusBarEnabled = enabled
+            instance?.recreateStatusBar()
+        }
+
+        fun updateStatusBarItems(battery: Boolean, wifi: Boolean, bluetooth: Boolean, volume: Boolean, time: Boolean) {
+            showBattery = battery
+            showWifi = wifi
+            showBluetooth = bluetooth
+            showVolume = volume
+            showTime = time
+            instance?.recreateStatusBar()
+        }
+
+        /**
+         * Bring the return button overlay to the front (above other overlays)
+         * Called when blocking overlays are updated to ensure return button stays accessible
+         */
+        fun bringToFront() {
+            instance?.let { service ->
+                Handler(Looper.getMainLooper()).post {
+                    try {
+                        // Destroy all overlays first
+                        service.destroyOverlay()
+                        // Then recreate
+                        service.createOverlay()
+                        DebugLog.d("OverlayService", "Return button brought to front")
+                    } catch (e: Exception) {
+                        DebugLog.e("OverlayService", "Failed to bring to front: ${e.message}")
+                    }
+                }
+            }
+        }
+
+    }
+
+    private var windowManager: WindowManager? = null
+    private var overlayView: View? = null
+    private var indicatorView: View? = null  // Visual indicator in tap_anywhere mode
+    private var returnButton: View? = null  // Changed from Button to View (now a FrameLayout)
+    private var statusBarView: View? = null
+    private var batteryText: TextView? = null
+    private var batteryChargingIcon: android.widget.ImageView? = null
+    private var wifiStatusIcon: android.widget.ImageView? = null
+    private var bluetoothStatusIcon: android.widget.ImageView? = null
+    private var volumeIcon: android.widget.ImageView? = null
+    private var volumeText: TextView? = null
+    private var timeText: TextView? = null
+    private var tapCount = 0
+    private var firstTapTime = 0L // Time of first tap in sequence
+    // Cache Bluetooth isConnected Method to avoid reflection on every status bar update
+    private var btIsConnectedMethod: java.lang.reflect.Method? = null
+    private val tapHandler = Handler(Looper.getMainLooper())
+    // #190 — Native inactivity countdown for External App mode. React Native pauses JS
+    // timers while AliMDM is backgrounded behind the external app, so the JS inactivity
+    // timer never fires there. This native handler runs regardless and emits an event for
+    // JS to activate the screensaver. One-shot: after firing it disarms until JS re-arms.
+    private val inactivityHandler = Handler(Looper.getMainLooper())
+    private var inactivityEnabled = false
+    private var inactivityDelayMs = 0L
+    private val inactivityRunnable = Runnable {
+        DebugLog.d("OverlayService", "Native inactivity expired (${inactivityDelayMs}ms) — notifying JS")
+        inactivityEnabled = false // one-shot: JS re-arms on screensaver dismiss
+        try { KioskModule.sendEventFromNative("inactivityExpiredNative", null) } catch (e: Exception) {}
+    }
+
+    private fun armInactivityTimer() {
+        inactivityHandler.removeCallbacks(inactivityRunnable)
+        if (inactivityEnabled && inactivityDelayMs > 0) {
+            inactivityHandler.postDelayed(inactivityRunnable, inactivityDelayMs)
+        }
+    }
+    private val statusUpdateHandler = Handler(Looper.getMainLooper())
+    private var tapTimeout = 1500L // Default 1.5 seconds, will be overridden from intent
+    private var requiredTaps = 5 // Default, will be overridden from intent
+    private var returnMode = "tap_anywhere" // 'tap_anywhere' or 'button'
+    private var buttonPosition = "bottom-right" // 'top-left', 'top-right', 'bottom-left', 'bottom-right'
+    private val CHANNEL_ID = "AliMDMOverlay"
+    private val NOTIFICATION_ID = 1001
+    private val STATUS_UPDATE_INTERVAL = 15000L // Update every 15 seconds (was 5s, reduced for low-end device performance)
+    
+    // MQTT watchdog - periodic check to reconnect if MQTT dropped
+    private val mqttWatchdogHandler = Handler(Looper.getMainLooper())
+    private val MQTT_WATCHDOG_INTERVAL = 60000L // Check every 60 seconds
+    private var mqttWatchdogRunnable: Runnable? = null
+
+    // Auto-relaunch monitoring
+    private var lockedPackage: String? = null // Package name of the locked app to monitor
+    private var autoRelaunchEnabled = false // Whether auto-relaunch is enabled
+    private var nfcEnabled = false // Whether NFC is enabled (to filter NFC system package from monitoring)
+    private val foregroundMonitorHandler = Handler(Looper.getMainLooper())
+    private val FOREGROUND_CHECK_INTERVAL = 5000L // Check every 5 seconds (was 2s, reduced for low-end device performance)
+    // Periodic re-pin: removes and re-adds the overlay so it lands at the top of the
+    // TYPE_APPLICATION_OVERLAY stack, recovering from camera/SurfaceView Z-order issues (#121)
+    private val overlayRepinHandler = Handler(Looper.getMainLooper())
+    private val OVERLAY_REPIN_INTERVAL = 3000L
+    private var cachedLauncherPackages: Set<String>? = null // Cached list of launcher packages for Home detection
+    private var cachedManagedPackages: Set<String>? = null // Cached list of managed app packages (keep-alive, etc.)
+    // BroadcastReceiver pour détecter quand l'écran s'allume
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_ON -> {
+                    DebugLog.d("OverlayService", "Screen ON - ensuring overlay is visible")
+                    // Recréer l'overlay si nécessaire
+                    if (overlayView == null) {
+                        createOverlay()
+                    }
+                    // MQTT watchdog: check connection on screen wake
+                    try {
+                        com.alimdm.mqtt.MqttModule.checkAndReconnect()
+                    } catch (e: Exception) {
+                        DebugLog.d("OverlayService", "MQTT watchdog check failed: ${e.message}")
+                    }
+                }
+                Intent.ACTION_SCREEN_OFF -> {
+                    DebugLog.d("OverlayService", "Screen OFF")
+                }
+            }
+        }
+    }
+    
+    // BroadcastReceiver pour détecter les changements de volume
+    private val volumeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") {
+                DebugLog.d("OverlayService", "Volume changed - updating status bar")
+                updateStatusBar()
+            }
+        }
+    }
+    
+    // BroadcastReceiver pour détecter les changements de batterie en temps réel
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_BATTERY_CHANGED,
+                Intent.ACTION_POWER_CONNECTED,
+                Intent.ACTION_POWER_DISCONNECTED -> {
+                    DebugLog.d("OverlayService", "Battery status changed - updating charging icon")
+                    updateBatteryChargingIcon(intent)
+                }
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        
+        // Charger l'opacité depuis SharedPreferences
+        loadButtonOpacity()
+        
+        // Démarrer comme Foreground Service pour survivre à la mise en veille
+        startForegroundService()
+        
+        // Enregistrer le receiver pour les événements écran
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
+        registerReceiver(screenReceiver, filter)
+        
+        // Enregistrer le receiver pour les changements de volume
+        val volumeFilter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
+        registerReceiver(volumeReceiver, volumeFilter)
+        
+        // Enregistrer le receiver pour les changements de batterie
+        val batteryFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_BATTERY_CHANGED)
+            addAction(Intent.ACTION_POWER_CONNECTED)
+            addAction(Intent.ACTION_POWER_DISCONNECTED)
+        }
+        registerReceiver(batteryReceiver, batteryFilter)
+
+        // Start MQTT watchdog — periodically checks MQTT health
+        startMqttWatchdog()
+        
+        // Créer l'overlay seulement si la permission est accordée
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)) {
+            createOverlay()
+        } else {
+            DebugLog.d("OverlayService", "Overlay permission not granted - running without visible button")
+        }
+    }
+
+    private fun loadButtonOpacity() {
+        try {
+            val prefs = getSharedPreferences("AliMdmSettings", Context.MODE_PRIVATE)
+            buttonOpacity = prefs.getFloat("overlay_button_opacity", 0.0f)
+            statusBarEnabled = prefs.getBoolean("status_bar_enabled", false)
+            showBattery = prefs.getBoolean("status_bar_show_battery", true)
+            showWifi = prefs.getBoolean("status_bar_show_wifi", true)
+            showBluetooth = prefs.getBoolean("status_bar_show_bluetooth", true)
+            showVolume = prefs.getBoolean("status_bar_show_volume", true)
+            showTime = prefs.getBoolean("status_bar_show_time", true)
+            DebugLog.d("OverlayService", "Loaded settings - opacity: $buttonOpacity, status bar: $statusBarEnabled, items: B:$showBattery W:$showWifi BT:$showBluetooth V:$showVolume T:$showTime")
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Failed to load settings: ${e.message}")
+            buttonOpacity = 0.0f
+            statusBarEnabled = false
+            showBattery = true
+            showWifi = true
+            showBluetooth = true
+            showVolume = true
+            showTime = true
+        }
+    }
+
+    private fun startForegroundService() {
+        // Créer le canal de notification (Android O+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "AliMDM Overlay",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Overlay service for external app mode"
+                setShowBadge(false)
+            }
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        // Créer une notification minimale
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("AliMDM")
+            .setContentText("External app mode active")
+            .setSmallIcon(android.R.drawable.ic_menu_view)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+
+        startForeground(NOTIFICATION_ID, notification)
+        DebugLog.d("OverlayService", "Foreground service started")
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // When START_STICKY restarts the service after OOM kill, intent is null.
+        // In that case, just ensure the overlay exists without full recreation.
+        // #190 — Inactivity config update (External App native screensaver trigger).
+        // Handled before the param-reading block below so it never resets tap/return params.
+        if (intent?.action == "UPDATE_INACTIVITY") {
+            inactivityEnabled = intent.getBooleanExtra("SCREENSAVER_INACTIVITY_ENABLED", false)
+            inactivityDelayMs = intent.getLongExtra("INACTIVITY_DELAY", 0L)
+            DebugLog.d("OverlayService", "Inactivity config: enabled=$inactivityEnabled, delay=${inactivityDelayMs}ms")
+            armInactivityTimer()
+            return START_STICKY
+        }
+
+        if (intent == null) {
+            DebugLog.d("OverlayService", "onStartCommand with null intent (service restarted by system)")
+            val hasOverlayPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
+            if (hasOverlayPermission && overlayView == null) {
+                createOverlay()
+            }
+            if (hasOverlayPermission && statusBarEnabled && statusBarView == null) {
+                createStatusBar()
+                startStatusUpdates()
+            }
+            if (autoRelaunchEnabled && lockedPackage != null) {
+                startForegroundMonitoring()
+            }
+            if (lockedPackage != null) {
+                startOverlayRepinLoop()
+            }
+            return START_STICKY
+        }
+
+        // Reload button opacity and status bar settings from SharedPreferences
+        // This ensures we have the latest values when service is restarted
+        loadButtonOpacity()
+        
+        // Track if overlay parameters changed — avoid unnecessary destroy/recreate
+        val oldReturnMode = returnMode
+        val oldButtonPosition = buttonPosition
+
+        // Get required taps from intent (default 5)
+        intent.getIntExtra("REQUIRED_TAPS", 5).let { taps ->
+            requiredTaps = taps.coerceIn(2, 20)
+            DebugLog.d("OverlayService", "Required taps set to: $requiredTaps")
+        }
+        
+        // Get tap timeout from intent (default 1500ms)
+        intent.getLongExtra("TAP_TIMEOUT", 1500L).let { timeout ->
+            tapTimeout = timeout.coerceIn(500L, 5000L)
+            DebugLog.d("OverlayService", "Tap timeout set to: ${tapTimeout}ms")
+        }
+        
+        // Get return mode from intent (default 'tap_anywhere')
+        intent.getStringExtra("RETURN_MODE")?.let { mode ->
+            returnMode = mode
+            DebugLog.d("OverlayService", "Return mode set to: $returnMode")
+        }
+        
+        // Get button position from intent (default 'bottom-right')
+        intent.getStringExtra("BUTTON_POSITION")?.let { position ->
+            buttonPosition = position
+            DebugLog.d("OverlayService", "Button position set to: $buttonPosition")
+        }
+        
+        // Get locked package and auto-relaunch settings for monitoring
+        intent.getStringExtra("LOCKED_PACKAGE")?.let { pkg ->
+            lockedPackage = pkg
+            DebugLog.d("OverlayService", "Locked package set to: $lockedPackage")
+        }
+        
+        intent.getBooleanExtra("AUTO_RELAUNCH", false).let { enabled ->
+            autoRelaunchEnabled = enabled
+            DebugLog.d("OverlayService", "Auto-relaunch enabled: $autoRelaunchEnabled")
+        }
+        
+        intent.getBooleanExtra("NFC_ENABLED", false).let { enabled ->
+            nfcEnabled = enabled
+            DebugLog.d("OverlayService", "NFC enabled (monitoring filter): $nfcEnabled")
+        }
+        
+        // Start monitoring if auto-relaunch is enabled and we have a locked package
+        if (autoRelaunchEnabled && lockedPackage != null) {
+            startForegroundMonitoring()
+        } else {
+            stopForegroundMonitoring()
+        }
+
+        // Re-pin loop: keep the overlay above SurfaceView-based apps (camera, etc.) (#121)
+        if (lockedPackage != null) {
+            startOverlayRepinLoop()
+        } else {
+            stopOverlayRepinLoop()
+        }
+        
+        // Vérifier la permission overlay avant de créer des vues
+        val hasOverlayPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
+        
+        // Only recreate overlay if parameters changed or overlay doesn't exist
+        val overlayParamsChanged = returnMode != oldReturnMode || buttonPosition != oldButtonPosition
+        if (hasOverlayPermission) {
+            if (overlayView != null && overlayParamsChanged) {
+                DebugLog.d("OverlayService", "Overlay params changed, recreating")
+                destroyOverlay()
+                createOverlay()
+            } else if (overlayView == null) {
+                createOverlay()
+            }
+        }
+
+        // Créer la status bar si activée ET si on a la permission
+        if (hasOverlayPermission && statusBarEnabled && statusBarView == null) {
+            createStatusBar()
+        }
+        
+        // START_STICKY: le service sera redémarré si tué par le système
+        return START_STICKY
+    }
+
+
+    private fun createOverlay() {
+        DebugLog.d("OverlayService", "createOverlay() called with returnMode='$returnMode', buttonPosition='$buttonPosition'")
+        if (returnMode == "button") {
+            DebugLog.d("OverlayService", "Creating BUTTON mode overlay")
+            createButtonModeOverlay()
+        } else {
+            DebugLog.d("OverlayService", "Creating TAP_ANYWHERE mode overlay")
+            createTapAnywhereModeOverlay()
+        }
+    }
+    
+    private fun createButtonModeOverlay() {
+        // MODE BOUTON: Petit bouton cliquable dans un coin
+        // L'utilisateur doit taper N fois SUR le bouton pour retourner aux settings
+        
+        val buttonSize = 48 // dp
+        val density = resources.displayMetrics.density
+        val buttonSizePx = (buttonSize * density).toInt()
+        val marginPx = (8 * density).toInt()
+        
+        val buttonView = FrameLayout(this).apply {
+            returnButton = Button(context).apply {
+                text = "↩"
+                setTextColor(android.graphics.Color.WHITE)
+                setBackgroundColor(android.graphics.Color.parseColor("#2196F3"))
+                setPadding(0, 0, 0, 0)
+                textSize = 14f
+                alpha = buttonOpacity
+                minimumWidth = 0
+                minimumHeight = 0
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    elevation = 8f
+                }
+                // Handle taps ON the button
+                setOnClickListener {
+                    handleTap()
+                }
+            }
+            addView(returnButton, FrameLayout.LayoutParams(
+                buttonSizePx,
+                buttonSizePx
+            ).apply {
+                gravity = getButtonGravity()
+                val (marginH, marginV) = getButtonMargins(marginPx)
+                setMargins(marginH, marginV, marginH, marginV)
+            })
+        }
+
+        // Paramètres pour le bouton visible CLICKABLE
+        val buttonParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = getButtonGravity()
+        }
+
+        try {
+            // Store the button view as overlayView for cleanup
+            overlayView = buttonView
+            windowManager?.addView(buttonView, buttonParams)
+            DebugLog.d("OverlayService", "Button mode overlay created at $buttonPosition")
+        } catch (e: Exception) {
+            // #203 — Keep state consistent: a non-null but detached overlayView blocks
+            // every later recovery path (re-pin loop, SCREEN_ON, onStartCommand)
+            overlayView = null
+            returnButton = null
+            DebugLog.errorProduction("OverlayService", "Failed to create button overlay: ${e.message}")
+        }
+    }
+    
+    private fun getButtonGravity(): Int {
+        return when (buttonPosition) {
+            "top-left" -> Gravity.TOP or Gravity.START
+            "top-right" -> Gravity.TOP or Gravity.END
+            "bottom-left" -> Gravity.BOTTOM or Gravity.START
+            "bottom-right" -> Gravity.BOTTOM or Gravity.END
+            else -> Gravity.BOTTOM or Gravity.END
+        }
+    }
+    
+    private fun getButtonMargins(marginPx: Int): Pair<Int, Int> {
+        // Return (horizontal margin, vertical margin)
+        return when (buttonPosition) {
+            "top-left" -> Pair(marginPx, marginPx)
+            "top-right" -> Pair(marginPx, marginPx)
+            "bottom-left" -> Pair(marginPx, marginPx)
+            "bottom-right" -> Pair(marginPx, marginPx)
+            else -> Pair(marginPx, marginPx)
+        }
+    }
+    
+    private fun createTapAnywhereModeOverlay() {
+        // MODE TAP ANYWHERE: Overlay invisible UNIQUEMENT
+        // Overlay INVISIBLE de 1x1 pixel avec FLAG_WATCH_OUTSIDE_TOUCH
+        // Détecte TOUS les taps de l'écran sans bloquer l'app en dessous
+        // PAS de bouton visible en mode tap_anywhere!
+        
+        // Créer un overlay INVISIBLE de 1x1 pixel qui observe TOUS les taps de l'écran
+        // FLAG_WATCH_OUTSIDE_TOUCH fait que cet overlay reçoit les événements de TOUT l'écran
+        overlayView = View(this).apply {
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            
+            // Ce listener reçoit TOUS les taps de l'écran grâce à FLAG_WATCH_OUTSIDE_TOUCH
+            setOnTouchListener { _, event ->
+                if (event.action == android.view.MotionEvent.ACTION_OUTSIDE ||
+                    event.action == android.view.MotionEvent.ACTION_DOWN) {
+                    handleTap()
+                }
+                false // Ne jamais bloquer
+            }
+        }
+
+        // Overlay invisible 1x1 pixel avec FLAG_WATCH_OUTSIDE_TOUCH
+        // Reçoit TOUS les taps de l'écran sans bloquer quoi que ce soit
+        val invisibleParams = WindowManager.LayoutParams(
+            1, // 1 pixel de large
+            1, // 1 pixel de haut
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = 0
+        }
+
+        try {
+            // Ajouter l'overlay invisible qui détecte les taps
+            // En mode tap_anywhere: JAMAIS de bouton visible, peu importe buttonOpacity
+            windowManager?.addView(overlayView, invisibleParams)
+            DebugLog.d("OverlayService", "Tap anywhere overlay created (invisible only)")
+        } catch (e: Exception) {
+            // #203 — Keep state consistent: a non-null but detached overlayView blocks
+            // every later recovery path (re-pin loop, SCREEN_ON, onStartCommand)
+            overlayView = null
+            DebugLog.errorProduction("OverlayService", "Failed to create tap anywhere overlay: ${e.message}")
+        }
+    }
+
+    // Recréer l'overlay (appelé quand la position change)
+    private fun recreateOverlay() {
+        try {
+            // Détruire complètement les anciens overlays
+            destroyOverlay()
+            
+            // Recréer l'overlay avec la nouvelle position
+            createOverlay()
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Failed to recreate overlay: ${e.message}")
+        }
+    }
+
+    // Méthode pour mettre à jour l'alpha du bouton en temps réel
+    private fun updateButtonAlpha() {
+        try {
+            returnButton?.alpha = buttonOpacity
+            DebugLog.d("OverlayService", "Updated button alpha to: $buttonOpacity")
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Failed to update button alpha: ${e.message}")
+        }
+    }
+
+    // Recréer la status bar (appelé quand le toggle change)
+    private fun recreateStatusBar() {
+        try {
+            // Supprimer l'ancienne status bar si elle existe
+            statusBarView?.let { windowManager?.removeView(it) }
+            statusBarView = null
+
+            // Créer la nouvelle si activée
+            if (statusBarEnabled) {
+                createStatusBar()
+                startStatusUpdates()
+            } else {
+                stopStatusUpdates()
+            }
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Failed to recreate status bar: ${e.message}")
+        }
+    }
+
+    private fun createStatusBar() {
+        try {
+            // Convertir dp en pixels
+            val density = resources.displayMetrics.density
+            val heightPx = (28 * density).toInt() // 28dp de hauteur (réduit pour ressembler à une status bar standard)
+            val paddingPx = (8 * density).toInt() // Padding réduit
+            val textSizePx = 12f // Texte légèrement plus petit
+            val iconSizePx = (16 * density).toInt() // Icônes légèrement plus petites
+
+            // Créer le LinearLayout horizontal pour la barre d'état
+            val statusLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setBackgroundColor(Color.parseColor("#E0000000")) // Noir plus opaque
+                setPadding(paddingPx, paddingPx / 2, paddingPx, paddingPx / 2)
+                gravity = Gravity.CENTER_VERTICAL
+            }
+
+            // Style commun pour tous les TextViews
+            val textStyle: (TextView) -> Unit = { tv ->
+                tv.setTextColor(Color.WHITE)
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, textSizePx)
+                tv.setPadding(paddingPx / 3, 0, paddingPx / 2, 0)
+            }
+
+            // Fonction pour créer un conteneur avec icône + texte
+            fun createStatusItem(iconRes: Int, initialText: String): Pair<LinearLayout, TextView> {
+                val container = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, 0, paddingPx, 0)
+                }
+
+                // Icône
+                val icon = android.widget.ImageView(this).apply {
+                    setImageResource(iconRes)
+                    layoutParams = LinearLayout.LayoutParams(iconSizePx, iconSizePx)
+                    setColorFilter(Color.WHITE)
+                }
+                container.addView(icon)
+
+                // Texte
+                val textView = TextView(this).apply {
+                    text = initialText
+                    textStyle(this)
+                }
+                container.addView(textView)
+
+                return Pair(container, textView)
+            }
+
+            // Batterie (éclair si en charge + icône + pourcentage)
+            val batteryContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 0, paddingPx, 0)
+            }
+            // Éclair de charge - ajouté EN PREMIER (à gauche de l'icône)
+            batteryChargingIcon = android.widget.ImageView(this).apply {
+                setImageResource(resources.getIdentifier("ic_charging", "drawable", packageName))
+                layoutParams = LinearLayout.LayoutParams((iconSizePx * 0.8).toInt(), (iconSizePx * 0.8).toInt()).apply {
+                    setMargins(0, 0, 0, 0) // Collé
+                }
+                visibility = View.GONE // Caché par défaut
+            }
+            batteryContainer.addView(batteryChargingIcon)
+            val batteryIcon = android.widget.ImageView(this).apply {
+                setImageResource(resources.getIdentifier("ic_battery", "drawable", packageName))
+                layoutParams = LinearLayout.LayoutParams(iconSizePx, iconSizePx)
+                setColorFilter(Color.WHITE)
+            }
+            batteryContainer.addView(batteryIcon)
+            batteryText = TextView(this).apply {
+                text = "--"
+                textStyle(this)
+            }
+            batteryContainer.addView(batteryText)
+            
+            // Ajouter la batterie seulement si activée
+            if (showBattery) {
+                statusLayout.addView(batteryContainer)
+            }
+
+            // Wi-Fi (icône + statut icône)
+            val wifiContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 0, paddingPx / 2, 0)
+            }
+            val wifiIcon = android.widget.ImageView(this).apply {
+                setImageResource(resources.getIdentifier("ic_wifi", "drawable", packageName))
+                layoutParams = LinearLayout.LayoutParams(iconSizePx, iconSizePx)
+                setColorFilter(Color.WHITE)
+            }
+            wifiContainer.addView(wifiIcon)
+            wifiStatusIcon = android.widget.ImageView(this).apply {
+                setImageResource(resources.getIdentifier("ic_cross", "drawable", packageName))
+                layoutParams = LinearLayout.LayoutParams(iconSizePx, iconSizePx).apply {
+                    setMargins(paddingPx / 4, 0, 0, 0)
+                }
+            }
+            wifiContainer.addView(wifiStatusIcon)
+            
+            // Ajouter le WiFi seulement si activé
+            if (showWifi) {
+                statusLayout.addView(wifiContainer)
+            }
+
+            // Bluetooth (icône + statut icône)
+            val bluetoothContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 0, paddingPx / 2, 0)
+            }
+            val bluetoothIcon = android.widget.ImageView(this).apply {
+                setImageResource(resources.getIdentifier("ic_bluetooth", "drawable", packageName))
+                layoutParams = LinearLayout.LayoutParams(iconSizePx, iconSizePx)
+                setColorFilter(Color.WHITE)
+            }
+            bluetoothContainer.addView(bluetoothIcon)
+            bluetoothStatusIcon = android.widget.ImageView(this).apply {
+                setImageResource(resources.getIdentifier("ic_cross", "drawable", packageName))
+                layoutParams = LinearLayout.LayoutParams(iconSizePx, iconSizePx).apply {
+                    setMargins(paddingPx / 4, 0, 0, 0)
+                }
+            }
+            bluetoothContainer.addView(bluetoothStatusIcon)
+            
+            // Ajouter le Bluetooth seulement si activé
+            if (showBluetooth) {
+                statusLayout.addView(bluetoothContainer)
+            }
+
+            // Volume (with dynamic icon)
+            val volumeIconRes = resources.getIdentifier("ic_volume_medium", "drawable", packageName)
+            val volumeContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 0, paddingPx, 0)
+            }
+            volumeIcon = android.widget.ImageView(this).apply {
+                setImageResource(volumeIconRes)
+                layoutParams = LinearLayout.LayoutParams(iconSizePx, iconSizePx)
+                setColorFilter(Color.WHITE)
+            }
+            volumeContainer.addView(volumeIcon)
+            volumeText = TextView(this).apply {
+                text = "--"
+                textStyle(this)
+            }
+            volumeContainer.addView(volumeText)
+
+            // Spacer pour pousser l'heure à droite (seulement si on a des items à gauche OU à droite)
+            val hasLeftItems = showBattery || showWifi || showBluetooth
+            val hasRightItems = showVolume || showTime
+            
+            if (hasLeftItems && hasRightItems) {
+                val spacer = View(this)
+                statusLayout.addView(spacer, LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    1f
+                ))
+            }
+            
+            // Ajouter le volume seulement si activé
+            if (showVolume) {
+                statusLayout.addView(volumeContainer)
+            }
+
+            // Heure (avec icône)
+            val timeIcon = resources.getIdentifier("ic_time", "drawable", packageName)
+            val (timeContainer, timeTextView) = createStatusItem(timeIcon, "--:--")
+            timeText = timeTextView
+            
+            // Ajouter l'heure seulement si activée
+            if (showTime) {
+                statusLayout.addView(timeContainer)
+            }
+
+            statusBarView = statusLayout
+
+            // Paramètres de la fenêtre overlay pour la status bar
+            val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
+            }
+
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, // Toute la largeur
+                heightPx, // Hauteur fixe
+                layoutType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            )
+
+            params.gravity = Gravity.TOP or Gravity.START  // Position en haut à gauche
+            params.x = 0
+            params.y = 0
+
+            windowManager?.addView(statusBarView, params)
+            DebugLog.d("OverlayService", "Status bar created successfully at top of screen")
+
+            // Première mise à jour immédiate
+            updateStatusBar()
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Failed to create status bar: ${e.message}")
+        }
+    }
+
+    private fun updateStatusBar() {
+        try {
+            // Heure
+            val currentTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+            timeText?.text = currentTime
+
+            // Batterie
+            val batteryStatus: Intent? = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            if (batteryStatus != null) {
+                val level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                val batteryPct = (level * 100 / scale.toFloat()).toInt()
+                val status = batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+                val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                                status == BatteryManager.BATTERY_STATUS_FULL
+
+                batteryText?.text = "$batteryPct%"
+                batteryChargingIcon?.visibility = if (isCharging) View.VISIBLE else View.GONE
+            }
+
+            // Wi-Fi
+            try {
+                val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                if (connectivityManager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    val network = connectivityManager.activeNetwork
+                    val capabilities = connectivityManager.getNetworkCapabilities(network)
+                    val isWifiConnected = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+
+                    val iconRes = if (isWifiConnected) {
+                        resources.getIdentifier("ic_check", "drawable", packageName)
+                    } else {
+                        resources.getIdentifier("ic_cross", "drawable", packageName)
+                    }
+                    wifiStatusIcon?.setImageResource(iconRes)
+                } else {
+                    wifiStatusIcon?.setImageResource(resources.getIdentifier("ic_cross", "drawable", packageName))
+                }
+            } catch (e: SecurityException) {
+                wifiStatusIcon?.setImageResource(resources.getIdentifier("ic_cross", "drawable", packageName))
+                DebugLog.d("OverlayService", "WiFi permission denied: ${e.message}")
+            } catch (e: Exception) {
+                wifiStatusIcon?.setImageResource(resources.getIdentifier("ic_cross", "drawable", packageName))
+                DebugLog.errorProduction("OverlayService", "WiFi error: ${e.message}")
+            }
+
+            // Bluetooth
+            try {
+                val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+                val bluetoothAdapter = bluetoothManager?.adapter
+
+                if (bluetoothAdapter != null && bluetoothAdapter.isEnabled) {
+                    // Vérifier s'il y a des appareils RÉELLEMENT connectés (pas juste appairés)
+                    try {
+                        @Suppress("DEPRECATION")
+                        val bondedDevices = bluetoothAdapter.bondedDevices
+                        var hasConnectedDevice = false
+
+                        if (bondedDevices != null) {
+                            for (device in bondedDevices) {
+                                try {
+                                    // Use cached reflection Method for isConnected() (hidden API)
+                                    if (btIsConnectedMethod == null) {
+                                        btIsConnectedMethod = device.javaClass.getMethod("isConnected")
+                                    }
+                                    val connected = btIsConnectedMethod?.invoke(device) as? Boolean ?: false
+                                    if (connected) {
+                                        hasConnectedDevice = true
+                                        break
+                                    }
+                                } catch (e: Exception) {
+                                    // Si la méthode ne fonctionne pas, on ignore
+                                }
+                            }
+                        }
+
+                        val iconRes = if (hasConnectedDevice) {
+                            resources.getIdentifier("ic_check", "drawable", packageName)
+                        } else {
+                            resources.getIdentifier("ic_cross", "drawable", packageName)
+                        }
+                        bluetoothStatusIcon?.setImageResource(iconRes)
+                    } catch (e: SecurityException) {
+                        // Permission manquante, on affiche déconnecté
+                        bluetoothStatusIcon?.setImageResource(resources.getIdentifier("ic_cross", "drawable", packageName))
+                    }
+                } else {
+                    bluetoothStatusIcon?.setImageResource(resources.getIdentifier("ic_cross", "drawable", packageName))
+                }
+            } catch (e: SecurityException) {
+                bluetoothStatusIcon?.setImageResource(resources.getIdentifier("ic_cross", "drawable", packageName))
+                DebugLog.d("OverlayService", "Bluetooth permission denied: ${e.message}")
+            } catch (e: Exception) {
+                bluetoothStatusIcon?.setImageResource(resources.getIdentifier("ic_cross", "drawable", packageName))
+                DebugLog.errorProduction("OverlayService", "Bluetooth error: ${e.message}")
+            }
+
+            // Volume (media stream)
+            try {
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                if (audioManager != null) {
+                    val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                    val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                    val volumePercent = if (maxVolume > 0) (currentVolume * 100 / maxVolume) else 0
+
+                    // Select icon based on volume level
+                    val iconRes = when {
+                        volumePercent == 0 -> resources.getIdentifier("ic_volume_mute", "drawable", packageName)
+                        volumePercent <= 33 -> resources.getIdentifier("ic_volume_low", "drawable", packageName)
+                        volumePercent <= 66 -> resources.getIdentifier("ic_volume_medium", "drawable", packageName)
+                        else -> resources.getIdentifier("ic_volume_high", "drawable", packageName)
+                    }
+
+                    volumeIcon?.setImageResource(iconRes)
+                    volumeText?.text = "$volumePercent%"
+                } else {
+                    volumeText?.text = "--"
+                }
+            } catch (e: Exception) {
+                volumeText?.text = "--"
+                DebugLog.errorProduction("OverlayService", "Volume error: ${e.message}")
+            }
+
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Failed to update status bar: ${e.message}")
+        }
+    }
+    
+    // Méthode dédiée pour mettre à jour uniquement l'icône de charge en temps réel
+    private fun updateBatteryChargingIcon(intent: Intent?) {
+        try {
+            val batteryStatus = intent ?: registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            if (batteryStatus != null) {
+                val status = batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+                val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                                status == BatteryManager.BATTERY_STATUS_FULL
+
+                batteryChargingIcon?.visibility = if (isCharging) View.VISIBLE else View.GONE
+                
+                // Mettre à jour aussi le pourcentage de batterie
+                val level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                if (level >= 0 && scale > 0) {
+                    val batteryPct = (level * 100 / scale.toFloat()).toInt()
+                    batteryText?.text = "$batteryPct%"
+                }
+                
+                DebugLog.d("OverlayService", "Battery charging icon updated: isCharging=$isCharging")
+            }
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Failed to update battery charging icon: ${e.message}")
+        }
+    }
+
+    private fun startStatusUpdates() {
+        stopStatusUpdates() // Arrêter les updates existants
+        statusUpdateHandler.post(object : Runnable {
+            override fun run() {
+                if (statusBarEnabled && statusBarView != null) {
+                    updateStatusBar()
+                    statusUpdateHandler.postDelayed(this, STATUS_UPDATE_INTERVAL)
+                }
+            }
+        })
+        DebugLog.d("OverlayService", "Status updates started")
+    }
+
+    private fun stopStatusUpdates() {
+        statusUpdateHandler.removeCallbacksAndMessages(null)
+        DebugLog.d("OverlayService", "Status updates stopped")
+    }
+
+    private fun handleTap() {
+        // Notify AliMDM of user activity so the inactivity timer resets in External App mode
+        try { KioskModule.sendEventFromNative("screensaverActivity", null) } catch (e: Exception) {}
+
+        // #190 — Reset the native inactivity countdown on any tap (External App mode).
+        armInactivityTimer()
+
+        val now = System.currentTimeMillis()
+
+        // First tap - record time and start timeout
+        if (tapCount == 0) {
+            firstTapTime = now
+            tapHandler.removeCallbacksAndMessages(null)
+            tapHandler.postDelayed({
+                if (tapCount < requiredTaps) {
+                    DebugLog.d("OverlayService", "Tap timeout - resetting counter (${tapTimeout}ms elapsed)")
+                    tapCount = 0
+                }
+            }, tapTimeout)
+        } else {
+            // Check if we're still within timeout from first tap
+            val elapsed = now - firstTapTime
+            if (elapsed > tapTimeout) {
+                // Timeout exceeded - restart from this tap
+                DebugLog.d("OverlayService", "Timeout exceeded (${elapsed}ms > ${tapTimeout}ms) - restarting")
+                tapCount = 0
+                firstTapTime = now
+                tapHandler.removeCallbacksAndMessages(null)
+                tapHandler.postDelayed({
+                    if (tapCount < requiredTaps) {
+                        DebugLog.d("OverlayService", "Tap timeout - resetting counter")
+                        tapCount = 0
+                    }
+                }, tapTimeout)
+            }
+        }
+        
+        tapCount++
+        DebugLog.d("OverlayService", "Tap count: $tapCount/$requiredTaps (timeout: ${tapTimeout}ms)")
+
+        // Si N taps atteints, retourner à AliMDM
+        if (tapCount >= requiredTaps) {
+            DebugLog.d("OverlayService", "$requiredTaps taps detected! Returning to AliMDM")
+            tapCount = 0
+            tapHandler.removeCallbacksAndMessages(null)
+            
+            // Détruire l'overlay IMMÉDIATEMENT avant de retourner
+            destroyOverlay()
+            
+            returnToAliMDM()
+        }
+    }
+
+    private fun returnToAliMDM() {
+        try {
+            DebugLog.d("OverlayService", "returnToAliMDM() called")
+            
+            // IMPORTANT: Bloquer le relaunch automatique AVANT de lancer MainActivity
+            MainActivity.blockAutoRelaunch = true
+            DebugLog.d("OverlayService", "Set blockAutoRelaunch = true")
+
+            // Envoyer l'événement pour naviguer directement au PIN
+            sendNavigateToPinEvent()
+
+            // Méthode PRINCIPALE: Utiliser moveTaskToFront pour ramener l'app au premier plan
+            try {
+                val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                val tasks = am.appTasks
+                
+                // Chercher la task de AliMDM
+                for (task in tasks) {
+                    val taskInfo = task.taskInfo
+                    if (taskInfo.baseActivity?.packageName == packageName) {
+                        DebugLog.d("OverlayService", "Found AliMDM task, moving to front")
+                        task.moveToFront()
+                        DebugLog.d("OverlayService", "Successfully moved AliMDM to front")
+                        
+                        // Ensuite, s'assurer que MainActivity est au top de notre task
+                        val intent = Intent(this, MainActivity::class.java)
+                        intent.addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        )
+                        intent.putExtra("voluntaryReturn", true)
+                        intent.putExtra("navigateToPin", true)
+                        startActivity(intent)
+                        DebugLog.d("OverlayService", "MainActivity started after moveToFront")
+                        return
+                    }
+                }
+                DebugLog.w("OverlayService", "Could not find AliMDM task in appTasks")
+            } catch (e: Exception) {
+                DebugLog.errorProduction("OverlayService", "moveTaskToFront failed: ${e.message}")
+            }
+            
+            // FALLBACK: Si moveTaskToFront ne marche pas, essayer l'ancienne méthode
+            DebugLog.d("OverlayService", "Trying fallback method with startActivity")
+            val intent = Intent(this, MainActivity::class.java)
+            intent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT or
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            )
+            intent.putExtra("voluntaryReturn", true)
+            intent.putExtra("navigateToPin", true)
+            
+            try {
+                startActivity(intent)
+                DebugLog.d("OverlayService", "MainActivity started with fallback intent")
+            } catch (e: Exception) {
+                DebugLog.errorProduction("OverlayService", "Failed to start MainActivity: ${e.message}")
+            }
+            
+            DebugLog.d("OverlayService", "Returning to AliMDM PIN screen from overlay button")
+            
+            // Arrêter le service overlay après retour
+            stopSelf()
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Error returning: ${e.message}")
+        }
+    }
+
+    private fun sendNavigateToPinEvent() {
+        try {
+            // Use KioskModule.sendEventFromNative() which works with New Architecture
+            // (direct ReactNativeHost access fails: "should not use ReactNativeHost directly")
+            val params = Arguments.createMap()
+            params.putBoolean("voluntary", true)
+            KioskModule.sendEventFromNative("onAppReturned", params)
+            KioskModule.sendEventFromNative("navigateToPin", null)
+            DebugLog.d("OverlayService", "Sent voluntary return + navigateToPin events via KioskModule")
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Failed to send events: ${e.message}")
+        }
+    }
+
+    /**
+     * Lightweight re-pin: removes and immediately re-adds the button/tap-anywhere overlay
+     * so it lands at the top of the TYPE_APPLICATION_OVERLAY stack.
+     * Camera apps whose SurfaceView draws over the overlay (#121) will be briefly eclipsed
+     * each cycle. Does NOT touch the status bar.
+     */
+    private fun repinOverlay() {
+        // #203 — Each removeView is guarded individually: if a view is already detached
+        // (a previous addView failed), removeView throws. Aborting here would leave
+        // overlayView non-null and never call createOverlay(), so every subsequent
+        // re-pin cycle would fail the same way and the 5-tap escape would stay dead.
+        overlayView?.let {
+            try { windowManager?.removeView(it) } catch (e: Exception) {
+                DebugLog.d("OverlayService", "Re-pin: overlay already detached: ${e.message}")
+            }
+        }
+        overlayView = null
+        indicatorView?.let {
+            try { windowManager?.removeView(it) } catch (e: Exception) {
+                DebugLog.d("OverlayService", "Re-pin: indicator already detached: ${e.message}")
+            }
+        }
+        indicatorView = null
+        returnButton = null
+        try {
+            createOverlay()
+            DebugLog.d("OverlayService", "Overlay re-pinned (SurfaceView Z-order guard)")
+        } catch (e: Exception) {
+            DebugLog.e("OverlayService", "Overlay re-pin failed: ${e.message}")
+        }
+    }
+
+    private fun startOverlayRepinLoop() {
+        stopOverlayRepinLoop()
+        overlayRepinHandler.postDelayed(object : Runnable {
+            override fun run() {
+                if (lockedPackage != null) {
+                    repinOverlay()
+                    overlayRepinHandler.postDelayed(this, OVERLAY_REPIN_INTERVAL)
+                }
+            }
+        }, OVERLAY_REPIN_INTERVAL)
+        DebugLog.d("OverlayService", "Overlay re-pin loop started (interval=${OVERLAY_REPIN_INTERVAL}ms)")
+    }
+
+    private fun stopOverlayRepinLoop() {
+        overlayRepinHandler.removeCallbacksAndMessages(null)
+    }
+
+    /**
+     * Start monitoring the foreground app to detect when the locked app exits
+     */
+    private fun startForegroundMonitoring() {
+        stopForegroundMonitoring() // Clear any existing monitoring
+        foregroundNullCount = 0
+        
+        android.util.Log.i("OverlayService", "Starting foreground monitoring for package: $lockedPackage (interval=${FOREGROUND_CHECK_INTERVAL}ms)")
+        
+        foregroundMonitorHandler.post(object : Runnable {
+            override fun run() {
+                if (autoRelaunchEnabled && lockedPackage != null) {
+                    checkForegroundApp()
+                    foregroundMonitorHandler.postDelayed(this, FOREGROUND_CHECK_INTERVAL)
+                }
+            }
+        })
+    }
+
+    /**
+     * Stop monitoring the foreground app
+     */
+    private fun stopForegroundMonitoring() {
+        foregroundMonitorHandler.removeCallbacksAndMessages(null)
+        DebugLog.d("OverlayService", "Foreground monitoring stopped")
+    }
+
+    /**
+     * Check if the locked app is still in foreground, bring AliMDM back if not
+     */
+    private var foregroundNullCount = 0
+    
+    private fun checkForegroundApp() {
+        try {
+            val topPackage = getForegroundPackage()
+            
+            if (topPackage == null) {
+                foregroundNullCount++
+                // Log warning every 12 checks (~60s at 5s interval) to avoid spam
+                if (foregroundNullCount == 1 || foregroundNullCount % 12 == 0) {
+                    android.util.Log.w("OverlayService", "Cannot determine foreground app (count=$foregroundNullCount) - Usage Stats permission may be missing. Grant via: adb shell appops set com.alimdm android:get_usage_stats allow")
+                }
+                return
+            }
+            foregroundNullCount = 0
+            
+            // Correct app in foreground - nothing to do
+            if (topPackage == lockedPackage || topPackage == packageName) {
+                return
+            }
+            
+            // Ignore managed background apps (keep-alive, launchOnBoot, etc.)
+            // These apps may appear as "top" in UsageStats even though they run in background
+            if (isManagedAppPackage(topPackage)) {
+                return
+            }
+            
+            // When NFC is enabled, ignore transient NFC system package to prevent false relaunch
+            if (nfcEnabled && topPackage.contains(".nfc")) {
+                android.util.Log.d("OverlayService", "NFC package detected ($topPackage) - ignoring (NFC mode active)")
+                return
+            }
+            
+            // Check if it's a launcher (user pressed Home button) - always relaunch
+            if (isLauncherPackage(topPackage)) {
+                android.util.Log.i("OverlayService", "Launcher detected ($topPackage) - user pressed Home, bringing AliMDM back")
+                bringAliMdmToFront()
+                return
+            }
+            
+            // Check if the locked app still has a visible/foreground process
+            // This indicates a child activity (barcode scanner, file picker, camera, etc.)
+            // was launched BY the locked app itself - allow it
+            // Safe in Lock Task mode: user can't open other apps, only the locked app can launch activities
+            if (isLockedAppProcessAlive()) {
+                android.util.Log.d("OverlayService", "Child activity detected ($topPackage) - locked app ($lockedPackage) process still alive, allowing")
+                return
+            }
+            
+            // Locked app process is dead (crashed/killed) and foreground is not a child activity
+            android.util.Log.i("OverlayService", "Locked app ($lockedPackage) process dead (current: $topPackage) - bringing AliMDM back")
+            bringAliMdmToFront()
+        } catch (e: Exception) {
+            android.util.Log.e("OverlayService", "Error checking foreground app: ${e.message}")
+        }
+    }
+    
+    /**
+     * Check if the locked app's process is still alive (not crashed).
+     * 
+     * In Lock Task mode, the user cannot open other apps — only the locked app itself
+     * can launch child activities (barcode scanner, file picker, camera intent, etc.).
+     * So if the locked app's process is still alive AND the foreground is not a launcher,
+     * it must be a child activity launched by the locked app.
+     * 
+     * When the app crashes, its process is killed and disappears from runningAppProcesses.
+     * When the user presses Home, the launcher is detected first (isLauncherPackage check).
+     * 
+     * Note: We check for process existence, not IMPORTANCE_VISIBLE, because full-screen
+     * child activities (like MLKit barcode scanner) cause the parent to receive onStop(),
+     * dropping its importance to CACHED — but the process is still alive.
+     */
+    private fun isLockedAppProcessAlive(): Boolean {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
+        val processes = am.runningAppProcesses ?: return false
+        
+        for (proc in processes) {
+            if (proc.processName == lockedPackage || proc.processName?.startsWith("$lockedPackage:") == true) {
+                android.util.Log.d("OverlayService", "Locked app process ($lockedPackage) alive - importance=${proc.importance}")
+                return true
+            }
+        }
+        // Process not found = app crashed/killed
+        android.util.Log.d("OverlayService", "Locked app process ($lockedPackage) NOT found in running processes")
+        return false
+    }
+    
+    /**
+     * Check if a package is a launcher (Home screen app).
+     * Uses PackageManager to dynamically detect all registered launchers on the device.
+     * Results are cached since launchers don't change at runtime.
+     */
+    private fun isLauncherPackage(pkg: String): Boolean {
+        if (cachedLauncherPackages == null) {
+            val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            val resolveInfos = packageManager.queryIntentActivities(intent, 0)
+            cachedLauncherPackages = resolveInfos.map { it.activityInfo.packageName }.toSet()
+            android.util.Log.d("OverlayService", "Cached launcher packages: $cachedLauncherPackages")
+        }
+        return cachedLauncherPackages?.contains(pkg) == true
+    }
+
+    /**
+     * Check if a package is a managed app (configured in AliMDM managed apps list).
+     * These are background apps (keep-alive, launchOnBoot) that may appear as "top" in
+     * UsageStats but should NOT trigger a relaunch of AliMDM.
+     * Results are cached and refreshed every 5 minutes.
+     */
+    private var managedPackagesCacheTime = 0L
+    private val MANAGED_CACHE_TTL = 300_000L // 5 minutes
+    
+    private fun isManagedAppPackage(pkg: String): Boolean {
+        val now = System.currentTimeMillis()
+        if (cachedManagedPackages == null || now - managedPackagesCacheTime > MANAGED_CACHE_TTL) {
+            cachedManagedPackages = readManagedAppPackages()
+            managedPackagesCacheTime = now
+        }
+        return cachedManagedPackages?.contains(pkg) == true
+    }
+    
+    /**
+     * Read all managed app package names from AsyncStorage.
+     */
+    private fun readManagedAppPackages(): Set<String> {
+        return try {
+            val dbPath = getDatabasePath("RKStorage").absolutePath
+            val db = android.database.sqlite.SQLiteDatabase.openDatabase(dbPath, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY)
+            val cursor = db.rawQuery(
+                "SELECT value FROM catalystLocalStorage WHERE key = ?",
+                arrayOf("@kiosk_managed_apps")
+            )
+            val result = if (cursor.moveToFirst()) {
+                val json = cursor.getString(0) ?: "[]"
+                val apps = org.json.JSONArray(json)
+                val packages = mutableSetOf<String>()
+                for (i in 0 until apps.length()) {
+                    val app = apps.getJSONObject(i)
+                    packages.add(app.getString("packageName"))
+                }
+                packages
+            } else {
+                emptySet()
+            }
+            cursor.close()
+            db.close()
+            if (result.isNotEmpty()) {
+                android.util.Log.d("OverlayService", "Cached managed app packages: $result")
+            }
+            result
+        } catch (e: Exception) {
+            DebugLog.d("OverlayService", "Could not read managed apps: ${e.message}")
+            emptySet()
+        }
+    }
+
+    /**
+     * Get the package name of the app currently in the foreground
+     * Uses UsageStatsManager which requires PACKAGE_USAGE_STATS permission
+     * This permission is automatically granted if app is Device Owner
+     */
+    private fun getForegroundPackage(): String? {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                val usageStatsManager = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                if (usageStatsManager != null) {
+                    val currentTime = System.currentTimeMillis()
+                    // Query events from last 5 seconds
+                    val stats = usageStatsManager.queryUsageStats(
+                        UsageStatsManager.INTERVAL_BEST,
+                        currentTime - 5000,
+                        currentTime
+                    )
+                    
+                    if (stats != null && stats.isNotEmpty()) {
+                        // Find the most recently used app
+                        val mostRecent = stats.maxByOrNull { it.lastTimeUsed }
+                        return mostRecent?.packageName
+                    }
+                }
+            } else {
+                // Fallback for older Android versions (< 5.1)
+                @Suppress("DEPRECATION")
+                val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                @Suppress("DEPRECATION")
+                val runningTasks = am.getRunningTasks(1)
+                return runningTasks.firstOrNull()?.topActivity?.packageName
+            }
+        } catch (e: Exception) {
+            DebugLog.d("OverlayService", "Error getting foreground package: ${e.message}")
+        }
+        return null
+    }
+
+    /**
+     * Relaunch the locked external app directly when it leaves the foreground.
+     * Falls back to bringing AliMDM to the foreground if no locked package is set.
+     *
+     * Fix #106: Previously this always brought AliMDM to front, which triggered
+     * onResume → startLockTask on MainActivity → visible flash. Now we relaunch
+     * the external app directly from the native layer, avoiding the JS round-trip.
+     */
+    private fun bringAliMdmToFront() {
+        // If we have a locked external app, relaunch it directly
+        val targetPackage = lockedPackage
+        if (targetPackage != null) {
+            try {
+                android.util.Log.i("OverlayService", "Relaunching external app directly: $targetPackage")
+                val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
+                if (launchIntent != null) {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(launchIntent)
+                    DebugLog.d("OverlayService", "External app relaunched directly: $targetPackage")
+                    return
+                } else {
+                    android.util.Log.w("OverlayService", "No launch intent for $targetPackage, falling back to AliMDM")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("OverlayService", "Failed to relaunch external app: ${e.message}")
+            }
+        }
+
+        // Fallback: bring AliMDM to front (webview/media mode, or if external app can't be launched)
+        try {
+            android.util.Log.i("OverlayService", "Bringing AliMDM to foreground for auto-relaunch")
+            val intent = Intent(this, MainActivity::class.java)
+            intent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            )
+            startActivity(intent)
+            DebugLog.d("OverlayService", "AliMDM brought to front")
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Failed to bring AliMDM to front: ${e.message}")
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        instance = null
+        try {
+            // #190 — Stop the native inactivity countdown so it can't fire after teardown
+            inactivityEnabled = false
+            inactivityHandler.removeCallbacks(inactivityRunnable)
+
+            // Stop MQTT watchdog
+            stopMqttWatchdog()
+
+            // Arrêter les mises à jour de la status bar
+            stopStatusUpdates()
+            
+            // Arrêter le monitoring du foreground
+            stopForegroundMonitoring()
+            stopOverlayRepinLoop()
+
+            // Désenregistrer le receiver
+            try {
+                unregisterReceiver(screenReceiver)
+            } catch (e: Exception) {
+                // Ignore si déjà désenregistré
+            }
+            
+            // Désenregistrer le volume receiver
+            try {
+                unregisterReceiver(volumeReceiver)
+            } catch (e: Exception) {
+                // Ignore si déjà désenregistré
+            }
+            
+            // Désenregistrer le battery receiver
+            try {
+                unregisterReceiver(batteryReceiver)
+            } catch (e: Exception) {
+                // Ignore si déjà désenregistré
+            }
+
+            // Utiliser la fonction commune de nettoyage
+            destroyOverlay()
+
+            DebugLog.d("OverlayService", "Overlay and status bar removed, receiver unregistered")
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Error removing overlay: ${e.message}")
+        }
+    }
+    
+    /**
+     * Start periodic MQTT health-check watchdog.
+     * Runs every 60s inside the foreground service — survives Doze mode.
+     * If MQTT was started but is disconnected, triggers a reconnect.
+     */
+    private fun startMqttWatchdog() {
+        stopMqttWatchdog()
+        val runnable = object : Runnable {
+            override fun run() {
+                try {
+                    com.alimdm.mqtt.MqttModule.checkAndReconnect()
+                } catch (e: Exception) {
+                    // MQTT not active or not configured, ignore
+                }
+                mqttWatchdogHandler.postDelayed(this, MQTT_WATCHDOG_INTERVAL)
+            }
+        }
+        mqttWatchdogRunnable = runnable
+        mqttWatchdogHandler.postDelayed(runnable, MQTT_WATCHDOG_INTERVAL)
+        DebugLog.d("OverlayService", "MQTT watchdog started (interval=${MQTT_WATCHDOG_INTERVAL}ms)")
+    }
+
+    private fun stopMqttWatchdog() {
+        mqttWatchdogRunnable?.let { mqttWatchdogHandler.removeCallbacks(it) }
+        mqttWatchdogRunnable = null
+    }
+
+    private fun destroyOverlay() {
+        try {
+            DebugLog.d("OverlayService", "destroyOverlay() - statusBarView=${statusBarView != null}, overlayView=${overlayView != null}, indicatorView=${indicatorView != null}")
+            
+            // Supprimer la status bar
+            statusBarView?.let {
+                try {
+                    windowManager?.removeView(it)
+                    DebugLog.d("OverlayService", "Status bar removed")
+                } catch (e: Exception) {
+                    DebugLog.d("OverlayService", "Status bar already removed or not attached: ${e.message}")
+                }
+            }
+            statusBarView = null
+
+            // Supprimer l'overlay principal (invisible en mode tap_anywhere, button en mode button)
+            overlayView?.let { 
+                try {
+                    windowManager?.removeView(it)
+                    DebugLog.d("OverlayService", "Overlay view removed")
+                } catch (e: Exception) {
+                    DebugLog.d("OverlayService", "Overlay already removed or not attached: ${e.message}")
+                }
+            }
+            overlayView = null
+            
+            // Supprimer l'indicateur visuel (mode tap_anywhere seulement)
+            indicatorView?.let { 
+                try {
+                    windowManager?.removeView(it)
+                    DebugLog.d("OverlayService", "Indicator view removed")
+                } catch (e: Exception) {
+                    DebugLog.d("OverlayService", "Indicator view already removed or not attached: ${e.message}")
+                }
+            }
+            indicatorView = null
+            
+            // Clear returnButton reference
+            returnButton = null
+
+            DebugLog.d("OverlayService", "All overlay views destroyed")
+        } catch (e: Exception) {
+            DebugLog.errorProduction("OverlayService", "Error destroying overlay: ${e.message}")
+        }
+    }
+
+    // Appelé quand l'app est swipée/killée depuis les recents
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        DebugLog.d("OverlayService", "Task removed - stopping overlay service")
+        stopSelf()
+    }
+
+    /**
+     * Handle configuration changes (rotation, screen size, etc.)
+     */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        
+        DebugLog.d("OverlayService", "Configuration changed - recreating overlays")
+        
+        // Notify blocking overlay manager
+        try {
+            val manager = BlockingOverlayManager.getInstance(this)
+            manager.onConfigurationChanged(newConfig)
+        } catch (e: Exception) {
+            DebugLog.e("OverlayService", "Error updating blocking overlays: ${e.message}")
+        }
+        
+        // Recreate the return button and status bar with new dimensions
+        try {
+            destroyOverlay()
+            createOverlay()
+            // Recreate status bar (destroyOverlay removes it but createOverlay does not rebuild it)
+            if (statusBarEnabled) {
+                createStatusBar()
+                startStatusUpdates()
+            }
+        } catch (e: Exception) {
+            DebugLog.e("OverlayService", "Error recreating overlay on config change: ${e.message}")
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}

@@ -1,0 +1,48 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+    image: ali-mdm:latest
+    restart: unless-stopped
+    environment:
+      FK_ADDR: ":8080"
+      FK_DB: "/data/alimdm.db"
+      FK_CONSOLE_DIR: "/app/console-dist"
+      FK_APK_ROOT: "/data/apks"
+      # REQUIRED: set a strong secret + enroll token before first start
+      FK_SECRET: "${FK_SECRET:-CHANGE_ME_SECRET}"
+      FK_ENROLL_TOKEN: "${FK_ENROLL_TOKEN:-CHANGE_ME_ENROLL}"
+      FK_BASE_URL: "${FK_BASE_URL:-https://cloud.example.com}"
+      # Optional MQTT poke (uncomment + set to enable low-latency command wake)
+      # FK_MQTT_URL: "tcp://mqtt:1883"
+    volumes:
+      - fk-data:/data
+    ports:
+      # Exposed for Caddy to proxy. Keep this internal in prod (bind to 127.0.0.1).
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      CLOUD_DOMAIN: "${CLOUD_DOMAIN:-cloud.example.com}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+
+volumes:
+  fk-data:
+  caddy-data:
+  caddy-config:

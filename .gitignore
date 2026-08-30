@@ -1,0 +1,14 @@
+/apps/server/api
+/apps/server/*.db
+/apps/server/apks/*.apk
+/apps/console/node_modules
+/apps/console/dist
+*.log
+.env
+__pycache__/
+/*.png
+/apk/
+/qr/
+/brand/.venv
+# Holds a live enrolment token.
+/apps/enroll/enroll.env

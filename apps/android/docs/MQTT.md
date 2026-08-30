@@ -1,0 +1,759 @@
+
+
+# Ali MDM MQTT Documentation
+
+**Real-time telemetry, command topics, and Home Assistant auto-discovery**
+
+<p>
+  <a href="README.md">Docs Home</a> •
+  <a href="INTEGRATIONS.md">Integrations</a> •
+  <a href="rest-api.md">REST API</a>
+</p>
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Configuration](#configuration)
+- [Getting Started](#getting-started)
+- [Features](#features)
+- [Troubleshooting](#troubleshooting)
+- [Related Resources](#related-resources)
+
+
+
+
+Ali MDM includes a native MQTT client for real-time integration with **Home Assistant** and other MQTT-based platforms.
+
+## Overview
+
+
+
+| Feature | Details |
+|---|---|
+| **Protocol** | MQTT v5 / v3.1.1 (HiveMQ Client) |
+| **Default Port** | 1883 |
+| **Discovery** | Home Assistant MQTT Discovery (auto-creates device + entities) |
+| **Push-based** | Real-time status updates (no polling needed) |
+| **LWT** | Availability tracking via Last Will and Testament |
+
+
+
+> [!TIP]
+> **MQTT vs REST API**: MQTT is push-based — the tablet publishes status updates automatically every N seconds. The REST API requires polling. MQTT is the preferred integration for Home Assistant. Both can run simultaneously.
+
+## Enabling MQTT
+
+### Via UI
+
+
+
+| Step | Action |
+|---|---|
+| **1** | 5-tap + PIN to enter Ali MDM settings |
+| **2** | Go to **Advanced** tab |
+| **3️⃣ MQTT Section** | Scroll to **MQTT** section |
+| **4️⃣ Enable MQTT** | Toggle **MQTT** switch |
+| **5️⃣ Configure Broker** | Enter broker URL (e.g. `192.168.1.100`) |
+| **6️⃣ Set Credentials** | Configure port, username, password |
+| **7️⃣ Connect** | Press **Connect** button |
+| **8️⃣ Verify Status** | Check connection indicator shows Connected |
+
+
+
+> [!NOTE]
+> Settings are saved automatically as you type. Connection is only established when you press "Connect" — no auto-reconnect on every keystroke.
+
+### Via Backup/Restore
+
+MQTT settings are included in Ali MDM backup/restore. You can configure one device and export the configuration to others.
+
+
+## Configuration Options
+
+
+
+| Setting | Default | Description |
+|---|---|---|
+| **Enable MQTT** | Off | Master toggle for MQTT client |
+| **Broker URL** | *(empty)* | MQTT broker hostname or IP address (required) |
+| **Port** | 1883 | MQTT broker port (1-65535) |
+| **Username** | *(empty)* | MQTT username (optional) |
+| **Password** | *(empty)* | MQTT password (stored in Android Keychain, optional) |
+| **Client ID** | *(auto)* | MQTT client ID (auto-generated as `alimdm_{deviceId}` if empty) |
+| **Device Name** | *(empty)* | Friendly name used in MQTT topics and HA device name (e.g. "lobby", "entrance"). If empty, uses Android ID. |
+| **Base Topic** | `alimdm` | Base MQTT topic prefix for this device |
+| **Discovery Prefix** | `homeassistant` | Home Assistant MQTT discovery prefix |
+| **Status Interval** | 30 | How often to publish status (5-3600 seconds) |
+| **Allow Remote Control** | On | Enable commands via MQTT (brightness, reload, etc.) |
+| **Always-on Motion Detection** | Off | Run camera-based motion detection continuously (higher battery usage) |
+
+
+
+
+## Topic Structure
+
+For a device with `deviceName = lobby` (or `deviceId` if no name set) and default base topic `alimdm`:
+
+
+
+| Purpose | Topic | QoS | Retained |
+|---|---|---|---|
+| **Availability (LWT)** | `alimdm/lobby/availability` | 1 | Yes |
+| **State (all data)** | `alimdm/lobby/state` | 0 | Yes |
+| **Commands** | `alimdm/lobby/set/{entity}` | 1 | No |
+| **Discovery** | `homeassistant/{component}/alimdm_{deviceId}/{objectId}/config` | 1 | Yes |
+
+
+
+### Topic ID
+
+The topic identifier is either the configured **Device Name** (sanitized: lowercased, spaces replaced with underscores) or the `ANDROID_ID` if no name is set. This makes topics human-readable when using device names (e.g. `alimdm/lobby/state` instead of `alimdm/9774d56d682e549c/state`).
+
+### Availability
+
+
+
+| Status | Action | Retained |
+|---|---|---|
+| **Online** | Published on successful connection | `"online"` |
+| **Offline** | Published via LWT on unexpected disconnect | `"offline"` |
+| **Graceful disconnect** | Publishes before disconnecting | `"offline"` |
+
+
+
+### State
+
+A JSON object published periodically (default: every 30 seconds) containing all device data:
+
+
+
+```json
+{
+  "battery": {
+    "level": 85,
+    "charging": true
+  },
+  "screen": {
+    "on": true,
+    "brightness": 75,
+    "screensaverActive": false
+  },
+  "wifi": {
+    "ssid": "HomeNetwork",
+    "signalLevel": 83,
+    "ip": "192.168.1.50"
+  },
+  "device": {
+    "ip": "192.168.1.50",
+    "version": "1.2.12",
+    "kioskMode": true,
+    "isDeviceOwner": true,
+    "motionAlwaysOn": false
+  },
+  "sensors": {
+    "light": 150.5
+  },
+  "memory": {
+    "usedPercent": 41
+  },
+  "storage": {
+    "availableMB": 27685
+  },
+  "audio": {
+    "volume": 50
+  },
+  "webview": {
+    "currentUrl": "http://192.168.1.244",
+    "motionDetected": false
+  }
+}
+```
+
+
+
+
+## Home Assistant MQTT Discovery
+
+Ali MDM automatically publishes [MQTT Discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) configurations on connect/reconnect. All entities appear under a single device in Home Assistant.
+
+### Prerequisites
+
+
+
+| Requirement | Details |
+|---|---|
+| **Home Assistant** | With [MQTT integration](https://www.home-assistant.io/integrations/mqtt/) configured |
+| **MQTT Broker** | Accessible by both HA and the tablet (e.g. Mosquitto) |
+| **Discovery** | MQTT Discovery enabled in HA (enabled by default) |
+
+
+
+### 📱 Device
+
+All entities are grouped under one HA device:
+
+
+
+| Field | Value |
+|---|---|
+| **Name** | Ali MDM {deviceName} *(or Ali MDM {deviceId} if no name set)* |
+| **Model** | Ali MDM |
+| **Manufacturer** | Ali MDM |
+| **SW Version** | *(app version)* |
+| **Configuration URL** | `http://{localIp}:8080` |
+
+
+
+### Entities
+
+#### Sensors (11)
+
+
+
+| Entity | Value Template | Device Class | Unit |
+|---|---|---|---|
+| **Battery Level** | `battery.level` | battery | % |
+| **Brightness** | `screen.brightness` | — | % |
+| **WiFi SSID** | `wifi.ssid` | — | — |
+| **WiFi Signal** | `wifi.signalLevel` | — | % |
+| **Light Sensor** | `sensors.light` | illuminance | lx |
+| **IP Address** | `device.ip` | — | — |
+| **App Version** | `device.version` | — | — |
+| **Memory Used** | `memory.usedPercent` | — | % |
+| **Storage Free** | `storage.availableMB` | — | MB |
+| **Current URL** | `webview.currentUrl` | — | — |
+| **Volume** | `audio.volume` | — | % |
+
+
+
+#### Binary Sensors (6)
+
+
+
+| Entity | Value Template | Device Class |
+|---|---|---|
+| **Screen** | `screen.on` | power |
+| **Screensaver** | `screen.screensaverActive` | — |
+| **Battery Charging** | `battery.charging` | battery_charging |
+| **Kiosk Mode** | `device.kioskMode` | — |
+| **Device Owner** | `device.isDeviceOwner` | — |
+| **Motion** | `webview.motionDetected` | motion |
+
+
+
+#### Number Controls (2)
+
+
+
+| Entity | Command Topic | Min | Max | Unit |
+|---|---|---|---|---|
+| **Brightness Control** | `.../set/brightness` | 0 | 100 | % |
+| **Volume Control** | `.../set/volume` | 0 | 100 | % |
+
+
+
+#### Switches (3)
+
+
+
+| Entity | Command Topic | Payload |
+|---|---|---|
+| **Screen Power** | `.../set/screen` | ON / OFF |
+| **Screensaver** | `.../set/screensaver` | ON / OFF |
+| **Always-on Motion Detection** | `.../set/motion_always_on` | ON / OFF |
+
+
+
+#### Buttons (14)
+
+
+
+| Entity | Command Topic | Icon |
+|---|---|---|
+| **Reload** | `.../set/reload` | mdi:reload |
+| **Wake** | `.../set/wake` | mdi:alarm |
+| **Reboot** | `.../set/reboot` | mdi:restart |
+| **Clear Cache** | `.../set/clear_cache` | mdi:delete-sweep |
+| **Lock** | `.../set/lock` | mdi:lock |
+| **Remote Up** | `.../set/remote_up` | mdi:arrow-up-bold |
+| **Remote Down** | `.../set/remote_down` | mdi:arrow-down-bold |
+| **Remote Left** | `.../set/remote_left` | mdi:arrow-left-bold |
+| **Remote Right** | `.../set/remote_right` | mdi:arrow-right-bold |
+| **Remote Select** | `.../set/remote_select` | mdi:radiobox-marked |
+| **Remote Back** | `.../set/remote_back` | mdi:arrow-left-circle |
+| **Remote Home** | `.../set/remote_home` | mdi:home |
+| **Remote Menu** | `.../set/remote_menu` | mdi:menu |
+| **Remote Play/Pause** | `.../set/remote_playpause` | mdi:play-pause |
+
+
+
+#### Text (6)
+
+
+
+| Entity | Command Topic | Description |
+|---|---|---|
+| **Navigate URL** | `.../set/url` | Navigate WebView to a URL |
+| **Text to Speech** | `.../set/tts` | Speak text aloud on the tablet |
+| **Toast Message** | `.../set/toast` | Show a toast notification on screen |
+| **Keyboard Key** | `.../set/keyboard_key` | Press a single key (e.g. `enter`, `a`, `f5`) |
+| **Keyboard Combo** | `.../set/keyboard_combo` | Press a key combination (e.g. `ctrl+c`, `alt+f4`) |
+| **Keyboard Text** | `.../set/keyboard_text` | Type a text string into focused field |
+
+
+
+**Total: 42 entities** auto-discovered in Home Assistant.
+
+
+## Command Reference
+
+Commands are sent by publishing to `{baseTopic}/{topicId}/set/{entity}`.
+
+
+
+| Topic Suffix | Command | Payload | Description |
+|---|---|---|---|
+| **brightness** | setBrightness | `0-100` (integer) | Set screen brightness |
+| **volume** | setVolume | `0-100` (integer) | Set media volume |
+| **screen** | screenOn / screenOff | `ON` / `OFF` | Turn screen on or off |
+| **screensaver** | screensaverOn / screensaverOff | `ON` / `OFF` | Enable/disable screensaver |
+| **motion_always_on** | setMotionAlwaysOn | `ON` / `OFF` | Toggle always-on motion detection |
+| **reload** | reload | any | Reload WebView |
+| **wake** | wake | any | Wake from screensaver |
+| **reboot** | reboot | any | Reboot device (Device Owner required) |
+| **clear_cache** | clearCache | any | Clear WebView cache |
+| **lock** | lockDevice | any | Lock device screen |
+| **url** | setUrl | URL string | Navigate to URL |
+| **mode** | setMode | JSON: `{"mode":"webview","url":"https://..."}`, `{"mode":"external_app","package":"com.app"}` (omit `package` for the stored multi-app config), or `{"mode":"media_player"}` | Switch display mode at runtime (webview / external_app / media_player) |
+| **tts** | tts | text string | Text-to-speech (handled natively) |
+| **toast** | toast | text string | Show toast notification (handled natively) |
+| **launch_app** | launchApp | package name | Launch external app |
+| **execute_js** | executeJs | JS code string | Execute JavaScript in WebView |
+| **audio_play** | audioPlay | JSON `{"url":"...","loop":false,"volume":50}` | Play audio from URL |
+| **audio_stop** | audioStop | any | Stop audio playback |
+| **audio_beep** | audioBeep | any | Play beep sound |
+| **rotation_start** | rotationStart | any | Start URL rotation |
+| **rotation_stop** | rotationStop | any | Stop URL rotation |
+| **restart_ui** | restartUi | any | Restart app UI |
+| **remote_up** | remoteKey (up) | `PRESS` | D-pad Up |
+| **remote_down** | remoteKey (down) | `PRESS` | D-pad Down |
+| **remote_left** | remoteKey (left) | `PRESS` | D-pad Left |
+| **remote_right** | remoteKey (right) | `PRESS` | D-pad Right |
+| **remote_select** | remoteKey (select) | `PRESS` | D-pad Select / Enter |
+| **remote_back** | remoteKey (back) | `PRESS` | Back |
+| **remote_home** | remoteKey (home) | `PRESS` | Home |
+| **remote_menu** | remoteKey (menu) | `PRESS` | Menu |
+| **remote_playpause** | remoteKey (playpause) | `PRESS` | Media Play/Pause |
+| **keyboard_key** | keyboardKey | key name (e.g. `enter`, `a`, `f5`) | Press a single key |
+| **keyboard_combo** | keyboardCombo | combo string (e.g. `ctrl+c`) | Press a key combination |
+| **keyboard_text** | keyboardText | text string | Type text into focused field |
+
+
+
+> [!NOTE]
+> Commands have full parity with the [REST API](REST-API). Both interfaces dispatch through the same native command handler. Remote control and keyboard commands are handled natively via the AccessibilityService (cross-app) or Activity key dispatch (in-app). TTS and Toast are also handled natively (no JS round-trip).
+
+
+## Motion Detection
+
+Ali MDM can detect motion using the device camera and report it as a binary sensor in Home Assistant.
+
+
+
+| Mode | Behavior | Battery Impact |
+|---|---|---|
+| **Default** | Motion detection only runs during screensaver (to wake the screen on movement) | Minimal |
+| **Always-on** | Continuous motion detection via HA switch or MQTT setting | Higher |
+
+
+
+**Always-on mode**: Enable "Always-on Motion Detection" in MQTT settings or via the HA switch entity to run motion detection continuously. The `motion_detected` binary sensor will update in real-time. Note: this uses the camera continuously and increases battery usage.
+
+> [!NOTE]
+> Camera permission must be granted for motion detection to work. Ali MDM requests this permission automatically on first launch.
+
+
+## Connection Behavior
+
+### Auto-reconnect
+
+The MQTT client automatically reconnects when the connection is lost (WiFi drop, broker restart). On reconnect, it:
+
+
+| Step | Action |
+|---|---|
+| **1** | Publishes `"online"` to the availability topic |
+| **2** | Re-publishes all 42 HA Discovery configs |
+| **3** | Re-subscribes to command topics |
+| **4** | Resumes periodic status publishing |
+
+
+
+### LWT (Last Will and Testament)
+
+If the connection is lost unexpectedly, the broker publishes `"offline"` to the availability topic. Home Assistant will show the device as "Unavailable".
+
+### Concurrent with REST API
+
+MQTT and the REST API can run simultaneously. Both use the same internal command handler and status data. Enabling MQTT does not disable the REST API.
+
+
+## Testing with MQTT CLI
+
+
+
+```bash
+# Subscribe to all Ali MDM topics
+mosquitto_sub -h BROKER_IP -t "alimdm/#" -v
+
+# Check device availability
+mosquitto_sub -h BROKER_IP -t "alimdm/TOPIC_ID/availability"
+
+# Read device state
+mosquitto_sub -h BROKER_IP -t "alimdm/TOPIC_ID/state"
+
+# Set brightness to 50%
+mosquitto_pub -h BROKER_IP -t "alimdm/TOPIC_ID/set/brightness" -m "50"
+
+# Turn screen off
+mosquitto_pub -h BROKER_IP -t "alimdm/TOPIC_ID/set/screen" -m "OFF"
+
+# Turn screen on
+mosquitto_pub -h BROKER_IP -t "alimdm/TOPIC_ID/set/screen" -m "ON"
+
+# Navigate to URL
+mosquitto_pub -h BROKER_IP -t "alimdm/TOPIC_ID/set/url" -m "https://example.com"
+
+# Reload WebView
+mosquitto_pub -h BROKER_IP -t "alimdm/TOPIC_ID/set/reload" -m "PRESS"
+
+# Play audio
+mosquitto_pub -h BROKER_IP -t "alimdm/TOPIC_ID/set/audio_play" -m '{"url":"https://example.com/sound.mp3","volume":50}'
+
+# Text-to-speech
+mosquitto_pub -h BROKER_IP -t "alimdm/TOPIC_ID/set/tts" -m "Hello from Home Assistant"
+
+# Show toast
+mosquitto_pub -h BROKER_IP -t "alimdm/TOPIC_ID/set/toast" -m "Hello!"
+
+# Toggle always-on motion detection
+mosquitto_pub -h BROKER_IP -t "alimdm/TOPIC_ID/set/motion_always_on" -m "ON"
+
+# View HA discovery configs
+mosquitto_sub -h BROKER_IP -t "homeassistant/#" -v
+```
+
+
+
+Replace `BROKER_IP` with your MQTT broker IP and `TOPIC_ID` with the device name (e.g. `lobby`) or Android ID if no name is configured.
+
+
+## 🏠 Home Assistant Examples
+
+### 🤖 Automations
+
+#### 🏃 Wake tablet on room motion
+
+
+
+```yaml
+automation:
+  - alias: "Wake Tablet on Room Motion"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.alimdm_abc123_motion
+        to: "on"
+    condition:
+      - condition: state
+        entity_id: binary_sensor.alimdm_abc123_screensaver_active
+        state: "on"
+    action:
+      - service: mqtt.publish
+        data:
+          topic: "alimdm/lobby/set/wake"
+          payload: "PRESS"
+```
+
+
+
+#### 🌙 Turn off tablet screen at night
+
+
+
+```yaml
+automation:
+  - alias: "Tablet Screen Off at Night"
+    trigger:
+      - platform: time
+        at: "23:00:00"
+    action:
+      - service: mqtt.publish
+        data:
+          topic: "alimdm/lobby/set/screen"
+          payload: "OFF"
+```
+
+
+
+#### 🌅 Turn on tablet screen in the morning
+
+
+
+```yaml
+automation:
+  - alias: "Tablet Screen On in Morning"
+    trigger:
+      - platform: time
+        at: "07:00:00"
+    action:
+      - service: mqtt.publish
+        data:
+          topic: "alimdm/lobby/set/screen"
+          payload: "ON"
+```
+
+
+
+#### 🔔 Doorbell alert on tablet
+
+
+
+```yaml
+automation:
+  - alias: "Doorbell Alert on Tablet"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.doorbell
+        to: "on"
+    action:
+      - service: mqtt.publish
+        data:
+          topic: "alimdm/lobby/set/audio_beep"
+          payload: "PRESS"
+      - service: mqtt.publish
+        data:
+          topic: "alimdm/lobby/set/toast"
+          payload: "Someone is at the door!"
+      - service: mqtt.publish
+        data:
+          topic: "alimdm/lobby/set/url"
+          payload: "http://homeassistant:8123/lovelace/cameras"
+```
+
+
+
+#### 💡 Adjust brightness based on room light
+
+
+
+```yaml
+automation:
+  - alias: "Tablet Auto Brightness via MQTT"
+    trigger:
+      - platform: state
+        entity_id: sensor.living_room_light_level
+    action:
+      - service: mqtt.publish
+        data:
+          topic: "alimdm/lobby/set/brightness"
+          payload: >-
+            {{ (states('sensor.living_room_light_level') | float / 10) | int | min(100) }}
+```
+
+
+
+#### 🗣️ TTS announcement
+
+
+
+```yaml
+automation:
+  - alias: "Announce Weather on Tablet"
+    trigger:
+      - platform: time
+        at: "08:00:00"
+    action:
+      - service: mqtt.publish
+        data:
+          topic: "alimdm/lobby/set/tts"
+          payload: "Good morning! Today's forecast is {{ states('weather.home') }}."
+```
+
+
+
+### 📊 Dashboard Card (Lovelace)
+
+
+
+```yaml
+type: entities
+title: Tablet
+entities:
+  - entity: sensor.alimdm_abc123_battery_level
+  - entity: binary_sensor.alimdm_abc123_battery_charging
+  - entity: binary_sensor.alimdm_abc123_screen_on
+  - entity: number.alimdm_abc123_brightness_control
+  - entity: number.alimdm_abc123_volume_control
+  - entity: switch.alimdm_abc123_screen_power
+  - entity: switch.alimdm_abc123_screensaver
+  - entity: switch.alimdm_abc123_motion_always_on
+  - entity: binary_sensor.alimdm_abc123_motion_detected
+  - entity: text.alimdm_abc123_tts
+  - entity: text.alimdm_abc123_toast
+  - entity: sensor.alimdm_abc123_wifi_ssid
+  - entity: sensor.alimdm_abc123_wifi_signal
+  - entity: button.alimdm_abc123_reload
+  - entity: button.alimdm_abc123_wake
+  - entity: button.alimdm_abc123_reboot
+```
+
+
+
+
+## Troubleshooting
+
+### Device not appearing in Home Assistant
+
+
+
+| Check | Solution |
+|---|---|
+| **MQTT Integration** | Verify MQTT integration is configured in HA |
+| **Broker Reachability** | Check broker URL is correct and reachable from tablet |
+| **Discovery Enabled** | Check MQTT Discovery is enabled in HA (Settings > Integrations > MQTT > Configure) |
+| **Discovery Messages** | Use `mosquitto_sub -h BROKER_IP -t "homeassistant/#" -v` to verify discovery messages |
+
+
+
+### Entities showing "Unknown"
+
+
+
+| Issue | Solution |
+|---|---|
+| **First Status Publish** | Wait for the first status publish (up to 30 seconds by default) |
+| **State Topic** | Check: `mosquitto_sub -h BROKER_IP -t "alimdm/TOPIC_ID/state"` |
+| **Binary Sensors** | Ensure state JSON contains expected boolean fields |
+| **TTS/Toast** | These always show empty — this is by design (fire-and-forget commands) |
+
+
+
+### Connection keeps dropping
+
+
+
+| Cause | Solution |
+|---|---|
+| **WiFi Stability** | Check WiFi stability on the tablet |
+| **Client ID Conflict** | Verify broker allows the configured client ID |
+| **Duplicate Client** | Check if another client is using the same client ID |
+| **Normal Behavior** | The client auto-reconnects automatically — brief disconnections are normal |
+
+
+
+### Screen Power switch flips back to ON
+
+
+
+| Issue | Solution |
+|---|---|
+| **Version Bug** | This is resolved in v1.2.20+. The tablet publishes the new state as soon as the screen actually changes (native `ACTION_SCREEN_ON`/`OFF` hook), so Home Assistant no longer keeps the previous value until the next periodic publish |
+| **No Device Owner / Accessibility** | Without either, Ali MDM cannot power the display off, it only dims it to 0. The state then honestly reports `on`, so the switch returns to ON. Enable Device Owner or the Ali MDM accessibility service |
+
+
+
+### Screensaver switch does not turn the screensaver on
+
+
+
+| Issue | Solution |
+|---|---|
+| **Version Bug** | Resolved in v1.2.20+. Sending `ON` now shows the screensaver immediately; before, it only re-enabled the feature and the screen went dark after the inactivity timeout |
+| **Entity Meaning** | The switch mirrors `screen.screensaverActive`, i.e. whether the screensaver is showing right now, not whether the feature is enabled in settings |
+
+
+
+### Device becomes unavailable after a few hours
+
+
+
+| Cause | Solution |
+|---|---|
+| **Doze / battery optimization** | Once the tablet is unplugged and idle, Android defers the app's network and the broker drops the connection despite the wake lock Ali MDM holds. Exempt Ali MDM: the MQTT settings section shows a warning with a one-tap button when the exemption is missing |
+| **Lock Mode active** | Supported from v1.2.20+: Ali MDM whitelists the system dialog for the few seconds it is shown, so the in-app button works while pinned. If the dialog still does not appear, grant it over ADB: `adb shell dumpsys deviceidle whitelist +com.alimdm` |
+| **Keep it plugged in** | A tablet on permanent power never enters Doze, which is the usual kiosk setup |
+| **Process killed (no Lock Mode)** | Without Lock Mode, Ali MDM used to run with no foreground service, so OEM battery managers could kill it and MQTT never came back. From v1.2.20+ a silent keep-alive notification appears when MQTT is enabled without Lock Mode. Do not disable that notification |
+
+
+### Motion detection not working
+
+
+
+| Issue | Solution |
+|---|---|
+| **Camera Permission** | Grant camera permission to the app (requested automatically on first launch) |
+| **Default Behavior** | By default, motion only activates during screensaver |
+| **Always-on Mode** | Enable "Always-on Motion Detection" for continuous detection |
+| **Debug Logs** | Check logs: `adb logcat | grep MotionDetection` |
+
+
+
+### WiFi SSID showing "WiFi" instead of real name
+
+
+
+| Issue | Solution |
+|---|---|
+| **Location Permission** | Grant location permissions (requested automatically on first launch) |
+| **Android Requirement** | Android requires location permissions to read WiFi SSID (Android 8.0+) |
+
+
+
+### TTS not speaking
+
+
+
+| Issue | Solution |
+|---|---|
+| **TTS Engine** | Ensure the device has a TTS engine installed (most Android devices include Google TTS) |
+| **Volume** | Check device volume is not muted |
+| **Native Handling** | TTS is handled natively by the MQTT module — no need for the REST API to be running |
+
+
+
+
+## Technical Details
+
+
+
+| Component | Details |
+|---|---|
+| **MQTT Library** | HiveMQ MQTT Client (`com.hivemq:hivemq-mqtt-client:1.3.12`) |
+| **Connection** | Automatic reconnect with exponential backoff |
+| **Clean Session** | Yes (no persistent subscriptions) |
+| **Keep Alive** | 30 seconds |
+| **Thread Safety** | MQTT callbacks are dispatched to the main thread via `Handler(Looper.getMainLooper())` |
+| **Password Storage** | Encrypted in Android Keychain (same as REST API key) |
+| **TTS & Toast** | Handled natively in the MQTT module (no JS round-trip) |
+
+
+
+
+## See Also
+
+
+
+| Document | Focus |
+|---|---|
+| **REST API Documentation** | HTTP-based integration (polling) |
+| **ADB Configuration Guide** | Headless provisioning via ADB |
+| **Installation Guide** | Device setup |
+| **Integrations Overview** | Comparison of integration methods |
+
+
+
+
+
+
+
+

@@ -1,0 +1,82 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What is Ali MDM
+
+Ali MDM is a free, open-source Android kiosk platform built with React Native + TypeScript, with extensive Kotlin native modules for device control. It is designed as an open alternative to Fully Kiosk Browser.
+
+Key capabilities: WebView kiosk, external app launcher, dashboard, media player, 40+ REST API endpoints, MQTT/Home Assistant integration, Device Owner mode, ADB provisioning.
+
+## Commands
+
+```bash
+# Development
+npm start                           # Start Metro bundler
+npm run android                     # Run on connected device/emulator
+npm run lint                        # ESLint
+npm test                            # Jest unit tests
+npm test -- --testPathPattern=foo   # Run a single test file
+
+# Android build
+cd android && ./gradlew assembleRelease   # Release APK
+cd android && ./gradlew assembleBundle   # Release AAB (Play Store)
+```
+
+Output APK: `android/app/build/outputs/apk/release/app-release.apk`
+
+Requirements: Node 20+, JDK 17+, Android SDK 26+.
+
+## Architecture
+
+### React Native ↔ Native Bridge Pattern
+
+Every piece of device functionality lives in a Kotlin module (`android/app/src/main/java/com/alimdm/`) paired with a TypeScript bridge in `src/utils/`. When adding device-level features, both sides must be updated together.
+
+Key native modules:
+- **KioskModule.kt** — lock task, screen on/off, power, home button override
+- **AppLauncherModule.kt** — external app lifecycle management
+- **BlockingOverlayModule.kt** — draws overlay views to block UI regions
+- **HttpServerModule.kt** — embedded HTTP server for REST API
+- **AliMdmAccessibilityService.kt** — accessibility service for back-button/gesture suppression
+- **BackgroundAppMonitorService.kt** / **KioskWatchdogService.kt** — foreground services keeping kiosk alive
+
+### State & Storage
+
+`src/utils/storage.ts` is the central persistent state layer (~2000+ lines). All settings, kiosk config, and feature flags are stored via AsyncStorage abstractions here. `src/utils/secureStorage.ts` handles credentials via Keychain. Virtually every component reads settings through these utilities.
+
+### Display Modes
+
+`src/screens/KioskScreen.tsx` is the primary runtime screen. It conditionally renders one of:
+- **WebViewComponent** — wraps `react-native-webview` with auto-reload, keyboard avoidance, cookie injection, HTTP basic auth
+- **ExternalAppOverlay** — launches and monitors an external Android app
+- **MediaPlayerComponent** — video/image slideshow player
+- **DashboardGrid** — tile-based launcher
+
+Mode is determined by settings read from storage at startup.
+
+### Settings UI
+
+`src/screens/settings/SettingsScreenNew.tsx` hosts a tabbed settings interface. Each tab is a separate component under `src/screens/settings/tabs/` and `src/components/settings/`. The settings UI uses React Native Paper (Material Design).
+
+### Navigation
+
+Minimal stack: `src/navigation/AppNavigator.tsx` routes between KioskScreen, PinScreen, SettingsScreenNew, and BlockingOverlaysScreen.
+
+### REST API & MQTT
+
+`src/utils/ApiService.ts` handles inbound REST requests (routed through `HttpServerModule`). `src/utils/MqttModule.ts` manages MQTT for Home Assistant discovery. Documentation for all endpoints is in `docs/rest-api.md` and `docs/MQTT.md`.
+
+### Types
+
+Shared TypeScript types for complex features live in `src/types/` — important ones: `managedApps.ts`, `dashboard.ts`, `blockingOverlay.ts`, `screenScheduler.ts`, `planner.ts`.
+
+### Dependency Patches
+
+`patches/` contains patch-package patches applied via `postinstall`. Do not upgrade patched dependencies without verifying the patches still apply.
+
+Current patches:
+- **`react-native-webview+13.16.0.patch`** — auto-grant camera/mic permissions in kiosk mode (and, since #219, also request the matching Android runtime permission when it is missing: auto-granting only covers the web layer, and nothing else in the app asked for `CAMERA`/`RECORD_AUDIO` outside the permission wizard. The system suppresses that dialog in lock task, so it has to be granted before Lock Mode), SSL certificate handling for same-host redirects, a native `DownloadListener` hook routing PDFs to the bundled viewer, and a guard in `RNCWebViewManagerImpl.applyUserAgentString()` that catches the `IllegalArgumentException` Chromium throws for a custom User-Agent containing illegal header characters (it crashed the app on the Fabric mount thread) and falls back to the default UA.
+- **`@react-native-community+slider+5.1.1.patch`** — re-entrancy guard in `ReactSliderManager.onProgressChanged()` to stop a `StackOverflowError` when initializing a Slider on Android 8.x (#86).
+- **`@react-native-cookies+cookies+6.2.1.patch`** — build/compat fix.
+- **`react-native-vision-camera+4.7.3.patch`** — three fixes: (1) guard `CameraDevicesManager` against `getCameraIdList()` returning `null` on cameraless x86 / BlissOS devices, which otherwise throws an NPE during TurboModule init and crashes the app on launch (#187); (2) `runOnUiThreadAndWait()` now routes exceptions back to the suspended coroutine via `resumeWith(Result.failure(e))` instead of letting them escape as an uncaught exception on the UI Handler thread (which crashed the app); (3) `CameraViewModule.takePhoto()` calls `findCameraView()` inside `withPromise` so a `ViewNotFoundError` (CameraView unmounted mid-capture, e.g. motion detection) rejects the promise instead of crashing — the `backgroundCoroutineScope` has no exception handler. Together (2)+(3) fix the `ViewNotFoundError` crash from `findCameraView` reported on v1.2.19.

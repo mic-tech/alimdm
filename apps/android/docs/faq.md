@@ -1,0 +1,244 @@
+# Frequently Asked Questions
+
+**Common questions and troubleshooting for Ali MDM**
+
+[Docs Home](README) • [Installation](Installation) • [Integrations](Integrations)
+
+> [!TIP]
+> Start from [Installation Guide](Installation) for first deployment, then use this page for edge cases.
+
+## Installation
+
+**Q: Do I need to root my tablet?**
+- **A:** No! Ali MDM uses Android's official Device Owner API. **No root required**.
+
+**Q: Do I need Android Studio?**
+- **A:** No! Just ADB tool (15 MB download). See [Installation Guide](Installation).
+
+**Q: Can I install from Play Store?**
+- **A:** Yes! Search "Ali MDM" on Google Play Store, or download APK from [Releases](https://github.com/mic-tech/ali-mdm/releases).
+
+**Q: Which Android versions are supported?**
+- **A:** Android 8.0+ (API 26 and above).
+
+## Device Owner
+
+**Q: What is Device Owner mode?**
+- **A:** Device Owner is Android's official enterprise feature that gives Ali MDM complete control over the device for full kiosk lockdown. It's like MDM (Mobile Device Management) but built into Android.
+
+**Q: Is Device Owner required?**
+- **A:** No, but **highly recommended** for production use. Without Device Owner, kiosk lockdown is partial (users may exit with back button, see notifications, etc.).
+
+**Q: Can I activate Device Owner after installing Ali MDM?**
+- **A:** Yes! You just need to remove **all accounts** from the device first (Settings → Accounts). Once the `dpm` command succeeds, you can sign back into your accounts. A factory reset is **not** required — only the absence of active accounts matters.
+
+**Q: Factory reset required?**
+- **A:** No! Android's actual requirement is that **no user accounts** are active on the device. Simply remove all accounts (Google, Samsung, Microsoft, SIM profiles), run the `dpm` command, then sign back in. A factory reset is only needed as a fallback if account removal alone doesn't work (some devices retain hidden accounts).
+
+**Q: Can I remove Device Owner?**
+- **A:** Yes! In Ali MDM settings, use the "⚠️ Remove Device Owner" button (NOT "Exit Kiosk Mode"). Or via ADB:
+  ```bash
+  adb shell dpm remove-active-admin com.alimdm/.DeviceAdminReceiver
+  ```
+
+**Q: Does Device Owner void warranty?**
+- **A:** No. Device Owner is an official Android feature with no system modifications.
+
+## Usage
+
+**Q: How to access settings in kiosk mode?**
+- **A:** Tap 5 times on the secret button (default: bottom-right corner), then enter your PIN code.
+
+**Q: Can I use custom URLs?**
+- **A:** Yes! Any HTTPS/HTTP URL works (Home Assistant, dashboards, websites, web apps, etc.).
+
+**Q: Does it work with Home Assistant?**
+- **A:** Perfectly! Many users deploy Ali MDM for Home Assistant dashboards.
+
+**Q: Can I display local HTML files?**
+- **A:** Yes. Enter a `file://` URL in Website mode, for example
+  `file:///storage/emulated/0/Android/data/com.alimdm/files/dashboard/index.html`.
+  You must enable **Advanced > PDF Viewer** for it to work: that setting is what grants the
+  WebView file access (`allowFileAccess`, `allowFileAccessFromFileURLs`,
+  `allowUniversalAccessFromFileURLs` and the `file://` origin). Without it the page fails
+  with `net::ERR_ACCESS_DENIED`.
+
+**Q: How do I change the URL?**
+- **A:** Tap 5 times bottom-right → Enter PIN → Settings → Change URL.
+
+**Q: I forgot my PIN code. What do I do?**
+- **A:** If Device Owner is active: You'll need to factory reset (or use ADB to remove Device Owner first). This is by design for security.
+
+**Q: Can I rotate between multiple URLs?**
+- **A:** Not yet, but planned for v1.1! You can use a single URL pointing to a page that rotates content.
+
+## Compatibility
+
+**Q: Which tablets are supported?**
+- **A:** Any Android 8.0+ tablet. Tested on:
+  | Brand | Models |
+  |---|---|
+  | **Samsung** | Galaxy Tab A8, A9+, S6 Lite |
+  | **Lenovo** | Tab M10, M11 |
+  | **Xiaomi** | Redmi Pad SE |
+  | **Generic** | Most Android tablets |
+
+**Q: Does it work on Samsung tablets?**
+- **A:** Yes! Device Owner mode specifically blocks Samsung update popups and bloatware.
+
+**Q: Does it work on Fire tablets (Amazon)?**
+- **A:** Should work, but not officially tested. Device Owner setup may differ on Fire OS.
+
+**Q: Does it work on smartphones?**
+- **A:** Technically yes, but Ali MDM is optimized for tablets. Phone screens are small for kiosk displays.
+
+**Q: Does it work on Chromebooks?**
+- **A:** No. Ali MDM is Android-only.
+
+## Troubleshooting
+
+**Q: Kiosk mode doesn't lock completely**
+- **A:** Make sure Device Owner is activated. Without Device Owner, lockdown is partial. See [Installation Guide](installation.md#advanced-install-device-owner-mode).
+
+**Q: System notifications still appear**
+- **A:** Device Owner mode blocks all notifications. If they still appear:
+  1. Verify Device Owner is active: `adb shell dpm list-owners`
+  2. Reboot tablet
+  3. Restart kiosk mode
+
+**Q: Samsung update popup appears**
+- **A:** Device Owner mode should block Samsung popups. If they still appear, try:
+  1. Suspend Samsung system apps in Ali MDM settings (coming in v1.1)
+  2. Verify Device Owner: `adb shell dpm list-owners`
+
+**Q: WebView doesn't load my URL**
+- **Causes:**
+  - URL is not HTTPS/HTTP
+  - No internet connection
+  - Self-signed SSL certificate (not trusted)
+- **Solutions:**
+  - Use valid HTTPS URL
+  - Check WiFi connection
+  - Use trusted SSL certificate
+
+**Q: App crashes on start**
+- **A:** Please report a bug with:
+  - Device model
+  - Android version
+  - Crash logs (if possible)
+
+**Q: Ali MDM doesn't auto-start after hard restart**
+- **A:** A hard restart (holding power + volume buttons for 10s) may reset the app to initial state. Make sure "Launch on Boot" is enabled in Settings → Security tab. Starting from v1.3.0, the app checks the stored setting before launching, ensuring consistent behavior.
+
+**Q: Power button doesn't work in kiosk mode**
+- **A:** By default, Lock Mode blocks all system features including the power menu. Starting from v1.3.0, you can enable "Allow Power Button" in Settings → Security tab → Lock Mode section. This allows shutting down the device without exiting kiosk mode.
+
+**Q: Are my settings preserved after updating Ali MDM?**
+- **A:** **Yes!** All your settings (URL, PIN, display mode, etc.) are stored locally on your device and are preserved when updating Ali MDM. You don't need to reconfigure anything after an update.
+
+## Dashboard Mode
+
+**Q: What is Dashboard Mode?**
+- **A:** Dashboard Mode replaces the single-URL WebView with a grid of configurable URL tiles. Each tile has a name and a URL — tap it to open the page. A navigation bar lets you go back, forward, refresh, or return to the grid.
+
+**Q: How do I enable Dashboard Mode?**
+- **A:** Go to Settings → Dashboard tab → toggle "Dashboard Mode" on. Then add your tiles with a name and URL for each.
+
+**Q: Can I use Dashboard Mode with Inactivity Return?**
+- **A:** Yes! Enable "Inactivity Return" in Settings → General. After the configured timeout without touch, the app automatically returns to the dashboard grid.
+
+**Q: What happens with the URL Planner in Dashboard Mode?**
+- **A:** Scheduled planner events take priority — they switch from the grid to the scheduled URL. When the event ends, the app returns to the dashboard grid automatically.
+
+**Q: How many tiles can I create?**
+- **A:** There is no hard limit. The grid adapts to the number of tiles.
+
+## Features
+
+**Q: Can I customize the PIN length?**
+- **A:** Not yet, but planned. Current: 4-6 digits.
+
+**Q: Can I hide the "Exit Kiosk Mode" button?**
+- **A:** Not yet, but planned for v1.1 (configurable in settings).
+
+**Q: Can I schedule kiosk mode on/off?**
+- **A:** Not yet, planned for v1.2.
+
+**Q: Does Ali MDM collect data?**
+- **A:** **No!** Ali MDM is 100% offline. No analytics, no tracking, no data collection. Your privacy is respected.
+
+**Q: Can I use Ali MDM offline?**
+- **A:** Yes! Once configured, Ali MDM works offline (your URL must be accessible offline too).
+
+## Comparison
+
+**Q: Ali MDM vs Fully Kiosk Browser?**
+| Feature | Ali MDM | Fully Kiosk |
+|---------|-----------|-------------|
+| **Price** | Free | €7.90/device |
+| **Open-source** | Yes (MIT) | No |
+| **Device Owner** | Yes | Yes |
+| **Basic kiosk** | Yes | Yes |
+| **Advanced features** | Roadmap | Yes |
+| **Support** | Community | Commercial |
+
+**Q: Why is Fully Kiosk more expensive?**
+- **A:** Fully Kiosk is a mature commercial product with many advanced features. Ali MDM is new and community-driven. We're catching up!
+
+**Q: Will Ali MDM always be free?**
+- **A:** Yes! The app will always be 100% free and open-source. We may offer optional paid cloud services (Ali MDM Cloud) in the future, but the core app stays free forever.
+
+## Development
+
+**Q: Can I contribute?**
+- **A:** Absolutely! See [Contributing Guide](../CONTRIBUTING.md).
+
+**Q: Is Ali MDM really open-source?**
+- **A:** Yes! MIT licensed. View source on [GitHub](https://github.com/mic-tech/ali-mdm).
+
+**Q: Who develops Ali MDM?**
+- **A:** Ali MDM is developed by [Rushb](https://rushb.io), a French tech company passionate about open-source.
+
+**Q: Can I self-host Ali MDM?**
+- **A:** The app is self-contained (no server needed). Future cloud features will offer self-hosting options.
+
+## Roadmap
+
+**Q: What's coming in v1.1?**
+| Feature | Description |
+|---|---|
+| **Multi-language** | FR, DE, ES support |
+| **URL Rotation** | Multiple URL cycling |
+| **Motion Detection** | Activity-based triggers |
+| **Auto-brightness** | Scheduled brightness |
+
+**Q: What about v2.0?**
+| Feature | Description |
+|---|---|
+| **Ali MDM Cloud** | MDM Dashboard |
+| **Remote Config** | Centralized management |
+| **Multi-device** | Fleet management |
+| **Analytics** | Usage insights |
+
+> See full [Roadmap](../README.md#roadmap).
+
+## Support
+
+**Q: Where can I get help?**
+| Resource | Link |
+|---|---|
+| **Installation Guide** | [Installation](Installation) |
+| **GitHub Discussions** | [Discussions](https://github.com/mic-tech/ali-mdm/discussions) |
+| **Report Bug** | [Issues](https://github.com/mic-tech/ali-mdm/issues) |
+| **Email Support** | support@example.com |
+
+**Q: How can I support Ali MDM?**
+| Action | How to |
+|---|---|
+| **Star on GitHub** | [Star Repository](https://github.com/mic-tech/ali-mdm) |
+| **Spread the word** | Share with friends & colleagues |
+| **Report bugs** | [Open Issue](https://github.com/mic-tech/ali-mdm/issues) |
+| **Contribute code** | [Contributing Guide](../CONTRIBUTING.md) |
+| **Buy us coffee** | [Ko-fi](https://ko-fi.com/rushb) (coming soon) |
+
+**Didn't find your answer? Ask in [Discussions](https://github.com/mic-tech/ali-mdm/discussions)!**

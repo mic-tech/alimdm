@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The mark is drawn in eight tones of blue, so it needs a light ground
+         to read against. -->
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>

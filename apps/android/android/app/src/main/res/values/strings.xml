@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Ali MDM</string>
+    <string name="accessibility_service_description">Ali MDM uses this service to send keyboard input and remote control commands to apps running on this device. This is required for the REST API remote control feature to work in external app mode.</string>
+    <string name="boot_loading">Starting kiosk…</string>
+</resources>

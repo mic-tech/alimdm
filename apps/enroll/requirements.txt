@@ -1,0 +1,3 @@
+# Optional: enables --mode qr to render a scannable PNG.
+# Without it, the script prints the provisioning URL for any QR encoder.
+qrcode[pil]>=7.4

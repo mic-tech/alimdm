@@ -1,0 +1,2097 @@
+package com.alimdm
+
+import com.facebook.react.ReactActivity
+import com.facebook.react.ReactActivityDelegate
+import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
+import com.facebook.react.defaults.DefaultReactActivityDelegate
+import android.os.Bundle
+import android.view.View
+import android.view.WindowManager
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
+import com.facebook.react.modules.core.DeviceEventManagerModule
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.ReactApplicationContext
+import java.security.MessageDigest
+import android.database.sqlite.SQLiteDatabase
+import android.content.ContentValues
+import android.view.KeyEvent
+import android.content.IntentFilter
+import android.os.Build
+import android.view.WindowInsets
+import android.view.WindowInsetsController
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import android.Manifest
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+
+class MainActivity : ReactActivity() {
+
+  companion object {
+    /**
+     * #238: how long JS may take to finish starting before we release screen pinning.
+     * Generous on purpose: React Native legitimately takes one to two minutes on the
+     * low-end hardware #96 was written for, and releasing too early would unpin a kiosk
+     * that is merely booting slowly.
+     */
+    private const val JS_READY_GRACE_MS = 90_000L
+
+    // #222: set as soon as this activity is created, read by BootLockActivity. Its
+    // hand-off check used to infer "MainActivity took over" from BootLockActivity losing
+    // window focus, which is also what happens when a secure keyguard takes focus at boot:
+    // the poll loop then finished itself while MainActivity had never started. Same
+    // process, so a static is enough, and this cannot be true before CE storage unlocks.
+    @Volatile
+    var hasStarted = false
+
+    // Flag partagé pour bloquer le relaunch - accessible depuis OverlayService
+    @Volatile
+    var blockAutoRelaunch = false
+
+    // Set before bringToFront() when the screensaver activates in External App mode.
+    // Tells onResume() to skip auto-relaunch and stay in the foreground for the screensaver.
+    @Volatile
+    var screensaverReturn = false
+
+    // Flag to prevent processing the same ADB config intent twice
+    @Volatile
+    var lastProcessedAdbIntent: Long = 0
+  }
+
+  private lateinit var devicePolicyManager: DevicePolicyManager
+  private lateinit var adminComponent: ComponentName
+
+  // External app launch management
+  private var isExternalAppMode = false
+  private var externalAppPackage: String? = null
+  private var isDeviceOwner = false
+  private var isVoluntaryReturn = false  // Flag pour éviter double événement
+
+  // Screen state receiver
+  private var screenStateReceiver: ScreenStateReceiver? = null
+  
+  // Volume change receiver (also handles 5-tap gesture detection)
+  private var volumeChangeReceiver: VolumeChangeReceiver? = null
+  private val emergencyDialAction = "android.intent.action.DIAL_EMERGENCY"
+
+  // Debounce handler for hideSystemUI to avoid dismissing the power menu (GlobalActions)
+  // on devices where onWindowFocusChanged fires rapidly (e.g. TECNO/HiOS on Android 14)
+  private val hideSystemUIHandler = Handler(Looper.getMainLooper())
+  private var lastFocusLostTime = 0L
+
+  override fun getMainComponentName(): String = "AliMDM"
+
+  override fun createReactActivityDelegate(): ReactActivityDelegate =
+      DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(null)
+    hasStarted = true  // #222: tells BootLockActivity the hand-off really happened
+
+    // Keep screen always on
+    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+    // Show over the keyguard and turn the screen on when this activity is brought
+    // to the front. This is what makes turnScreenOn() actually wake the display
+    // after a lockNow() screen-off on Android 8.1+ (alarm-screen pattern).
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+      setShowWhenLocked(true)
+      setTurnScreenOn(true)
+    }
+
+    // Extend content into display cutout areas to prevent OEM chrome from appearing (#94)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      window.attributes.layoutInDisplayCutoutMode =
+        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+    }
+
+    devicePolicyManager = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+    adminComponent = ComponentName(this, DeviceAdminReceiver::class.java)
+
+    // Register screen state receiver to track screen on/off events
+    registerScreenStateReceiver()
+    
+    // Register volume change receiver to track volume changes
+    registerVolumeChangeReceiver()
+
+    // Handle ADB configuration - if config applied, app will restart
+    if (handleAdbConfig(intent)) {
+      return  // Exit - app restarting with new config
+    }
+
+    // Request location permission for WiFi SSID access (Android 8+ requires it)
+    requestLocationPermission()
+
+    // Request Bluetooth runtime permissions (Android 12+ / API 31+)
+    requestBluetoothPermissions()
+
+    // Request Android 13+ WiFi scan permission for visible SSID results
+    requestWifiPermissions()
+
+    // Request camera permission for motion detection
+    requestCameraPermission()
+
+    // Adjust content padding when the soft keyboard appears.
+    // In immersive/kiosk mode adjustResize is ignored, so we listen for IME insets
+    // and manually add bottom padding so WebView form fields stay visible.
+    val contentView = findViewById<View>(android.R.id.content)
+    ViewCompat.setOnApplyWindowInsetsListener(contentView) { view, insets ->
+      val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
+      view.setPadding(0, 0, 0, imeInsets.bottom)
+      insets
+    }
+
+    readExternalAppConfig()
+    ensureBootReceiverEnabled()
+    hideSystemUI()
+    checkAndStartLockTask()
+    applyDefaultLauncherPolicy()
+
+    // Start KioskWatchdogService (#96) — survives OOM kills via START_STICKY
+    startKioskWatchdogIfNeeded()
+
+    // #238 — Startup safety valve, screen-pinning (non Device Owner) only.
+    armPinningSafetyValve()
+
+    // If started from HomeActivity (External App Mode at boot),
+    // move to background so the external app stays in foreground
+    if (intent?.getBooleanExtra("from_home_activity", false) == true) {
+      DebugLog.d("MainActivity", "Started from HomeActivity, moving to background")
+      Handler(Looper.getMainLooper()).postDelayed({ moveTaskToBack(true) }, 500)
+    }
+
+    // Check if we need to navigate to PIN
+    handleNavigationIntent(intent)
+  }
+
+  override fun onNewIntent(intent: Intent?) {
+    super.onNewIntent(intent)
+    setIntent(intent) // Important: update the intent
+    
+    // Handle ADB config on new intent too (when app is already running)
+    // If returns true, the app will restart and we should not continue
+    if (handleAdbConfig(intent)) {
+      return
+    }
+    
+    // Reload config after ADB changes
+    readExternalAppConfig()
+    
+    handleNavigationIntent(intent)
+  }
+
+  private fun handleNavigationIntent(intent: Intent?) {
+    val shouldNavigateToPin = intent?.getBooleanExtra("navigateToPin", false) == true
+    val isVoluntary = intent?.getBooleanExtra("voluntaryReturn", false) == true
+    
+    if (shouldNavigateToPin || isVoluntary) {
+      // IMPORTANT: Mettre le flag AVANT tout traitement async
+      blockAutoRelaunch = true
+      DebugLog.d("MainActivity", "handleNavigationIntent: set blockAutoRelaunch=true (pin=$shouldNavigateToPin, voluntary=$isVoluntary)")
+    }
+    // NOTE: navigateToPin event is sent directly by OverlayService via KioskModule.
+    // No delayed duplicate send needed here - it caused double-navigation issues.
+  }
+
+  private fun sendNavigateToPinEvent() {
+    try {
+      // Use KioskModule's static method to send event to React Native
+      // This works with the new architecture
+      KioskModule.sendEventFromNative("navigateToPin", null)
+      android.util.Log.d("MainActivity", "Sent navigateToPin event via KioskModule")
+    } catch (e: Exception) {
+      android.util.Log.e("MainActivity", "Failed to send navigateToPin event: ${e.message}")
+    }
+  }
+
+  private fun sendAppReturnedEvent(voluntary: Boolean = false) {
+    try {
+      // Use KioskModule's static method to send event to React Native
+      val params = Arguments.createMap()
+      params.putBoolean("voluntary", voluntary)
+      KioskModule.sendEventFromNative("onAppReturned", params)
+      android.util.Log.d("MainActivity", "Sent onAppReturned event (voluntary=$voluntary)")
+    } catch (e: Exception) {
+      android.util.Log.e("MainActivity", "Failed to send onAppReturned event: ${e.message}")
+    }
+  }
+
+  private fun requestLocationPermission() {
+    val needed = mutableListOf<String>()
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+        != PackageManager.PERMISSION_GRANTED) {
+      needed.add(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+        != PackageManager.PERMISSION_GRANTED) {
+      needed.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+    }
+    if (needed.isEmpty()) return
+
+    if (devicePolicyManager.isDeviceOwnerApp(packageName)) {
+      needed.forEach { perm ->
+        try {
+          devicePolicyManager.setPermissionGrantState(
+            adminComponent,
+            packageName,
+            perm,
+            DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
+          )
+        } catch (_: Exception) {}
+      }
+    } else {
+      ActivityCompat.requestPermissions(this, needed.toTypedArray(), 1001)
+    }
+  }
+
+  private fun requestCameraPermission() {
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+        == PackageManager.PERMISSION_GRANTED) return
+
+    // Device Owner can grant silently (consistent with location/bluetooth/wifi
+    // above); otherwise fall back to the runtime prompt.
+    if (devicePolicyManager.isDeviceOwnerApp(packageName)) {
+      try {
+        devicePolicyManager.setPermissionGrantState(
+          adminComponent,
+          packageName,
+          Manifest.permission.CAMERA,
+          DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
+        )
+      } catch (_: Exception) {}
+    } else {
+      ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 1002)
+    }
+  }
+
+  private fun requestBluetoothPermissions() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+
+    val needed = mutableListOf<String>()
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+        != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.BLUETOOTH_CONNECT)
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
+        != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.BLUETOOTH_SCAN)
+    if (needed.isEmpty()) return
+
+    if (devicePolicyManager.isDeviceOwnerApp(packageName)) {
+      needed.forEach { perm ->
+        try {
+          devicePolicyManager.setPermissionGrantState(
+            adminComponent,
+            packageName,
+            perm,
+            DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
+          )
+        } catch (_: Exception) {}
+      }
+    } else {
+      ActivityCompat.requestPermissions(this, needed.toTypedArray(), 1003)
+    }
+  }
+
+  private fun requestWifiPermissions() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES)
+        == PackageManager.PERMISSION_GRANTED) return
+
+    if (devicePolicyManager.isDeviceOwnerApp(packageName)) {
+      try {
+        devicePolicyManager.setPermissionGrantState(
+          adminComponent,
+          packageName,
+          Manifest.permission.NEARBY_WIFI_DEVICES,
+          DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
+        )
+      } catch (_: Exception) {}
+    } else {
+      ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES), 1004)
+    }
+  }
+
+  /**
+   * #238: on a device WITHOUT Device Owner, we pin from onCreate (screen pinning), long
+   * before React Native has started. If JS then never finishes starting, the user is left
+   * with a frozen app pinned on screen and no way out: the reporter's device could only be
+   * recovered with `adb shell am task lock stop`, which no ordinary user has.
+   *
+   * So: if JS has not completed a settings load after the grace period, leave pinning. The
+   * device becomes usable again, and nothing is lost when the app is merely slow, because
+   * KioskScreen calls startLockTask() itself at the end of its own load and re-pins.
+   *
+   * Deliberately NOT applied to Device Owner: there the kiosk must stay locked, lock task is
+   * the security boundary rather than a convenience, and those devices have BootLockActivity
+   * and its own recovery path.
+   */
+  private fun armPinningSafetyValve() {
+    if (devicePolicyManager.isDeviceOwnerApp(packageName)) return
+    if (!isKioskEnabled()) return
+
+    pinningValveRunnable = Runnable {
+      if (KioskModule.jsReachedSettingsLoaded) return@Runnable
+      try {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        if (am.lockTaskModeState == android.app.ActivityManager.LOCK_TASK_MODE_NONE) return@Runnable
+        DebugLog.errorProduction(
+          "MainActivity",
+          "JS never finished starting after ${JS_READY_GRACE_MS}ms — leaving screen pinning so the device stays usable"
+        )
+        stopLockTask()
+      } catch (e: Exception) {
+        DebugLog.errorProduction("MainActivity", "Pinning safety valve failed: ${e.message}")
+      }
+    }
+    Handler(Looper.getMainLooper()).postDelayed(pinningValveRunnable!!, JS_READY_GRACE_MS)
+  }
+
+  private fun checkAndStartLockTask() {
+    val kioskEnabled = isKioskEnabled()
+    DebugLog.d("MainActivity", "Kiosk enabled: $kioskEnabled")
+
+    if (kioskEnabled) {
+      startLockTaskIfPossible()
+    } else {
+      DebugLog.d("MainActivity", "Kiosk mode disabled - normal mode")
+    }
+  }
+
+  /**
+   * Opt-in default-launcher policy (#199). When the "Set AliMDM as default launcher"
+   * setting is ON and we are Device Owner, register AliMDM (MainActivity) as the PERSISTENT
+   * preferred Home activity. The system then relaunches AliMDM itself at every boot and on
+   * Home — with no dependency on the OEM "appear on top" / autostart / background-pop-up
+   * permissions that Samsung resets on OS updates, which is what let the kiosk drop out after a
+   * reboot/update. The policy persists across updates as long as Device Owner is active.
+   *
+   * Reconciled on every launch (self-healing after an OS update): clear our own persistent
+   * preferences, then re-add only if the setting is ON. Gated on Device Owner, and a no-op
+   * unless the opt-in is enabled — so behavior is unchanged for everyone who hasn't turned it on.
+   */
+  private fun applyDefaultLauncherPolicy() {
+    if (!devicePolicyManager.isDeviceOwnerApp(packageName)) return
+    val enabled = getAsyncStorageValue("@kiosk_default_launcher", "false") == "true"
+    try {
+      // Only ever clears persistent preferences set by THIS admin (we set none other than HOME),
+      // so this is safe and idempotent — it prevents duplicate entries accumulating.
+      devicePolicyManager.clearPackagePersistentPreferredActivities(adminComponent, packageName)
+      if (enabled) {
+        val filter = IntentFilter(Intent.ACTION_MAIN).apply {
+          addCategory(Intent.CATEGORY_HOME)
+          addCategory(Intent.CATEGORY_DEFAULT)
+        }
+        devicePolicyManager.addPersistentPreferredActivity(
+          adminComponent, filter, ComponentName(this, MainActivity::class.java)
+        )
+        DebugLog.d("MainActivity", "Default launcher policy applied (AliMDM = persistent Home)")
+      } else {
+        DebugLog.d("MainActivity", "Default launcher policy off — persistent Home cleared")
+      }
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Failed to apply default launcher policy: ${e.message}")
+    }
+  }
+
+  private fun isKioskEnabled(): Boolean {
+    return try {
+      val value = getAsyncStorageValue("@kiosk_enabled", "false")
+
+      DebugLog.d("MainActivity", "Read kiosk preference: $value")
+
+      val enabled = value == "true"
+      DebugLog.d("MainActivity", "Kiosk enabled: $enabled")
+      enabled
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Error reading preference: ${e.message}")
+      false
+    }
+  }
+
+  // Set when startLockTask() failed because the task was not yet in the foreground.
+  // We retry the lock task once the activity actually gains window focus (onWindowFocusChanged).
+  private var lockTaskPending = false
+
+  // #238: startup safety valve (screen pinning only).
+  private var pinningValveRunnable: Runnable? = null
+
+  /**
+   * Calls startLockTask() defensively.
+   *
+   * startLockTask() throws IllegalArgumentException("Invalid task, not in foreground")
+   * when the task is not the foreground task at the moment of the call — which happens
+   * when checkAndStartLockTask() runs from onCreate() while MainActivity is still
+   * backgrounded (e.g. at boot, or the external-app-at-boot path that moves the task to
+   * back). That exception is NOT a SecurityException, so it used to escape the catch in
+   * startLockTaskIfPossible() and crash the app on launch. On that failure we flag the
+   * attempt as pending and retry once the activity gains window focus.
+   */
+  private fun tryStartLockTask(context: String) {
+    try {
+      startLockTask()
+      lockTaskPending = false
+      DebugLog.d("MainActivity", "Lock task started ($context)")
+    } catch (e: IllegalArgumentException) {
+      // "Invalid task, not in foreground" — defer until the activity is truly foregrounded.
+      lockTaskPending = true
+      DebugLog.errorProduction("MainActivity", "Lock task not in foreground yet ($context), will retry on focus: ${e.message}")
+    } catch (e: IllegalStateException) {
+      lockTaskPending = true
+      DebugLog.errorProduction("MainActivity", "Lock task not ready yet ($context), will retry on focus: ${e.message}")
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Lock task failed ($context): ${e.message}")
+    }
+  }
+
+  private fun startLockTaskIfPossible() {
+    if (devicePolicyManager.isDeviceOwnerApp(packageName)) {
+      try {
+        // Mode Device Owner: Lock Task complet avec whitelist
+        enableKioskRestrictions()
+
+        // Build whitelist: toujours AliMDM, + app externe si configurée, + managed apps
+        val whitelist = mutableListOf(packageName)
+
+        if (isExternalAppMode && !externalAppPackage.isNullOrEmpty()) {
+          try {
+            packageManager.getPackageInfo(externalAppPackage!!, 0)
+            whitelist.add(externalAppPackage!!)
+            DebugLog.d("MainActivity", "External app added to whitelist: $externalAppPackage")
+          } catch (e: Exception) {
+            DebugLog.errorProduction("MainActivity", "External app not found: $externalAppPackage")
+          }
+        }
+
+        // Add all managed apps to lock task whitelist
+        whitelist.addAll(getManagedAppPackages())
+        
+        // Add print spooler packages if printing is enabled
+        if (isPrintSettingEnabled()) {
+            whitelist.addAll(getPrintSpoolerPackages())
+        }
+
+        if (getAsyncStorageValue("@kiosk_lockscreen_emergency_call_enabled", "false") == "true") {
+          whitelist.addAll(getEmergencyDialerPackages())
+        }
+        
+        val uniqueWhitelist = whitelist.distinct()
+
+        // Configurer la whitelist Lock Task
+        devicePolicyManager.setLockTaskPackages(adminComponent, uniqueWhitelist.toTypedArray())
+
+        // Lancer Lock Task sur MainActivity
+        // Avec la whitelist, l'utilisateur peut naviguer entre AliMDM et l'app externe
+        // Mais ne peut PAS sortir vers d'autres apps, launcher, ou paramètres
+        tryStartLockTask("Device Owner, whitelist: $uniqueWhitelist")
+      } catch (e: SecurityException) {
+        DebugLog.errorProduction("MainActivity", "Device Owner lock task failed (admin invalid?): ${e.message}")
+        // Fall back to screen pinning
+        tryStartLockTask("fallback screen pinning")
+      }
+    } else {
+      // Mode non-Device Owner: Screen Pinning manuel (demande confirmation utilisateur)
+      tryStartLockTask("Screen Pinning mode - user confirmation required")
+    }
+  }
+
+  private fun enableKioskRestrictions() {
+    if (!devicePolicyManager.isDeviceOwnerApp(packageName)) return
+
+    try {
+      // Read settings from AsyncStorage v2 database
+      // allowPowerButton: true = power menu allowed (default), false = blocked by admin
+      val allowPowerButtonValue = getAsyncStorageValue("@kiosk_allow_power_button", "true")
+      val allowPowerButton = allowPowerButtonValue == "true"
+      val allowNotificationsValue = getAsyncStorageValue("@kiosk_allow_notifications", "false")
+      val allowNotifications = allowNotificationsValue == "true"
+      val allowSystemInfoValue = getAsyncStorageValue("@kiosk_allow_system_info", "false")
+      val allowSystemInfo = allowSystemInfoValue == "true"
+      
+      // Configure Lock Task features
+      // GLOBAL_ACTIONS is included by default (Android's own default when setLockTaskFeatures is never called)
+      // This prevents Samsung/OneUI from muting audio streams in lock task mode
+      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+        // Start with GLOBAL_ACTIONS as base (matches Android default behavior)
+        var lockTaskFeatures = DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS
+        
+        // allowPowerButton=false means admin wants to BLOCK the power menu
+        if (!allowPowerButton) {
+          lockTaskFeatures = lockTaskFeatures and DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS.inv()
+        }
+        
+        // SYSTEM_INFO: shows non-interactive status bar info (time, battery)
+        if (allowSystemInfo) {
+          lockTaskFeatures = lockTaskFeatures or DevicePolicyManager.LOCK_TASK_FEATURE_SYSTEM_INFO
+        }
+        if (allowNotifications) {
+          lockTaskFeatures = lockTaskFeatures or DevicePolicyManager.LOCK_TASK_FEATURE_NOTIFICATIONS
+          // Android requires HOME feature when NOTIFICATIONS is enabled
+          lockTaskFeatures = lockTaskFeatures or DevicePolicyManager.LOCK_TASK_FEATURE_HOME
+        }
+
+        // #208 — Keep the system keyguard alive while in lock task so a native Android
+        // screen-lock (PIN/pattern/password) actually prompts after the screen turns off
+        // and back on. Without LOCK_TASK_FEATURE_KEYGUARD, Android DISABLES the keyguard in
+        // LockTask mode, so the configured screen-lock never appears in multi-app/kiosk mode.
+        // Gated on the opt-in "System screen-lock compatibility" setting AND a secure lock
+        // actually being set (same gate as the boot path in BootReceiver).
+        val screenLockCompat = BootReceiver.readScreenLockCompatFlag(this) && BootReceiver.isDeviceSecure(this)
+        if (screenLockCompat) {
+          lockTaskFeatures = lockTaskFeatures or DevicePolicyManager.LOCK_TASK_FEATURE_KEYGUARD
+        }
+
+        devicePolicyManager.setLockTaskFeatures(adminComponent, lockTaskFeatures)
+        DebugLog.d("MainActivity", "Lock task features set: blockPowerButton=${!allowPowerButton}, notifications=$allowNotifications, systemInfo=$allowSystemInfo, keyguard=$screenLockCompat (flags=$lockTaskFeatures)")
+      }
+      
+      // Safety net: force unmute audio streams after configuring lock task
+      // Samsung/OneUI devices may mute audio in LOCK_TASK_MODE_LOCKED
+      try {
+        devicePolicyManager.setMasterVolumeMuted(adminComponent, false)
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val streams = intArrayOf(
+          android.media.AudioManager.STREAM_MUSIC,
+          android.media.AudioManager.STREAM_NOTIFICATION,
+          android.media.AudioManager.STREAM_ALARM,
+          android.media.AudioManager.STREAM_RING
+        )
+        for (stream in streams) {
+          audioManager.adjustStreamVolume(stream, android.media.AudioManager.ADJUST_UNMUTE, 0)
+        }
+        DebugLog.d("MainActivity", "Audio streams unmuted (Samsung audio fix)")
+      } catch (e: Exception) {
+        DebugLog.d("MainActivity", "Could not unmute audio streams: ${e.message}")
+      }
+
+      val samsungUpdateApps = arrayOf(
+        "com.samsung.android.app.updatecenter",
+        "com.sec.android.fotaclient",
+        "com.wssyncmldm",
+        "com.samsung.android.sdm.config",
+        "com.sec.android.soagent"
+      )
+      
+      devicePolicyManager.setPackagesSuspended(adminComponent, samsungUpdateApps, true)
+      
+      val policy = android.app.admin.SystemUpdatePolicy.createPostponeInstallPolicy()
+      devicePolicyManager.setSystemUpdatePolicy(adminComponent, policy)
+
+      DebugLog.d("MainActivity", "Kiosk restrictions enabled")
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Error enabling restrictions: ${e.message}")
+    }
+  }
+
+  fun disableKioskRestrictions() {
+    if (!devicePolicyManager.isDeviceOwnerApp(packageName)) return
+
+    try {
+      // Réinitialiser les features Lock Task pour permettre la navigation normale
+      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+        // Restaurer les features par défaut (Home, Recents, etc.)
+        devicePolicyManager.setLockTaskFeatures(
+          adminComponent,
+          DevicePolicyManager.LOCK_TASK_FEATURE_HOME or
+          DevicePolicyManager.LOCK_TASK_FEATURE_OVERVIEW or
+          DevicePolicyManager.LOCK_TASK_FEATURE_NOTIFICATIONS or
+          DevicePolicyManager.LOCK_TASK_FEATURE_GLOBAL_ACTIONS
+        )
+        DebugLog.d("MainActivity", "Lock task features restored to defaults")
+      }
+
+      val samsungUpdateApps = arrayOf(
+        "com.samsung.android.app.updatecenter",
+        "com.sec.android.fotaclient",
+        "com.wssyncmldm",
+        "com.samsung.android.sdm.config",
+        "com.sec.android.soagent"
+      )
+      
+      devicePolicyManager.setPackagesSuspended(adminComponent, samsungUpdateApps, false)
+      devicePolicyManager.setSystemUpdatePolicy(adminComponent, null)
+
+      DebugLog.d("MainActivity", "Kiosk restrictions disabled")
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Error disabling restrictions: ${e.message}")
+    }
+  }
+
+  override fun onResume() {
+    super.onResume()
+
+    readExternalAppConfig()
+    
+    // Re-register screen state receiver in case it was lost
+    if (screenStateReceiver == null) {
+      registerScreenStateReceiver()
+    }
+    
+    // Re-register volume change receiver in case it was lost
+    if (volumeChangeReceiver == null) {
+      registerVolumeChangeReceiver()
+    }
+
+    // Vérifier si c'est un retour volontaire (depuis l'intent de l'overlay - 5 taps)
+    val voluntaryReturn = intent?.getBooleanExtra("voluntaryReturn", false) ?: false
+    val navigateToPin = intent?.getBooleanExtra("navigateToPin", false) ?: false
+    
+    if (voluntaryReturn) {
+      // Reset les flags pour les prochains resumes
+      intent?.removeExtra("voluntaryReturn")
+      intent?.removeExtra("navigateToPin")
+      isVoluntaryReturn = true
+      DebugLog.d("MainActivity", "Voluntary return detected (5-tap), will navigate to PIN: $navigateToPin")
+    }
+
+    // Screensaver activated in External App mode: KioskModule.bringToFront() set this flag.
+    // Skip all relaunch logic — AliMDM stays in the foreground to show the screensaver.
+    // The screensaver dismiss callback will call launchExternalApp() to return to the app.
+    if (screensaverReturn) {
+      screensaverReturn = false
+      DebugLog.d("MainActivity", "screensaverReturn=true — staying in foreground for screensaver, skipping relaunch")
+      return
+    }
+
+    // Fix #overlay-restart: OverlayService.returnToAliMDM() sets blockAutoRelaunch=true
+    // BEFORE calling task.moveToFront(), which fires onResume() with the OLD intent
+    // (no voluntaryReturn flag yet). Without this check, onResume() takes the fast path
+    // and relaunches 24Six without starting OverlayService.
+    if (blockAutoRelaunch && !isVoluntaryReturn) {
+      isVoluntaryReturn = true
+      DebugLog.d("MainActivity", "blockAutoRelaunch=true — treating as voluntary return to prevent fast-path relaunch")
+    }
+
+    // Fix #106: In external app mode, only stop the overlay on VOLUNTARY returns
+    // (e.g. admin 5-tap to access settings). On involuntary returns (system brought
+    // AliMDM back), keep the overlay running so the foreground monitor can
+    // relaunch the external app.
+    if (!isExternalAppMode || isVoluntaryReturn) {
+      stopOverlayService()
+    }
+
+    // NOTE: navigateToPin event is now sent directly by OverlayService via KioskModule.
+    // The backup send from handleNavigationIntent (500ms) handles edge cases.
+    // No need for a third send here.
+
+    val kioskEnabled = isKioskEnabled()
+
+    // #220: Honor the "Back Button Behavior" setting in external-app mode. This native
+    // fast-path (added for #106/#203) previously relaunched the external app on EVERY
+    // involuntary return, which silently overrode back_button_mode: Test Mode and Delayed
+    // Return never took effect (the app always restarted instantly). Only 'immediate'
+    // should hard-relaunch here. For 'test' and 'timer' we leave AliMDM in the
+    // foreground and let the JS AppState listener apply the correct behavior (stay on
+    // AliMDM / show the countdown). JS is not frozen in those modes because AliMDM
+    // stays foregrounded, and handleAppReturned/onAppReturned still stops the overlay.
+    val backButtonMode = getAsyncStorageValue("@kiosk_back_button_mode", "test")
+
+    // Fix #106: In external app mode, on involuntary returns, do NOT re-enter
+    // startLockTask on MainActivity (which would pin AliMDM). Instead, immediately
+    // relaunch the external app from the native layer to minimize the flash.
+    // #220 follow-up: never take this path in multi-app mode. externalAppPackage holds the
+    // SINGLE-app setting, so relaunching it here either brought back an app the user had not
+    // opened, or did nothing at all when the setting is empty. Multi-app always returns to
+    // the AliMDM grid instead, which is what the JS side does (KioskScreen: "Multi-app
+    // mode: ALWAYS return to grid, never relaunch any specific app").
+    val isMultiAppMode = getAsyncStorageValue("@kiosk_external_app_mode", "single") == "multi"
+
+    if (isExternalAppMode && !isMultiAppMode && !isVoluntaryReturn && kioskEnabled && backButtonMode == "immediate") {
+      // Relaunch the external app directly if possible
+      val targetPkg = externalAppPackage
+      if (targetPkg != null) {
+        DebugLog.d("MainActivity", "External app mode involuntary return — relaunching $targetPkg directly")
+        try {
+          val launchIntent = packageManager.getLaunchIntentForPackage(targetPkg)
+          if (launchIntent != null) {
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // Restart OverlayService BEFORE launching 24Six so the button is present
+            // when the external app comes to the foreground.
+            startOverlayServiceFromNative(targetPkg)
+            startActivity(launchIntent)
+            // Move AliMDM to background so external app stays visible
+            Handler(Looper.getMainLooper()).postDelayed({ moveTaskToBack(true) }, 300)
+            // #203 — Deliberately NOT sending onAppReturned on this path: JS answers
+            // that event with stopOverlayService(), and since AliMDM goes straight
+            // back to the background its JS timers freeze — the pending stop then fires
+            // on the NEXT foreground pass (e.g. returning from Settings) and kills the
+            // OverlayService that was just restarted, leaving the 5-tap escape dead.
+            isVoluntaryReturn = false
+            return
+          }
+        } catch (e: Exception) {
+          DebugLog.errorProduction("MainActivity", "Failed to relaunch external app: ${e.message}")
+        }
+      }
+    }
+
+    // Notifier React Native qu'on est revenu sur AliMDM (depuis une app externe)
+    // NE PAS envoyer si c'est un retour volontaire (l'overlay l'a déjà envoyé),
+    // ni si le fast-path ci-dessus a relancé l'app externe directement (#203)
+    if (isExternalAppMode && !isVoluntaryReturn) {
+      sendAppReturnedEvent(false)  // voluntary=false = auto-relaunch possible
+    }
+    isVoluntaryReturn = false  // Reset pour le prochain resume
+
+    // Relancer Lock Task si nécessaire (WebView, Media, or external app voluntary return)
+    if (kioskEnabled && devicePolicyManager.isDeviceOwnerApp(packageName)) {
+      // Skip re-lock if print dialog is active — the print system activity causes
+      // onResume and we must not re-enter lock task while the user is interacting
+      // with the printer selection dialog
+      if (PrintModule.isPrintActive) {
+        DebugLog.d("MainActivity", "Skipping lock task re-entry: print dialog is active")
+      } else if (!isTaskLocked()) {
+        // Check if power button (GlobalActions) is allowed — if so, the brief focus
+        // loss may be from the power menu. Delay the re-lock to avoid dismissing it.
+        val allowPowerButton = getAsyncStorageValue("@kiosk_allow_power_button", "true") == "true"
+        val timeSinceFocusLost = System.currentTimeMillis() - lastFocusLostTime
+        
+        if (allowPowerButton && timeSinceFocusLost < 2000L) {
+          // Power menu was likely just shown — defer re-lock to avoid focus conflict
+          DebugLog.d("MainActivity", "Deferring re-lock: power menu may be active (${timeSinceFocusLost}ms since focus lost)")
+          Handler(Looper.getMainLooper()).postDelayed({
+            if (!isTaskLocked()) {
+              enableKioskRestrictions()
+              startLockTask()
+              DebugLog.d("MainActivity", "Deferred re-lock completed")
+            }
+          }, 2000L)
+        } else {
+          enableKioskRestrictions()
+          startLockTask()
+          DebugLog.d("MainActivity", "Re-started lock task on resume (with kiosk restrictions)")
+        }
+      }
+    }
+  }
+
+  private fun startOverlayService() {
+    try {
+      // Vérifier la permission overlay (Android M+)
+      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+        if (!android.provider.Settings.canDrawOverlays(this)) {
+          DebugLog.d("MainActivity", "Overlay permission not granted, skipping OverlayService")
+          return
+        }
+      }
+
+      val serviceIntent = Intent(this, OverlayService::class.java)
+      startService(serviceIntent)
+      DebugLog.d("MainActivity", "Started OverlayService")
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Error starting OverlayService: ${e.message}")
+    }
+  }
+
+  private fun stopOverlayService() {
+    try {
+      val serviceIntent = Intent(this, OverlayService::class.java)
+      stopService(serviceIntent)
+      DebugLog.d("MainActivity", "Stopped OverlayService")
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Error stopping OverlayService: ${e.message}")
+    }
+  }
+
+  /**
+   * Start OverlayService from native code, reading parameters from AsyncStorage.
+   * Called from onResume() fast path (involuntary return) to ensure the overlay
+   * button is present when the external app is relaunched.
+   *
+   * This is needed because the JS layer (KioskScreen/PinScreen) cannot start the
+   * service reliably from a background context, and the fast path bypasses JS entirely.
+   */
+  private fun startOverlayServiceFromNative(lockedPackage: String) {
+    try {
+      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+        if (!android.provider.Settings.canDrawOverlays(this)) {
+          DebugLog.d("MainActivity", "Overlay permission not granted, skipping startOverlayServiceFromNative")
+          return
+        }
+      }
+
+      val tapCount = getAsyncStorageValue("@kiosk_return_tap_count", "5").toIntOrNull() ?: 5
+      val tapTimeout = getAsyncStorageValue("@kiosk_return_tap_timeout", "1500").toIntOrNull() ?: 1500
+      val returnMode = getAsyncStorageValue("@kiosk_return_mode", "button")
+      val buttonPosition = getAsyncStorageValue("@kiosk_return_button_position", "bottom-right")
+      val autoRelaunch = getAsyncStorageValue("@kiosk_auto_relaunch_app", "true") == "true"
+      val nfcEnabled = getAsyncStorageValue("@kiosk_allow_notifications", "false") == "true"
+
+      val serviceIntent = Intent(this, OverlayService::class.java)
+      serviceIntent.putExtra("REQUIRED_TAPS", tapCount.coerceIn(2, 20))
+      serviceIntent.putExtra("TAP_TIMEOUT", tapTimeout.coerceIn(500, 5000).toLong())
+      serviceIntent.putExtra("RETURN_MODE", returnMode)
+      serviceIntent.putExtra("BUTTON_POSITION", buttonPosition)
+      serviceIntent.putExtra("LOCKED_PACKAGE", lockedPackage)
+      serviceIntent.putExtra("AUTO_RELAUNCH", autoRelaunch)
+      serviceIntent.putExtra("NFC_ENABLED", nfcEnabled)
+
+      startService(serviceIntent)
+      DebugLog.d("MainActivity", "startOverlayServiceFromNative: taps=$tapCount timeout=${tapTimeout}ms mode=$returnMode pos=$buttonPosition pkg=$lockedPackage autoRelaunch=$autoRelaunch")
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Failed to start OverlayService from native: ${e.message}")
+    }
+  }
+
+  internal fun isTaskLocked(): Boolean {
+    return try {
+      val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+      activityManager.lockTaskModeState != android.app.ActivityManager.LOCK_TASK_MODE_NONE
+    } catch (e: Exception) {
+      false
+    }
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    if (!hasFocus) {
+      // Track when we lost focus (e.g. power menu / GlobalActions / Print dialog appeared)
+      lastFocusLostTime = System.currentTimeMillis()
+      // Cancel any pending hideSystemUI to avoid fighting with the system window
+      hideSystemUIHandler.removeCallbacksAndMessages(null)
+    } else {
+      // Retry a lock task that was deferred because the task wasn't in the foreground
+      // when checkAndStartLockTask() ran in onCreate(). Window focus gained is the most
+      // reliable signal that the activity is now truly foregrounded.
+      if (lockTaskPending) {
+        tryStartLockTask("onWindowFocusChanged retry")
+      }
+
+      // If a print dialog was active, reset the flag now that focus has returned
+      if (PrintModule.isPrintActive) {
+        DebugLog.d("MainActivity", "Print dialog closed — resetting isPrintActive, deferring immersive mode")
+        PrintModule.isPrintActive = false
+        // Use a longer delay to let the print system activity fully dismiss
+        hideSystemUIHandler.removeCallbacksAndMessages(null)
+        hideSystemUIHandler.postDelayed({ hideSystemUI() }, 1500L)
+        return
+      }
+      
+      // Debounce hideSystemUI: wait 600ms before re-applying immersive mode.
+      // This prevents the power menu from being immediately dismissed on devices
+      // where the WindowManager focus bounces rapidly (TECNO, Infinix, itel / HiOS).
+      // The Lock Task is still fully active during this window — no security impact.
+      val timeSinceFocusLost = System.currentTimeMillis() - lastFocusLostTime
+      val delay = if (timeSinceFocusLost < 1500L) 600L else 0L
+      hideSystemUIHandler.removeCallbacksAndMessages(null)
+      hideSystemUIHandler.postDelayed({ hideSystemUI() }, delay)
+    }
+  }
+
+  private fun hideSystemUI() {
+    // Pour Android 11+ (API 30+), utiliser la nouvelle API WindowInsetsController
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      window.insetsController?.apply {
+        hide(WindowInsets.Type.systemBars())
+        hide(WindowInsets.Type.statusBars())
+        hide(WindowInsets.Type.navigationBars())
+        systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+      }
+    } else {
+      // Pour Android 10 et inférieur, utiliser l'ancienne API
+      @Suppress("DEPRECATION")
+      window.decorView.systemUiVisibility = (
+        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+        or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+        or View.SYSTEM_UI_FLAG_FULLSCREEN
+        or View.SYSTEM_UI_FLAG_LOW_PROFILE  // Cache les contrôles système (menu Samsung)
+      )
+    }
+  }
+
+  // Volume Up 5-tap tracking
+  private var volumeUpTapCount = 0
+  private var volumeUpLastTapTime = 0L
+  private val volumeUpTapTimeout = 2000L
+
+  override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+    android.util.Log.d("MainActivity", "onKeyDown: keyCode=$keyCode, repeatCount=${event?.repeatCount ?: -1}")
+    
+    // Ignore auto-repeat events (when user HOLDS the volume button)
+    // Only count the initial press (repeatCount == 0)
+    if (event != null && event.repeatCount > 0) {
+      if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+        android.util.Log.d("MainActivity", "Ignoring volume key repeat (repeatCount=${event.repeatCount})")
+      }
+      return super.onKeyDown(keyCode, event)
+    }
+    
+    // Intercept Volume Up key events
+    if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+      // Check if feature is enabled
+      val volumeUp5TapEnabled = getAsyncStorageValue("@kiosk_volume_up_5tap_enabled", "true") == "true"
+
+      // #180 — Only act while the Kiosk screen is the active route, so Volume-Up x5
+      // doesn't kick the user out of Pin/Settings (same gate as the tap fallback).
+      // kioskScreenActive is set true on KioskScreen mount/focus, so a genuinely
+      // stuck user (still on the kiosk screen) keeps the escape; it only goes false
+      // once we've already navigated to Pin/Settings.
+      if (volumeUp5TapEnabled && kioskScreenActive) {
+        val currentTime = System.currentTimeMillis()
+        
+        // Reset counter if timeout exceeded
+        if (currentTime - volumeUpLastTapTime > volumeUpTapTimeout) {
+          volumeUpTapCount = 0
+        }
+        
+        volumeUpTapCount++
+        volumeUpLastTapTime = currentTime
+        
+        android.util.Log.d("MainActivity", "Volume Up pressed! Count: $volumeUpTapCount")
+        
+        if (volumeUpTapCount >= 5) {
+          volumeUpTapCount = 0
+          android.util.Log.d("MainActivity", "5-tap Volume Up detected! Navigating to PIN")
+          
+          blockAutoRelaunch = true
+          
+          Handler(Looper.getMainLooper()).postDelayed({
+            sendNavigateToPinEvent()
+          }, 100)
+          
+          return true // Consume the 5th tap - don't change volume
+        }
+      }
+    } else if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+      // Volume Down resets the counter
+      if (volumeUpTapCount > 0) {
+        android.util.Log.d("MainActivity", "Volume Down pressed, resetting counter")
+        volumeUpTapCount = 0
+      }
+    }
+    
+    // Let the event propagate normally
+    return super.onKeyDown(keyCode, event)
+  }
+
+  override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+    // Just pass through, but log for debugging
+    if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+      android.util.Log.d("MainActivity", "onKeyUp: keyCode=$keyCode")
+    }
+    return super.onKeyUp(keyCode, event)
+  }
+
+  // ============================================================================
+  // #180 — Native tap-to-settings fallback (REVERTABLE BLOCK)
+  // ----------------------------------------------------------------------------
+  // In WebView/media `tap_anywhere` mode the "N taps -> settings" gesture relies
+  // on JavaScript injected into the page (a `touchend` listener). On some OEM
+  // WebViews, or pages that route touches into a cross-origin iframe, that
+  // in-page event never reaches our listener, so the user is stranded with no
+  // way back to settings even though the page loaded fine (#180, benfrancois).
+  //
+  // dispatchTouchEvent() observes every touch at the Activity level, BEFORE it
+  // is dispatched to any view, completely independently of the page JS, iframes
+  // or OEM WebView quirks, and works under lock-task. It counts N spatially
+  // grouped taps (same proximity/timeout idea as the JS path) and then fires the
+  // existing `navigateToPin` event. It NEVER consumes the touch (always returns
+  // super.dispatchTouchEvent), so page interaction is unaffected. This mirrors
+  // the existing Volume-Up x5 escape hatch.
+  //
+  // To revert this feature entirely: delete this whole block (fields + methods +
+  // the dispatchTouchEvent override below). Nothing else references it.
+  // Disable at runtime: set AsyncStorage `@kiosk_tap_to_settings_native_enabled`
+  // to "false".
+  // ============================================================================
+  // Set from JS (KioskScreen focus/blur via KioskModule.setKioskScreenActive).
+  // This is a SINGLE-Activity app: dispatchTouchEvent() fires for every screen
+  // (Kiosk, Pin, Settings…). Without this gate, 5 grouped taps while *inside*
+  // Settings would also fire navigateToPin and kick the user out. Defaults false
+  // (fail-safe: no false positives if the focus signal never arrives).
+  @Volatile var kioskScreenActive = false
+
+  private var tapSettingsCount = 0
+  private var tapSettingsFirstTapTime = 0L
+  private var tapSettingsFirstX = 0f
+  private var tapSettingsFirstY = 0f
+  // Physical px radius for grouping taps. ~80 CSS px (JS TAP_PROXIMITY_RADIUS)
+  // maps to roughly this on typical tablet densities; kept generous on purpose
+  // since this is an escape hatch, not a precision gesture.
+  private val tapSettingsProximityPx = 150f
+
+  // Cached config — AsyncStorage is SQLite-backed, so we must NOT read it on
+  // every touch. Re-read at most once per TTL.
+  private var tapSettingsCfgReadAt = 0L
+  private val tapSettingsCfgTtlMs = 3000L
+  private var tapSettingsEnabled = false
+  private var tapSettingsRequiredTaps = 5
+  private var tapSettingsTimeoutMs = 1500L
+
+  private fun refreshTapSettingsConfig() {
+    val now = System.currentTimeMillis()
+    if (now - tapSettingsCfgReadAt < tapSettingsCfgTtlMs) return
+    tapSettingsCfgReadAt = now
+    try {
+      val featureEnabled = getAsyncStorageValue("@kiosk_tap_to_settings_native_enabled", "true") == "true"
+      val displayMode = getAsyncStorageValue("@kiosk_display_mode", "webview")
+      val returnMode = getAsyncStorageValue("@kiosk_return_mode", "tap_anywhere")
+      // Only active where the JS path is the sole escape: WebView/media + tap_anywhere.
+      // (button mode has its own RN return button; external_app uses OverlayService.)
+      tapSettingsEnabled = featureEnabled &&
+        (displayMode == "webview" || displayMode == "media_player") &&
+        returnMode == "tap_anywhere"
+      tapSettingsRequiredTaps = getAsyncStorageValue("@kiosk_return_tap_count", "5").toIntOrNull()?.coerceIn(2, 20) ?: 5
+      tapSettingsTimeoutMs = getAsyncStorageValue("@kiosk_return_tap_timeout", "1500").toLongOrNull()?.coerceIn(500L, 5000L) ?: 1500L
+    } catch (e: Exception) {
+      tapSettingsEnabled = false
+    }
+  }
+
+  private fun handleTapForSettings(x: Float, y: Float) {
+    val now = System.currentTimeMillis()
+    if (tapSettingsCount == 0) {
+      tapSettingsFirstTapTime = now
+      tapSettingsFirstX = x
+      tapSettingsFirstY = y
+      tapSettingsCount = 1
+    } else {
+      val elapsed = now - tapSettingsFirstTapTime
+      val dx = x - tapSettingsFirstX
+      val dy = y - tapSettingsFirstY
+      val withinProximity = (dx * dx + dy * dy) <= (tapSettingsProximityPx * tapSettingsProximityPx)
+      if (elapsed > tapSettingsTimeoutMs || !withinProximity) {
+        // Too slow or too far from the first tap -> start a fresh sequence here.
+        tapSettingsFirstTapTime = now
+        tapSettingsFirstX = x
+        tapSettingsFirstY = y
+        tapSettingsCount = 1
+      } else {
+        tapSettingsCount++
+      }
+    }
+
+    if (tapSettingsCount >= tapSettingsRequiredTaps) {
+      tapSettingsCount = 0
+      android.util.Log.d("MainActivity", "Native $tapSettingsRequiredTaps-tap detected (#180 fallback) - navigating to PIN")
+      blockAutoRelaunch = true
+      Handler(Looper.getMainLooper()).postDelayed({
+        sendNavigateToPinEvent()
+      }, 100)
+    }
+  }
+
+  override fun dispatchTouchEvent(ev: android.view.MotionEvent?): Boolean {
+    // Observe (never consume) the initial press of each gesture.
+    if (ev != null && ev.actionMasked == android.view.MotionEvent.ACTION_DOWN && kioskScreenActive) {
+      refreshTapSettingsConfig()
+      if (tapSettingsEnabled) {
+        handleTapForSettings(ev.rawX, ev.rawY)
+      }
+    }
+    return super.dispatchTouchEvent(ev)
+  }
+  // ===== END #180 native tap-to-settings fallback =====
+
+  override fun onBackPressed() {
+    val prefs = getSharedPreferences("AliMdmSettings", Context.MODE_PRIVATE)
+    val backButtonMode = prefs.getString("back_button_mode", "test") ?: "test"
+    
+    android.util.Log.i("AliMDM", "Back button pressed - back_button_mode=$backButtonMode")
+    
+    when (backButtonMode) {
+      "test" -> {
+        // Mode test: allow back button (shows AliMDM, user can see test UI)
+        android.util.Log.i("AliMDM", "Back button: test mode - allowing back")
+        super.onBackPressed()
+      }
+      "immediate", "timer" -> {
+        // Mode immediate/timer: allow back, AppState listener in JS will handle relaunch
+        android.util.Log.i("AliMDM", "Back button: $backButtonMode mode - allowing back for JS handling")
+        super.onBackPressed()
+      }
+      else -> {
+        // Unknown mode: block back button for safety
+        android.util.Log.i("AliMDM", "Back button: unknown mode '$backButtonMode' - blocking")
+      }
+    }
+  }
+
+  /**
+   * Read a value from AsyncStorage (React Native SQLite database)
+   * Uses database "RKStorage" with table "catalystLocalStorage"
+   */
+  private fun getAsyncStorageValue(key: String, defaultValue: String): String {
+    return try {
+      val dbPath = getDatabasePath("RKStorage").absolutePath
+      val db = android.database.sqlite.SQLiteDatabase.openDatabase(dbPath, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY)
+      
+      val cursor = db.rawQuery(
+        "SELECT value FROM catalystLocalStorage WHERE key = ?",
+        arrayOf(key)
+      )
+      
+      val value = if (cursor.moveToFirst()) {
+        cursor.getString(0) ?: defaultValue
+      } else {
+        defaultValue
+      }
+      
+      cursor.close()
+      db.close()
+      value
+    } catch (e: Exception) {
+      DebugLog.d("MainActivity", "Error reading AsyncStorage key $key: ${e.message}")
+      defaultValue
+    }
+  }
+
+  /**
+   * Read all managed app package names from AsyncStorage.
+   * Used to add them to the lock task whitelist.
+   */
+  private fun getManagedAppPackages(): List<String> {
+    return try {
+      val json = getAsyncStorageValue("@kiosk_managed_apps", "[]")
+      val apps = org.json.JSONArray(json)
+      val packages = mutableListOf<String>()
+      for (i in 0 until apps.length()) {
+        val app = apps.getJSONObject(i)
+        val pkg = app.getString("packageName")
+        try {
+          packageManager.getPackageInfo(pkg, 0)
+          packages.add(pkg)
+        } catch (e: Exception) {
+          DebugLog.d("MainActivity", "Managed app not installed, skipping: $pkg")
+        }
+      }
+      packages
+    } catch (e: Exception) {
+      DebugLog.d("MainActivity", "Could not read managed apps: ${e.message}")
+      emptyList()
+    }
+  }
+
+  /**
+   * Check if printing is enabled in settings (read from AsyncStorage)
+   */
+  private fun isPrintSettingEnabled(): Boolean {
+    return getAsyncStorageValue("@kiosk_print_enabled", "false") == "true"
+  }
+
+  /**
+   * Dynamically discover all print spooler/service packages installed on the device.
+   * Covers com.android.printspooler, Samsung Print Service, HP Print, etc.
+   */
+  private fun getPrintSpoolerPackages(): List<String> {
+    val packages = mutableSetOf<String>()
+    packages.add("com.android.printspooler")
+    try {
+      val printServices = packageManager.queryIntentServices(
+        Intent("android.printservice.PrintService"),
+        PackageManager.GET_META_DATA
+      )
+      for (service in printServices) {
+        service.serviceInfo?.packageName?.let { pkg ->
+          packages.add(pkg)
+        }
+      }
+      DebugLog.d("MainActivity", "Print spooler packages for whitelist: $packages")
+    } catch (e: Exception) {
+      DebugLog.d("MainActivity", "Could not discover print services: ${e.message}")
+    }
+    return packages.toList()
+  }
+
+  private fun getEmergencyDialerPackages(): List<String> {
+    val packages = mutableSetOf<String>()
+    val emergencyIntent = Intent(emergencyDialAction)
+    try {
+      packageManager.resolveActivity(emergencyIntent, PackageManager.MATCH_DEFAULT_ONLY)
+        ?.activityInfo?.packageName
+        ?.let { packages.add(it) }
+
+      packageManager.queryIntentActivities(emergencyIntent, PackageManager.MATCH_DEFAULT_ONLY)
+        .forEach { info ->
+          info.activityInfo?.packageName?.let { packages.add(it) }
+        }
+      DebugLog.d("MainActivity", "Emergency dialer packages for whitelist: $packages")
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Could not resolve emergency dialer packages: ${e.message}")
+    }
+    return packages.toList()
+  }
+
+  private fun bringToFrontWithPinNavigation() {
+    try {
+      val intent = Intent(this, MainActivity::class.java)
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+      intent.putExtra("navigateToPin", true)
+      startActivity(intent)
+      DebugLog.d("MainActivity", "Bringing AliMDM to front with PIN navigation")
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Error bringing AliMDM to front with PIN: ${e.message}")
+    }
+  }
+
+  private fun readExternalAppConfig() {
+    try {
+      val displayMode = getAsyncStorageValue("@kiosk_display_mode", "webview")
+      externalAppPackage = getAsyncStorageValue("@kiosk_external_app_package", "")
+      if (externalAppPackage.isNullOrEmpty()) externalAppPackage = null
+      isExternalAppMode = displayMode == "external_app"
+      isDeviceOwner = devicePolicyManager.isDeviceOwnerApp(packageName)
+      
+      DebugLog.d("MainActivity", "External app config: mode=$displayMode, package=$externalAppPackage, isDeviceOwner=$isDeviceOwner")
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Error reading external app config: ${e.message}")
+    }
+  }
+
+  /**
+   * Ensure the BootReceiver component is enabled when auto-launch is ON.
+   * Fixes a regression where toggleAutoLaunch stopped calling enableAutoLaunch(),
+   * leaving the component disabled in PackageManager even though AsyncStorage says "true".
+   */
+  private fun ensureBootReceiverEnabled() {
+    try {
+      val autoLaunchValue = getAsyncStorageValue("@kiosk_auto_launch", "false")
+      val autoLaunchEnabled = autoLaunchValue == "true"
+      
+      if (autoLaunchEnabled) {
+        val componentName = ComponentName(this, BootReceiver::class.java)
+        val currentState = packageManager.getComponentEnabledSetting(componentName)
+        if (currentState != PackageManager.COMPONENT_ENABLED_STATE_ENABLED && 
+            currentState != PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) {
+          packageManager.setComponentEnabledSetting(
+            componentName,
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+            PackageManager.DONT_KILL_APP
+          )
+          DebugLog.d("MainActivity", "BootReceiver re-enabled (was disabled)")
+        }
+      }
+    } catch (e: Exception) {
+      DebugLog.d("MainActivity", "Error ensuring BootReceiver state: ${e.message}")
+    }
+  }
+
+  /**
+   * Start KioskWatchdogService if kiosk mode is enabled (#96).
+   * Uses START_STICKY so Android restarts AliMDM after an OOM kill.
+   */
+  private fun startKioskWatchdogIfNeeded() {
+    try {
+      // #234: always go through the companion helpers, they persist which mode the
+      // service must come back in after a START_STICKY restart.
+      if (isKioskEnabled()) {
+        KioskWatchdogService.startForKiosk(this)
+      } else {
+        // No Lock Mode: the process is an ordinary background app, so keep it alive when
+        // MQTT is on (no-op otherwise). Never relaunches anything.
+        KioskWatchdogService.startKeepAliveIfNeeded(this)
+      }
+    } catch (e: Exception) {
+      DebugLog.d("MainActivity", "Error starting KioskWatchdogService: ${e.message}")
+    }
+  }
+
+  /**
+   * Stop KioskWatchdogService and cancel its notification (#96 fix).
+   * Called during intentional kiosk exit to prevent the watchdog from relaunching the app.
+   */
+  private fun stopKioskWatchdog() {
+    try {
+      val serviceIntent = Intent(this, KioskWatchdogService::class.java)
+      stopService(serviceIntent)
+      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+      nm.cancel(2002) // KioskWatchdogService.NOTIFICATION_ID
+      DebugLog.d("MainActivity", "KioskWatchdogService stopped and notification cleared")
+      // #234: keep the process alive for MQTT after the guard is stopped (see KioskModule).
+      KioskWatchdogService.startKeepAliveIfNeeded(this, force = true)
+    } catch (e: Exception) {
+      DebugLog.d("MainActivity", "Error stopping KioskWatchdogService: ${e.message}")
+    }
+  }
+
+  // ==================== ADB Configuration ====================
+  
+  /**
+   * Handle ADB intent configuration
+   * Allows setting up AliMDM via ADB commands:
+   * 
+   * First setup (no PIN configured):
+   *   adb shell am start -n com.alimdm/.MainActivity --es lock_package "com.app" --es pin "1234"
+   * 
+   * Modify existing config (PIN required):
+   *   adb shell am start -n com.alimdm/.MainActivity --es lock_package "com.app" --es pin "1234"
+   * 
+   * Full config with URL:
+   *   adb shell am start -n com.alimdm/.MainActivity --es url "https://example.com" --es pin "1234"
+   * 
+   * @return true if config was applied and app will restart, false otherwise
+   */
+  private fun handleAdbConfig(intent: Intent?): Boolean {
+    if (intent == null) return false
+    
+    // Check if this is an ADB config intent
+    val lockPackage = intent.getStringExtra("lock_package")
+    val url = intent.getStringExtra("url")
+    val pin = intent.getStringExtra("pin")
+    val configJson = intent.getStringExtra("config") // Full JSON config
+    val mqttBroker = intent.getStringExtra("mqtt_broker_url")
+
+    // Skip if no config parameters.
+    // Treat the intent as an ADB config command if ANY recognized extra is present — not
+    // just the "content" keys (lock_package / url / config / mqtt_broker_url). Previously an
+    // intent that set only e.g. REST API or MQTT options (plus the required pin) bailed out
+    // here and was silently ignored (#193). Keep this list in sync with the extras read below.
+    val adbConfigKeys = arrayOf(
+      "lock_package", "url", "pin", "config",
+      "kiosk_enabled", "auto_launch", "auto_start", "screensaver_enabled", "auto_relaunch",
+      "test_mode", "back_button_mode", "status_bar", "pin_mode",
+      "rest_api_enabled", "rest_api_port", "rest_api_key",
+      "mqtt_enabled", "mqtt_broker_url", "mqtt_port", "mqtt_username", "mqtt_password",
+      "mqtt_client_id", "mqtt_base_topic", "mqtt_discovery_prefix", "mqtt_status_interval",
+      "mqtt_allow_control", "mqtt_device_name",
+      "external_app_mode", "managed_apps"
+    )
+    if (adbConfigKeys.none { intent.hasExtra(it) }) return false
+    
+    android.util.Log.i("AliMDM-ADB", "ADB config received: lock_package=$lockPackage, url=$url, config=${configJson != null}")
+    
+    // Prevent processing the same intent twice (after recreate)
+    val intentHash = ((lockPackage ?: "").hashCode() + (url ?: "").hashCode() + (pin ?: "").hashCode() + System.currentTimeMillis() / 2000).toLong()
+    if (intentHash == lastProcessedAdbIntent) return false
+    lastProcessedAdbIntent = intentHash
+    
+    // Check if device is already configured (has PIN)
+    val isVirginSetup = !hasExistingPin()
+    
+    if (isVirginSetup) {
+      // First setup - PIN is REQUIRED to be set
+      if (pin.isNullOrEmpty()) {
+        android.util.Log.w("AliMDM-ADB", "Rejected: PIN required for first setup")
+        showAdbToast("❌ ADB Config rejected: PIN required for first setup")
+        return false
+      }
+      // Save the new PIN (hashed for ADB verification AND in AsyncStorage for UI)
+      saveAdbPinHash(pin)
+      savePinDirectly(pin)
+      
+    } else {
+      // Already configured - verify PIN
+      if (pin.isNullOrEmpty()) {
+        android.util.Log.w("AliMDM-ADB", "Rejected: PIN required")
+        showAdbToast("❌ ADB Config rejected: PIN required")
+        return false
+      }
+      
+      if (!verifyAdbPin(pin)) {
+        android.util.Log.w("AliMDM-ADB", "Rejected: Invalid PIN")
+        showAdbToast("❌ ADB Config rejected: Invalid PIN")
+        return false
+      }
+    }
+    
+    // PIN verified - Save configuration to SharedPreferences as "pending config"
+    // React Native (KioskScreen) will read this on startup and apply to AsyncStorage
+    // This avoids Room/AsyncStorage v2 database compatibility issues
+    val pendingConfig = getSharedPreferences("AliMdmPendingConfig", Context.MODE_PRIVATE)
+    val editor = pendingConfig.edit()
+    editor.clear() // Clear any previous pending config
+    
+    android.util.Log.i("AliMDM-ADB", "Writing pending config to SharedPreferences...")
+    
+    try {
+    
+      // Handle full JSON config
+      if (configJson != null) {
+        try {
+          val config = org.json.JSONObject(configJson)
+          applyJsonConfigToPrefs(editor, config)
+        } catch (e: Exception) {
+          android.util.Log.e("AliMDM-ADB", "Invalid JSON: ${e.message}")
+          showAdbToast("❌ ADB Config: Invalid JSON")
+          return false
+        }
+      }
+    
+    // Handle individual parameters (override JSON if both provided)
+    // Always include PIN in pending config so it's visible in Settings UI
+    if (pin != null) {
+      editor.putString("@kiosk_pin", pin)
+    }
+
+    if (lockPackage != null) {
+      // Verify package exists
+      try {
+        packageManager.getPackageInfo(lockPackage, 0)
+        editor.putString("@kiosk_external_app_package", lockPackage)
+        editor.putString("@kiosk_display_mode", "external_app")
+      } catch (e: Exception) {
+        android.util.Log.w("AliMDM-ADB", "Package not found: $lockPackage")
+        showAdbToast("❌ ADB Config: Package not found: $lockPackage")
+        return false
+      }
+    }
+    
+    if (url != null) {
+      editor.putString("@kiosk_url", url)
+      // Only set display_mode to webview if lock_package was NOT provided
+      // lock_package takes priority over url for display_mode
+      if (lockPackage == null) {
+        editor.putString("@kiosk_display_mode", "webview")
+      }
+    }
+    
+    // Handle additional options - only set if explicitly provided
+    if (intent.hasExtra("kiosk_enabled")) {
+      val kioskEnabled = intent.getBooleanExtra("kiosk_enabled", false)
+      editor.putString("@kiosk_enabled", kioskEnabled.toString())
+    }
+    
+    // Handle auto_launch as string or auto_start as boolean
+    intent.getStringExtra("auto_launch")?.let {
+      editor.putString("@kiosk_auto_launch", it)
+    }
+    if (intent.hasExtra("auto_start")) {
+      val autoStart = intent.getBooleanExtra("auto_start", false)
+      editor.putString("@kiosk_auto_launch", autoStart.toString())
+    }
+    
+    intent.getStringExtra("screensaver_enabled")?.let {
+      editor.putString("@screensaver_enabled", it)
+    }
+    
+    intent.getStringExtra("auto_relaunch")?.let {
+      editor.putString("@kiosk_auto_relaunch_app", it)
+    }
+    
+    // test_mode: "true" = show return button with timer, "false" = immediate return (production)
+    intent.getStringExtra("test_mode")?.let {
+      editor.putString("@kiosk_external_app_test_mode", it)
+      // Also set back_button_mode: test_mode=false → immediate, test_mode=true → test
+      if (it == "false") {
+        editor.putString("@kiosk_back_button_mode", "immediate")
+      } else {
+        editor.putString("@kiosk_back_button_mode", "test")
+      }
+    }
+    
+    // back_button_mode: "test" = stay on AliMDM, "timer" = countdown then relaunch, "immediate" = relaunch immediately
+    intent.getStringExtra("back_button_mode")?.let {
+      editor.putString("@kiosk_back_button_mode", it)
+    }
+    
+    intent.getStringExtra("status_bar")?.let {
+      editor.putString("@kiosk_status_bar_enabled", it)
+    }
+    
+    intent.getStringExtra("rest_api_enabled")?.let {
+      editor.putString("@kiosk_rest_api_enabled", it)
+    }
+    
+    intent.getStringExtra("rest_api_port")?.let {
+      editor.putString("@kiosk_rest_api_port", it)
+    }
+    
+    intent.getStringExtra("rest_api_key")?.let {
+      editor.putString("@kiosk_rest_api_key", it)
+    }
+    
+    intent.getStringExtra("pin_mode")?.let {
+      // Only accept valid values: "numeric" or "alphanumeric"
+      if (it == "numeric" || it == "alphanumeric") {
+        editor.putString("@kiosk_pin_mode", it)
+      }
+    }
+
+    // MQTT configuration
+    intent.getStringExtra("mqtt_enabled")?.let {
+      editor.putString("@kiosk_mqtt_enabled", it)
+    }
+    intent.getStringExtra("mqtt_broker_url")?.let {
+      editor.putString("@kiosk_mqtt_broker_url", it)
+    }
+    intent.getStringExtra("mqtt_port")?.let {
+      editor.putString("@kiosk_mqtt_port", it)
+    }
+    intent.getStringExtra("mqtt_username")?.let {
+      editor.putString("@kiosk_mqtt_username", it)
+    }
+    intent.getStringExtra("mqtt_password")?.let {
+      // MQTT password goes to secure Keychain, not AsyncStorage
+      // Use a special pending key that KioskScreen will handle
+      editor.putString("@mqtt_password_pending", it)
+    }
+    intent.getStringExtra("mqtt_client_id")?.let {
+      editor.putString("@kiosk_mqtt_client_id", it)
+    }
+    intent.getStringExtra("mqtt_base_topic")?.let {
+      editor.putString("@kiosk_mqtt_base_topic", it)
+    }
+    intent.getStringExtra("mqtt_discovery_prefix")?.let {
+      editor.putString("@kiosk_mqtt_discovery_prefix", it)
+    }
+    intent.getStringExtra("mqtt_status_interval")?.let {
+      editor.putString("@kiosk_mqtt_status_interval", it)
+    }
+    intent.getStringExtra("mqtt_allow_control")?.let {
+      editor.putString("@kiosk_mqtt_allow_control", it)
+    }
+    intent.getStringExtra("mqtt_device_name")?.let {
+      editor.putString("@kiosk_mqtt_device_name", it)
+    }
+
+    // Multi-app mode configuration
+    intent.getStringExtra("external_app_mode")?.let {
+      if (it == "single" || it == "multi") {
+        editor.putString("@kiosk_external_app_mode", it)
+        // If switching to multi mode, set display_mode to external_app
+        if (it == "multi") {
+          editor.putString("@kiosk_display_mode", "external_app")
+        }
+      } else {
+        android.util.Log.w("AliMDM-ADB", "Invalid external_app_mode: $it (must be 'single' or 'multi')")
+      }
+    }
+
+    // Managed apps: JSON array of apps for multi-app mode
+    // Format: '[{"packageName":"com.app1"},{"packageName":"com.app2","launchOnBoot":true}]'
+    intent.getStringExtra("managed_apps")?.let { jsonStr ->
+      try {
+        val appsArray = org.json.JSONArray(jsonStr)
+        val validatedApps = org.json.JSONArray()
+        for (i in 0 until appsArray.length()) {
+          val appObj = appsArray.getJSONObject(i)
+          val pkg = appObj.getString("packageName")
+          // Verify each package is installed
+          try {
+            val appInfo = packageManager.getApplicationInfo(pkg, 0)
+            val displayName = if (appObj.has("displayName") && appObj.getString("displayName").isNotEmpty()) {
+              appObj.getString("displayName")
+            } else {
+              packageManager.getApplicationLabel(appInfo).toString()
+            }
+            val validApp = org.json.JSONObject()
+            validApp.put("packageName", pkg)
+            validApp.put("displayName", displayName)
+            validApp.put("showOnHomeScreen", appObj.optBoolean("showOnHomeScreen", true))
+            validApp.put("launchOnBoot", appObj.optBoolean("launchOnBoot", false))
+            validApp.put("keepAlive", appObj.optBoolean("keepAlive", false))
+            validApp.put("allowAccessibility", appObj.optBoolean("allowAccessibility", false))
+            validatedApps.put(validApp)
+            android.util.Log.i("AliMDM-ADB", "Managed app added: $pkg ($displayName)")
+          } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
+            android.util.Log.w("AliMDM-ADB", "Managed app not installed, skipping: $pkg")
+          }
+        }
+        if (validatedApps.length() > 0) {
+          editor.putString("@kiosk_managed_apps", validatedApps.toString())
+          android.util.Log.i("AliMDM-ADB", "Managed apps configured: ${validatedApps.length()} apps")
+        } else {
+          android.util.Log.w("AliMDM-ADB", "No valid managed apps found in the provided list")
+        }
+      } catch (e: Exception) {
+        android.util.Log.e("AliMDM-ADB", "Invalid managed_apps JSON: ${e.message}")
+        showAdbToast("❌ ADB Config: Invalid managed_apps JSON")
+      }
+    }
+    
+    // Mark that there is pending config
+    editor.putBoolean("has_pending_config", true)
+    
+    // Use commit() (synchronous) instead of apply() to ensure data is written before process kill
+    editor.commit()
+    
+    // Verify
+    val verifyPrefs = getSharedPreferences("AliMdmPendingConfig", Context.MODE_PRIVATE)
+    val allEntries = verifyPrefs.all
+    android.util.Log.i("AliMDM-ADB", "Pending config verification - ${allEntries.size} entries:")
+    for ((key, value) in allEntries) {
+      android.util.Log.i("AliMDM-ADB", "  Pending: $key = $value")
+    }
+    
+    } catch (e: Exception) {
+      android.util.Log.e("AliMDM-ADB", "Error applying config: ${e.message}")
+      showAdbToast("❌ ADB Config: Error: ${e.message}")
+      return false
+    }
+    
+    // Show success toast
+    val configType = when {
+      lockPackage != null -> "app: $lockPackage"
+      url != null -> "URL: $url"
+      configJson != null -> "full config"
+      else -> "settings"
+    }
+    android.util.Log.i("AliMDM-ADB", "Config applied: $configType")
+    showAdbToast("✅ ADB Config applied: $configType")
+    
+    // Broadcast that config is saved (before restart)
+    sendBroadcast(Intent("com.alimdm.ADB_CONFIG_SAVED").apply {
+      putExtra("config_type", configType)
+    })
+    
+    // Restart in a handler to allow database sync to complete
+    Handler(Looper.getMainLooper()).postDelayed({
+      // Broadcast that restart is starting
+      sendBroadcast(Intent("com.alimdm.ADB_CONFIG_RESTARTING"))
+      
+      // Create restart intent - AliMDM will restart, load settings (including
+      // lock_package), activate kiosk mode, then launch the external app via 
+      // KioskScreen.loadSettings() → launchExternalApp() → AppLauncherModule
+      // which will emit the EXTERNAL_APP_LAUNCHED broadcast
+      val restartIntent = packageManager.getLaunchIntentForPackage(packageName)
+      restartIntent?.apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+      }
+      
+      if (intent.getBooleanExtra("auto_start", false) && lockPackage != null) {
+        android.util.Log.i("AliMDM-ADB", "App will auto-start after restart via normal loadSettings flow")
+      }
+      
+      // Start the new instance
+      if (restartIntent != null) {
+        startActivity(restartIntent)
+      }
+      
+      // Kill immediately
+      android.os.Process.killProcess(android.os.Process.myPid())
+      System.exit(0)
+    }, 500) // Wait 500ms for toast to show
+    
+    return true
+  }
+  
+  /**
+   * Restart the app by killing the process and relaunching
+   * This ensures React Native picks up the new config from SharedPreferences
+   */
+  private fun restartApp() {
+    try {
+      // Create a fresh intent without the ADB config extras
+      val restartIntent = packageManager.getLaunchIntentForPackage(packageName)
+      restartIntent?.apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+      }
+      
+      // Start the new instance
+      if (restartIntent != null) {
+        startActivity(restartIntent)
+        // Kill the current process
+        android.os.Process.killProcess(android.os.Process.myPid())
+      } else {
+        android.util.Log.e("AliMDM-ADB", "Failed to get launch intent for restart")
+      }
+    } catch (e: Exception) {
+      android.util.Log.e("AliMDM-ADB", "Failed to restart app: ${e.message}")
+    }
+  }
+  
+  /**
+   * Open the AsyncStorage SQLite database (create if not exists)
+   * Uses database "RKStorage" with table "catalystLocalStorage"
+   */
+  private fun openAsyncStorageDb(): SQLiteDatabase? {
+    return try {
+      val dbPath = getDatabasePath("RKStorage").absolutePath
+      
+      // Create parent directory if it doesn't exist
+      val dbFile = java.io.File(dbPath)
+      dbFile.parentFile?.let { parent ->
+        if (!parent.exists()) {
+          parent.mkdirs()
+        }
+      }
+      
+      // Open or create database
+      val db = SQLiteDatabase.openOrCreateDatabase(dbPath, null)
+      
+      // Ensure the catalystLocalStorage table exists (same schema as AsyncStorage)
+      db.execSQL("""
+        CREATE TABLE IF NOT EXISTS catalystLocalStorage (
+          `key` TEXT NOT NULL,
+          `value` TEXT,
+          PRIMARY KEY(`key`)
+        )
+      """.trimIndent())
+      
+      db
+    } catch (e: Exception) {
+      android.util.Log.e("AliMDM-ADB", "Failed to open AsyncStorage DB: ${e.message}")
+      null
+    }
+  }
+  
+  /**
+   * Set a value in AsyncStorage SQLite database
+   */
+  private fun setAsyncStorageValue(db: SQLiteDatabase, key: String, value: String) {
+    val contentValues = ContentValues().apply {
+      put("key", key)
+      put("value", value)
+    }
+    db.insertWithOnConflict("catalystLocalStorage", null, contentValues, SQLiteDatabase.CONFLICT_REPLACE)
+  }
+
+  /**
+   * Apply full JSON configuration to SharedPreferences (pending config)
+   */
+  private fun applyJsonConfigToPrefs(editor: android.content.SharedPreferences.Editor, config: org.json.JSONObject) {
+    // Map of JSON keys to AsyncStorage keys
+    val keyMapping = mapOf(
+      "url" to "@kiosk_url",
+      "lock_package" to "@kiosk_external_app_package",
+      "display_mode" to "@kiosk_display_mode",
+      "kiosk_enabled" to "@kiosk_enabled",
+      "auto_launch" to "@kiosk_auto_launch",
+      "auto_relaunch" to "@kiosk_auto_relaunch_app",
+      "screensaver_enabled" to "@screensaver_enabled",
+      "screensaver_delay" to "@screensaver_inactivity_delay",
+      "screensaver_brightness" to "@screensaver_brightness",
+      "status_bar_enabled" to "@kiosk_status_bar_enabled",
+      "status_bar_show_battery" to "@kiosk_status_bar_show_battery",
+      "status_bar_show_wifi" to "@kiosk_status_bar_show_wifi",
+      "status_bar_show_time" to "@kiosk_status_bar_show_time",
+      "rest_api_enabled" to "@kiosk_rest_api_enabled",
+      "rest_api_port" to "@kiosk_rest_api_port",
+      "rest_api_key" to "@kiosk_rest_api_key",
+      "allow_power_button" to "@kiosk_allow_power_button",
+      "back_button_mode" to "@kiosk_back_button_mode",
+      "default_brightness" to "@default_brightness",
+      "pin_mode" to "@kiosk_pin_mode",
+      // MQTT
+      "mqtt_enabled" to "@kiosk_mqtt_enabled",
+      "mqtt_broker_url" to "@kiosk_mqtt_broker_url",
+      "mqtt_port" to "@kiosk_mqtt_port",
+      "mqtt_username" to "@kiosk_mqtt_username",
+      "mqtt_client_id" to "@kiosk_mqtt_client_id",
+      "mqtt_base_topic" to "@kiosk_mqtt_base_topic",
+      "mqtt_discovery_prefix" to "@kiosk_mqtt_discovery_prefix",
+      "mqtt_status_interval" to "@kiosk_mqtt_status_interval",
+      "mqtt_allow_control" to "@kiosk_mqtt_allow_control",
+      "mqtt_device_name" to "@kiosk_mqtt_device_name",
+      // Multi-app
+      "external_app_mode" to "@kiosk_external_app_mode"
+    )
+    
+    for ((jsonKey, storageKey) in keyMapping) {
+      if (config.has(jsonKey)) {
+        val value = config.get(jsonKey)
+        editor.putString(storageKey, value.toString())
+      }
+    }
+    
+    // Handle lock_package -> also set display_mode
+    if (config.has("lock_package") && !config.has("display_mode")) {
+      editor.putString("@kiosk_display_mode", "external_app")
+    }
+
+    // MQTT password requires special handling (goes to secure Keychain, not AsyncStorage)
+    if (config.has("mqtt_password")) {
+      editor.putString("@mqtt_password_pending", config.getString("mqtt_password"))
+    }
+
+    // Managed apps: validate packages and resolve display names
+    if (config.has("managed_apps")) {
+      try {
+        val appsArray = config.getJSONArray("managed_apps")
+        val validatedApps = org.json.JSONArray()
+        val pm = packageManager
+        for (i in 0 until appsArray.length()) {
+          val appObj = appsArray.getJSONObject(i)
+          val pkg = appObj.getString("packageName")
+          try {
+            val appInfo = pm.getApplicationInfo(pkg, 0)
+            val displayName = if (appObj.has("displayName") && appObj.getString("displayName").isNotEmpty()) {
+              appObj.getString("displayName")
+            } else {
+              pm.getApplicationLabel(appInfo).toString()
+            }
+            val validApp = org.json.JSONObject()
+            validApp.put("packageName", pkg)
+            validApp.put("displayName", displayName)
+            validApp.put("showOnHomeScreen", appObj.optBoolean("showOnHomeScreen", true))
+            validApp.put("launchOnBoot", appObj.optBoolean("launchOnBoot", false))
+            validApp.put("keepAlive", appObj.optBoolean("keepAlive", false))
+            validApp.put("allowAccessibility", appObj.optBoolean("allowAccessibility", false))
+            validatedApps.put(validApp)
+          } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
+            android.util.Log.w("AliMDM-ADB", "JSON config: managed app not installed, skipping: $pkg")
+          }
+        }
+        if (validatedApps.length() > 0) {
+          editor.putString("@kiosk_managed_apps", validatedApps.toString())
+        }
+      } catch (e: Exception) {
+        android.util.Log.e("AliMDM-ADB", "Invalid managed_apps in JSON config: ${e.message}")
+      }
+    }
+
+    // If external_app_mode is set to multi, ensure display_mode is external_app
+    if (config.optString("external_app_mode") == "multi" && !config.has("display_mode")) {
+      editor.putString("@kiosk_display_mode", "external_app")
+    }
+  }
+  
+  /**
+   * Check if a PIN is already configured
+   */
+  private fun hasExistingPin(): Boolean {
+    val adbPrefs = getSharedPreferences("AliMdmAdbConfig", Context.MODE_PRIVATE)
+    return adbPrefs.getString("pin_hash", null) != null
+  }
+  
+  /**
+   * Save PIN hash for ADB verification
+   * Uses SHA-256 with salt for secure storage
+   */
+  private fun saveAdbPinHash(pin: String) {
+    try {
+      val salt = java.util.UUID.randomUUID().toString()
+      val hash = hashPinWithSalt(pin, salt)
+      
+      val prefs = getSharedPreferences("AliMdmAdbConfig", Context.MODE_PRIVATE)
+      prefs.edit()
+        .putString("pin_hash", hash)
+        .putString("pin_salt", salt)
+        .apply()
+        
+      DebugLog.d("MainActivity", "ADB PIN hash saved")
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Failed to save ADB PIN hash: ${e.message}")
+    }
+  }
+  
+  /**
+   * Save PIN directly to pending config SharedPreferences for UI
+   */
+  private fun savePinDirectly(pin: String) {
+    try {
+      val pendingConfig = getSharedPreferences("AliMdmPendingConfig", Context.MODE_PRIVATE)
+      pendingConfig.edit().putString("@kiosk_pin", pin).commit()
+      android.util.Log.i("AliMDM-ADB", "PIN saved to pending config")
+    } catch (e: Exception) {
+      android.util.Log.e("AliMDM-ADB", "Failed to save PIN: ${e.message}")
+    }
+  }
+  
+  /**
+   * Verify PIN against stored hash
+   */
+  private fun verifyAdbPin(pin: String): Boolean {
+    try {
+      val prefs = getSharedPreferences("AliMdmAdbConfig", Context.MODE_PRIVATE)
+      val storedHash = prefs.getString("pin_hash", null)
+      val storedSalt = prefs.getString("pin_salt", null)
+      
+      if (storedHash != null && storedSalt != null) {
+        val inputHash = hashPinWithSalt(pin, storedSalt)
+        return inputHash == storedHash
+      }
+      
+      // Fallback: check legacy plaintext PIN from AsyncStorage v2
+      val legacyPin = getAsyncStorageValue("@kiosk_pin", "")
+      if (legacyPin.isNotEmpty()) {
+        if (pin == legacyPin) {
+          // Migrate to hashed storage
+          saveAdbPinHash(pin)
+          return true
+        }
+        return false
+      }
+      
+      // No PIN stored, check default (for backward compatibility)
+      return pin == "1234"
+      
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Failed to verify ADB PIN: ${e.message}")
+      return false
+    }
+  }
+  
+  /**
+   * Hash PIN with salt using SHA-256
+   */
+  private fun hashPinWithSalt(pin: String, salt: String): String {
+    val combined = "$pin:$salt:alimdm_adb"
+    val digest = MessageDigest.getInstance("SHA-256")
+    val hashBytes = digest.digest(combined.toByteArray(Charsets.UTF_8))
+    return hashBytes.joinToString("") { "%02x".format(it) }
+  }
+  
+  /**
+   * Show toast for ADB feedback
+   */
+  private fun showAdbToast(message: String) {
+    Handler(Looper.getMainLooper()).post {
+      Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+  }
+
+  override fun onDestroy() {
+    super.onDestroy()
+    pinningValveRunnable?.let { Handler(Looper.getMainLooper()).removeCallbacks(it) }
+    pinningValveRunnable = null
+
+    // #237: only lift the kiosk restrictions on a deliberate exit. onDestroy() also fires
+    // when the system destroys this activity while an external app holds the foreground,
+    // which is the normal state in single-app mode (the very case the watchdog check below
+    // already accounts for). Restoring the permissive feature set there hands the user the
+    // status bar, the notification panel, Home and Overview INSIDE lock task, and nothing
+    // puts the restrictive set back until MainActivity is recreated: exactly the reported
+    // "bars stay visible until settings / exit / reboot".
+    //
+    // The deliberate path does not depend on this call: KioskModule.exitKioskMode() calls
+    // disableKioskRestrictions() itself before stopLockTask() and finish().
+    if (blockAutoRelaunch) {
+      disableKioskRestrictions()
+    }
+    
+    // Stop KioskWatchdogService if kiosk mode was intentionally disabled (#96 fix)
+    // This prevents the watchdog from relaunching the app after an intentional exit.
+    // We check the flag rather than isKioskEnabled() because onDestroy may also fire
+    // during an OOM kill — in that case we want the watchdog to keep running.
+    if (blockAutoRelaunch) {
+      stopKioskWatchdog()
+    }
+    
+    // Clean up blocking overlays
+    try {
+      BlockingOverlayManager.getInstance(this).destroy()
+      DebugLog.d("MainActivity", "Blocking overlays cleaned up")
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Error cleaning up blocking overlays: ${e.message}")
+    }
+    
+    // Unregister screen state receiver
+    try {
+      if (screenStateReceiver != null) {
+        unregisterReceiver(screenStateReceiver)
+        screenStateReceiver = null
+        DebugLog.d("MainActivity", "Screen state receiver unregistered")
+      }
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Error unregistering screen state receiver: ${e.message}")
+    }
+    
+    // Unregister volume change receiver
+    try {
+      if (volumeChangeReceiver != null) {
+        unregisterReceiver(volumeChangeReceiver)
+        volumeChangeReceiver = null
+        DebugLog.d("MainActivity", "Volume change receiver unregistered")
+      }
+    } catch (e: Exception) {
+      DebugLog.errorProduction("MainActivity", "Error unregistering volume change receiver: ${e.message}")
+    }
+  }
+
+  /**
+   * Register broadcast receiver to detect screen on/off events
+   * Safe to call multiple times - will skip if already registered
+   */
+  private fun registerScreenStateReceiver() {
+    try {
+      // Skip if already registered
+      if (screenStateReceiver != null) {
+        android.util.Log.d("MainActivity", "Screen state receiver already registered")
+        return
+      }
+      
+      screenStateReceiver = ScreenStateReceiver()
+      
+      val filter = IntentFilter()
+      filter.addAction(Intent.ACTION_SCREEN_ON)
+      filter.addAction(Intent.ACTION_SCREEN_OFF)
+      
+      registerReceiver(screenStateReceiver, filter)
+      android.util.Log.d("MainActivity", "Screen state receiver registered successfully")
+    } catch (e: Exception) {
+      android.util.Log.e("MainActivity", "Error registering screen state receiver: ${e.message}")
+    }
+  }
+
+  /**
+   * Register broadcast receiver to detect volume changes from hardware buttons
+   * Safe to call multiple times - will skip if already registered
+   */
+  private fun registerVolumeChangeReceiver() {
+    try {
+      // Skip if already registered
+      if (volumeChangeReceiver != null) {
+        android.util.Log.d("MainActivity", "Volume change receiver already registered")
+        return
+      }
+      
+      volumeChangeReceiver = VolumeChangeReceiver()
+      
+      val filter = IntentFilter()
+      filter.addAction("android.media.VOLUME_CHANGED_ACTION")
+      
+      registerReceiver(volumeChangeReceiver, filter)
+      android.util.Log.d("MainActivity", "Volume change receiver registered successfully")
+    } catch (e: Exception) {
+      android.util.Log.e("MainActivity", "Error registering volume change receiver: ${e.message}")
+    }
+  }
+
+  /**
+   * Prevent OEM multi-window/freeform controls from closing the app (#94).
+   * Lenovo ZUI (and similar OEMs) show a "three-dot" overlay that can close apps in
+   * windowed mode. If multi-window is triggered despite resizeableActivity=false,
+   * immediately re-launch as full-screen single-task.
+   * Only active when kiosk mode is enabled to avoid interfering with normal usage
+   * or external app mode (where AliMDM is in the background).
+   */
+  override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: android.content.res.Configuration) {
+    super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+    if (isInMultiWindowMode && isKioskEnabled()) {
+      DebugLog.d("MainActivity", "Multi-window detected in kiosk mode — forcing full-screen relaunch")
+      // Re-launch ourselves as a full-screen single task to exit multi-window
+      val relaunch = Intent(this, MainActivity::class.java)
+      relaunch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+      startActivity(relaunch)
+    }
+  }
+
+  /**
+   * Block finish() when kiosk lock task is active (#94).
+   * Prevents OEM UI elements (Lenovo ZUI "X" button, freeform close) from closing the app.
+   * The check uses isTaskLocked() (not isKioskEnabled()) so that intentional exits
+   * via exitKioskMode — which calls stopLockTask() before finish() — still work.
+   */
+  override fun finish() {
+    if (isTaskLocked()) {
+      DebugLog.d("MainActivity", "finish() blocked — lock task active")
+      return
+    }
+    super.finish()
+  }
+
+  override fun finishAndRemoveTask() {
+    if (isTaskLocked()) {
+      DebugLog.d("MainActivity", "finishAndRemoveTask() blocked — lock task active")
+      return
+    }
+    super.finishAndRemoveTask()
+  }
+
+  /**
+   * Handle configuration changes (rotation, screen size, etc.)
+   */
+  override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+    super.onConfigurationChanged(newConfig)
+    
+    // Re-hide system UI after rotation (system bars can reappear on config change)
+    hideSystemUI()
+    
+    // Notify blocking overlay manager about configuration change
+    try {
+      val manager = BlockingOverlayManager.getInstance(this)
+      manager.onConfigurationChanged(newConfig)
+      DebugLog.d("MainActivity", "Configuration changed - blocking overlays updated")
+    } catch (e: Exception) {
+      DebugLog.e("MainActivity", "Error handling configuration change: ${e.message}")
+    }
+  }
+}

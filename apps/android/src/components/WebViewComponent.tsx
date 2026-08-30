@@ -1,0 +1,1504 @@
+import React, { useRef, useState, useMemo, useCallback, useImperativeHandle, forwardRef } from 'react';
+import {
+  View,
+  StyleSheet,
+  ActivityIndicator,
+  Text,
+  TouchableOpacity,
+  Animated,
+  Image,
+  ScrollView,
+  Linking,
+  NativeModules,
+  findNodeHandle
+} from 'react-native';
+
+const { HttpServerModule } = NativeModules;
+
+import KioskModule from '../utils/KioskModule';
+import UpdateModule from '../utils/UpdateModule';
+import Icon, { IconName } from './Icon';
+import { WebView } from 'react-native-webview';
+import type { WebViewErrorEvent, ShouldStartLoadRequest, WebViewRenderProcessGoneEvent } from 'react-native-webview/lib/WebViewTypes';
+import { useNavigation } from '@react-navigation/native';
+import PrintModule from '../utils/PrintModule';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../navigation/AppNavigator';
+
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+interface WebViewComponentProps {
+  url: string;
+  autoReload: boolean;
+  keyboardMode?: string; // 'default', 'force_numeric', 'smart'
+  onUserInteraction?: (event?: { isTap?: boolean; x?: number; y?: number; fromFallbackButton?: boolean }) => void; // callback optionnel pour interaction utilisateur
+  jsToExecute?: string; // JavaScript code to execute from API
+  onJsExecuted?: () => void; // callback when JS is executed
+  showBackButton?: boolean; // Enable web navigation back button
+  onNavigationStateChange?: (state: { canGoBack: boolean; canGoForward: boolean; title: string }) => void; // Callback for web navigation state
+  onPageNavigated?: (url: string) => void; // Callback when page URL changes (for inactivity return)
+  urlFilterMode?: string; // 'whitelist' or 'blacklist'
+  urlFilterPatterns?: string[]; // URL patterns to filter
+  urlFilterShowFeedback?: boolean; // Show feedback when URL is blocked
+  pdfViewerEnabled?: boolean; // Enable inline PDF viewing via PDF.js
+  printEnabled?: boolean; // Enable window.print() interception for native printing
+  printPaperSize?: string; // Default paper size: 'A4' | 'A5' | 'A3' | 'LETTER' | 'LEGAL'
+  zoomLevel?: number; // Zoom level percentage (50-200, default 100)
+  zoomMode?: string; // 'standard' (CSS zoom) | 'fit' (viewport reflow, #188)
+  disableUserZoom?: boolean; // Prevent pinch-to-zoom and double-tap zoom
+  customUserAgent?: string; // Custom User-Agent string (empty = default modern Chrome UA)
+  basicAuthCredential?: { username: string; password: string };
+  onRenderProcessGone?: (didCrash: boolean) => void; // #198 — renderer process died, ask parent to remount
+}
+
+export interface WebViewComponentRef {
+  goBack: () => void;
+  goForward: () => void;
+  reload: () => void;
+  scrollToTop: () => void;
+  clearCache: () => void;
+  pauseMedia: () => void;
+  resumeMedia: () => void;
+}
+
+// #177 — Pause any HTML5 media playing in the page. Injected on pause as a reliable
+// complement to the native WebView.onPause() (which alone doesn't stop <audio> on every
+// OEM WebView). Ends with `true;` to silence react-native-webview's injection warning.
+const MEDIA_PAUSE_JS = `(function(){try{document.querySelectorAll('audio,video').forEach(function(m){try{m.pause();}catch(e){}});}catch(e){}})();true;`;
+
+const WebViewComponent = forwardRef<WebViewComponentRef, WebViewComponentProps>(({ 
+  url, 
+  autoReload,
+  keyboardMode = 'default',
+  onUserInteraction,
+  jsToExecute,
+  onJsExecuted,
+  showBackButton = false,
+  onNavigationStateChange,
+  onPageNavigated,
+  urlFilterMode,
+  urlFilterPatterns,
+  urlFilterShowFeedback = false,
+  pdfViewerEnabled = false,
+  printEnabled = false,
+  printPaperSize = 'A4',
+  zoomLevel = 100,
+  zoomMode = 'standard',
+  disableUserZoom = false,
+  customUserAgent = '',
+  basicAuthCredential,
+  onRenderProcessGone,
+}, ref) => {
+  const navigation = useNavigation<NavigationProp>();
+  const webViewRef = useRef<WebView>(null);
+  // #190 — Host-view ref for pauseMedia/resumeMedia. react-native-webview's ref is a
+  // methods-only imperative handle, NOT a ReactComponent: passing it to findNodeHandle
+  // throws and crashes the app (JavascriptException on screensaver activation). The
+  // native pauseWebView() walks the subtree for the WebView, so the container's tag works.
+  const containerViewRef = useRef<View>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<boolean>(false);
+  const [pageLoaded, setPageLoaded] = useState<boolean>(false);
+  const [blockedUrlMessage, setBlockedUrlMessage] = useState<string | null>(null);
+  // App version for the error-overlay footer — read from the installed APK (build.gradle)
+  // via UpdateModule rather than hardcoded, so it never drifts on release bumps.
+  const [appVersion, setAppVersion] = useState<string>('');
+  const blockedUrlTimerRef = useRef<any>(null);
+  const isGoingBackRef = useRef<boolean>(false); // Prevent goBack loop for URL filter
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const loadingTimeoutRef = useRef<any>(null);
+  // Last top-frame (main document) URL requested — used to distinguish a fatal
+  // main-page HTTP error from a harmless sub-resource error (favicon, analytics…).
+  const lastTopFrameUrlRef = useRef<string | null>(null);
+
+  // Pre-compile URL filter patterns into RegExp for performance
+  const compiledFilterPatterns = useMemo(() => {
+    if (!urlFilterPatterns || urlFilterPatterns.length === 0) return [];
+    return urlFilterPatterns.map(pattern => {
+      try {
+        // Strip leading/trailing whitespace
+        let p = pattern.trim();
+        if (!p) return null;
+
+        // Escape regex special chars except *, then convert * to .*
+        const escaped = p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+
+        // If the pattern already starts with a protocol (http/https), anchor it
+        // Otherwise, allow any protocol prefix and make trailing slash optional
+        const hasProtocol = /^https?:\/\//i.test(p);
+        if (hasProtocol) {
+          // Exact match with optional trailing slash
+          return new RegExp(`^${escaped}\\/?$`, 'i');
+        } else {
+          // No protocol: allow https?:// prefix, optional trailing slash
+          return new RegExp(`^https?:\\/\\/${escaped}\\/?$`, 'i');
+        }
+      } catch {
+        return null;
+      }
+    }).filter(Boolean) as RegExp[];
+  }, [urlFilterPatterns]);
+
+  // Check if a URL should be blocked by the filter
+  const isUrlBlocked = useCallback((targetUrl: string): boolean => {
+    if (!urlFilterMode) return false;
+
+    // Blacklist with empty list = nothing to block
+    if (urlFilterMode === 'blacklist' && compiledFilterPatterns.length === 0) return false;
+
+    // Helper: extract origin + pathname (without query/hash), normalize trailing slash
+    const getOriginPath = (u: string): string => {
+      const m = u.match(/^(https?:\/\/[^/?#]+)([^?#]*)/i);
+      if (!m) return u.toLowerCase();
+      let path = m[2] || '/';
+      // Normalize: add leading /, remove trailing / (except for root)
+      if (!path.startsWith('/')) path = '/' + path;
+      if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+      return (m[1] + path).toLowerCase();
+    };
+
+    // Always allow navigation to the same page (same origin + path)
+    // This allows form submits, JS buttons, hash/query changes on the SAME page
+    const targetOriginPath = getOriginPath(targetUrl);
+    const mainOriginPath = getOriginPath(url);
+    
+    if (targetOriginPath === mainOriginPath) return false;
+
+    if (urlFilterMode === 'blacklist') {
+      // Blacklist: block if URL matches any pattern
+      return compiledFilterPatterns.some(regex => regex.test(targetUrl));
+    } else {
+      // Whitelist: block everything except same-page + matched patterns
+      // Empty list = only same-page allowed (strictest mode)
+      if (compiledFilterPatterns.length === 0) return true;
+      // Check if target matches any whitelist pattern
+      if (compiledFilterPatterns.some(regex => regex.test(targetUrl))) return false;
+      // No match = blocked
+      return true;
+    }
+  }, [urlFilterMode, compiledFilterPatterns, url]);
+
+  // Show brief feedback when URL is blocked
+  const showBlockedFeedback = useCallback((blockedUrl: string) => {
+    if (!urlFilterShowFeedback) return;
+    // Extract hostname from URL using regex (avoid URL constructor type issues in RN)
+    const hostMatch = blockedUrl.match(/^https?:\/\/([^/]+)/);
+    const hostname = hostMatch ? hostMatch[1] : blockedUrl;
+    setBlockedUrlMessage(hostname);
+    if (blockedUrlTimerRef.current) clearTimeout(blockedUrlTimerRef.current);
+    blockedUrlTimerRef.current = setTimeout(() => setBlockedUrlMessage(null), 2000);
+  }, [urlFilterShowFeedback]);
+
+  // Expose goBack, scrollToTop, and clearCache methods to parent via ref
+  useImperativeHandle(ref, () => ({
+    goBack: () => {
+      if (webViewRef.current) {
+        webViewRef.current.goBack();
+      }
+    },
+    goForward: () => {
+      if (webViewRef.current) {
+        webViewRef.current.goForward();
+      }
+    },
+    reload: () => {
+      if (webViewRef.current) {
+        webViewRef.current.reload();
+      }
+    },
+    scrollToTop: () => {
+      if (webViewRef.current) {
+        webViewRef.current.injectJavaScript('window.scrollTo({top: 0, behavior: "smooth"}); true;');
+      }
+    },
+    clearCache: () => {
+      if (webViewRef.current) {
+        webViewRef.current.clearCache(true);
+        console.log('[WebView] Cache cleared via ref');
+      }
+    },
+    // #177 — Stop background audio/video when the page is hidden (screensaver / screen off
+    // / app backgrounded). JS-level pause of <audio>/<video> + native renderer suspend.
+    pauseMedia: () => {
+      const wv = webViewRef.current;
+      if (!wv) return;
+      wv.injectJavaScript(MEDIA_PAUSE_JS);
+      // #190 — resolve the tag from the container host view, never from the WebView ref
+      // (a methods-only imperative handle that makes findNodeHandle throw → app crash)
+      try {
+        const node = findNodeHandle(containerViewRef.current);
+        if (node != null) {
+          KioskModule.pauseWebView?.(node).catch(() => {});
+        }
+      } catch {}
+    },
+    // Resume only re-enables the WebView renderer; media is intentionally left paused so
+    // audio doesn't auto-restart on its own (the page/user decides).
+    resumeMedia: () => {
+      const wv = webViewRef.current;
+      if (!wv) return;
+      try {
+        const node = findNodeHandle(containerViewRef.current);
+        if (node != null) {
+          KioskModule.resumeWebView?.(node).catch(() => {});
+        }
+      } catch {}
+    }
+  }));
+
+  React.useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 800,
+      useNativeDriver: true,
+    }).start();
+  }, [fadeAnim]);
+
+  // Fetch the installed app version once for the error-overlay footer.
+  React.useEffect(() => {
+    UpdateModule.getCurrentVersion()
+      .then(info => setAppVersion(info.versionName))
+      .catch(() => {});
+  }, []);
+
+  // Execute JavaScript from API — with retry if page is still loading
+  React.useEffect(() => {
+    if (!jsToExecute || !webViewRef.current) return;
+
+    if (!loading) {
+      // Page ready, inject immediately
+      webViewRef.current.injectJavaScript(jsToExecute);
+      console.log('[WebView] Executed JS from API');
+      if (onJsExecuted) {
+        onJsExecuted();
+      }
+    } else {
+      // Page still loading — retry after a short delay (up to 5 seconds)
+      console.log('[WebView] Page still loading, deferring JS execution...');
+      let attempts = 0;
+      const maxAttempts = 10;
+      const retryInterval = setInterval(() => {
+        attempts++;
+        if (webViewRef.current && !loading) {
+          clearInterval(retryInterval);
+          webViewRef.current.injectJavaScript(jsToExecute);
+          console.log('[WebView] Executed deferred JS from API after', attempts, 'retries');
+          if (onJsExecuted) {
+            onJsExecuted();
+          }
+        } else if (attempts >= maxAttempts) {
+          clearInterval(retryInterval);
+          console.warn('[WebView] Gave up executing JS after', maxAttempts, 'retries (page still loading)');
+          if (onJsExecuted) {
+            onJsExecuted();
+          }
+        }
+      }, 500);
+      return () => clearInterval(retryInterval);
+    }
+  }, [jsToExecute, loading, onJsExecuted]);
+
+  // Cleanup loading timeout on unmount
+  React.useEffect(() => {
+    return () => {
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Injection JS pour détecter les clics dans la webview
+  // Optimisé pour Fire OS : throttling des événements, protection double-init
+  const injectedJavaScript = `
+    (function() {
+    // Protection contre double exécution (important pour Fire OS)
+    if (window.__ALIMDM_INITIALIZED__) {
+      return;
+    }
+    window.__ALIMDM_INITIALIZED__ = true;
+
+    // ===== Web page zoom (#188) =====
+    // CSS zoom, but the target element differs:
+    //   'standard' -> document.documentElement (<html>). Good for most sites.
+    //   'fit'      -> document.body. This is exactly what HADashboard does
+    //                 (twanjaarsveld/HADashboard, MainActivity.applyCssZoom:
+    //                 'document.body.style.zoom = factor'). Home Assistant measures
+    //                 its card layout from the body's content box, so zooming the
+    //                 body makes the dashboard RE-FLOW its columns and fill the
+    //                 screen, instead of just enlarging card contents inside cards
+    //                 that don't grow (which is what zooming <html> does). The native
+    //                 useWideViewPort + loadWithOverviewMode (scalesPageToFit) are
+    //                 already enabled, matching HADashboard's WebView settings.
+    (function() {
+      var ZOOM = ${zoomLevel} / 100;
+      var FIT = ${zoomMode === 'fit' ? 'true' : 'false'};
+      var DISABLE_USER_ZOOM = ${disableUserZoom ? 'true' : 'false'};
+
+      // Block pinch / double-tap zoom gestures when requested (applies in both modes).
+      if (DISABLE_USER_ZOOM) {
+        document.addEventListener('touchstart', function(e) {
+          if (e.touches.length > 1) { e.preventDefault(); }
+        }, { passive: false });
+        document.addEventListener('gesturestart', function(e) { e.preventDefault(); });
+        var vp = document.querySelector('meta[name="viewport"]');
+        if (!vp) {
+          vp = document.createElement('meta');
+          vp.setAttribute('name', 'viewport');
+          (document.head || document.documentElement).appendChild(vp);
+        }
+        vp.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no');
+      }
+
+      if (ZOOM !== 1) {
+        var applyZoom = function() {
+          if (FIT) {
+            if (document.body) { document.body.style.zoom = String(ZOOM); }
+          } else {
+            document.documentElement.style.zoom = String(ZOOM);
+          }
+        };
+        applyZoom();
+        // body may not exist yet if injected very early — re-apply once on DOM ready.
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', applyZoom);
+        }
+      }
+    })();
+
+    // Ensure storage is working properly
+    try {
+      localStorage.setItem('__test__', '1');
+      localStorage.removeItem('__test__');
+    } catch(e) {
+      console.error('[AliMDM] localStorage FAILED:', e);
+    }
+
+    // Intercept window.print() to use native Android print (only when printing is enabled)
+    ${printEnabled ? `
+    window.print = function() {
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: 'PRINT_REQUEST',
+        title: document.title || '',
+        paperSize: '${printPaperSize}'
+      }));
+    };
+    ` : '// Printing disabled - window.print() not intercepted'}
+
+    // Throttling pour éviter le flood de messages (critique sur Fire OS)
+    let lastInteraction = 0;
+    const THROTTLE_MS = 200; // Max 5 messages/sec
+
+    function sendInteraction() {
+      const now = Date.now();
+      if (now - lastInteraction > THROTTLE_MS) {
+        window.ReactNativeWebView.postMessage('user-interaction');
+        lastInteraction = now;
+      }
+    }
+
+    // Tap detection for 5-tap - Use touchend on mobile (click doesn't always fire)
+    // Send coordinates for spatial proximity detection
+    document.addEventListener('touchend', function(e) {
+      if (e.changedTouches && e.changedTouches.length > 0) {
+        var touch = e.changedTouches[0];
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'FIVE_TAP_CLICK',
+          x: touch.clientX,
+          y: touch.clientY
+        }));
+      }
+    }, true);
+    
+    // Click handler for desktop/fallback - Also send user-interaction for screensaver reset
+    document.addEventListener('click', function(e) {
+      sendInteraction();
+    }, true);
+
+    // Scroll avec throttling (évite 50+ msg/sec)
+    document.addEventListener('scroll', sendInteraction, true);
+
+    // Touch events avec throttling (for screensaver only, not for tap counting)
+    document.addEventListener('touchstart', sendInteraction, true);
+    document.addEventListener('touchmove', sendInteraction, true);
+
+    // Keyboard / text input events — typing with the on-screen keyboard does NOT
+    // produce touch/scroll/click events, so without these the inactivity timer
+    // (screensaver + "Return to Start Page") keeps counting down while the user is
+    // typing into a text field. Android soft keyboards with predictive text fire
+    // 'keydown' with keyCode 229 and often skip per-character key events, but
+    // 'input' and 'compositionupdate' fire reliably for every character, so we
+    // listen to all of them (throttled via sendInteraction).
+    document.addEventListener('keydown', sendInteraction, true);
+    document.addEventListener('input', sendInteraction, true);
+    document.addEventListener('compositionupdate', sendInteraction, true);
+
+    // ==================== speechSynthesis Polyfill ====================
+    // Android WebView does not implement the Web Speech API (speechSynthesis).
+    // This polyfill bridges window.speechSynthesis.speak() to Ali MDM's native
+    // Android TextToSpeech engine via postMessage → React Native → NativeModules.
+    // It also enumerates real TTS voices (Google TTS etc.) via async query.
+    // This allows web apps that use TTS to work transparently in kiosk mode.
+    (function() {
+      // Only polyfill if speechSynthesis is missing or non-functional
+      if (window.speechSynthesis && typeof window.speechSynthesis.speak === 'function') {
+        try {
+          var testVoices = window.speechSynthesis.getVoices();
+          // If native implementation returns voices, it might be real. Still polyfill
+          // because Android WebView speechSynthesis is notoriously broken (returns
+          // voices but speak() is a no-op). Only skip if there are > 2 voices.
+          if (testVoices && testVoices.length > 2) return;
+        } catch(e) {}
+      }
+
+      var _fkVoices = [];
+      var _fkVoicesLoaded = false;
+      var _fkVoicesChangedCbs = [];
+      var _fkSpeaking = false;
+      var _fkEndTimer = null;
+      var _fkPendingSpeak = null;  // utterance queued while voices not yet loaded
+
+      // Request real TTS voices from native Android
+      function _fkLoadVoices() {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'SPEECH_SYNTH_GET_VOICES'
+        }));
+      }
+
+      // Called from native via injectJavaScript when voices are ready
+      window.__fkSetVoices = function(voicesJson) {
+        try {
+          var voices = JSON.parse(voicesJson);
+          _fkVoices = voices.map(function(v, i) {
+            return {
+              default: v.default || (i === 0),
+              lang: v.lang || 'en-US',
+              localService: v.localService !== false,
+              name: v.name || ('Voice ' + i),
+              voiceURI: v.voiceUri || v.name || ('voice-' + i)
+            };
+          });
+          _fkVoicesLoaded = true;
+          // Fire voiceschanged event for each registered callback
+          var evt = new Event('voiceschanged');
+          _fkVoicesChangedCbs.forEach(function(cb) { try { cb(evt); } catch(e) {} });
+          _fkVoicesChangedCbs = [];
+          // If an utterance was queued before voices loaded, speak it now
+          if (_fkPendingSpeak) {
+            var u = _fkPendingSpeak;
+            _fkPendingSpeak = null;
+            synth.speak(u);
+          }
+        } catch(e) {
+          console.error('[AliMDM] Failed to parse voices:', e);
+        }
+      };
+
+      function FKSpeechSynthesisUtterance(text) {
+        this.text = text || '';
+        this.lang = '';
+        this.pitch = 1;
+        this.rate = 1;
+        this.volume = 1;
+        this.voice = null;
+        this.onstart = null;
+        this.onend = null;
+        this.onerror = null;
+        this.onpause = null;
+        this.onresume = null;
+        this.onmark = null;
+        this.onboundary = null;
+      }
+      window.SpeechSynthesisUtterance = FKSpeechSynthesisUtterance;
+
+      var synth = {
+        speaking: false,
+        pending: false,
+        paused: false,
+        speak: function(utterance) {
+          if (!utterance || !utterance.text) return;
+          // If voices not yet loaded, queue the utterance
+          if (!_fkVoicesLoaded) {
+            _fkPendingSpeak = utterance;
+            _fkLoadVoices();
+            return;
+          }
+          this.speaking = true;
+          _fkSpeaking = true;
+          // Pick the best voice: use utterance.voice if set, else find matching lang
+          var voiceUri = '';
+          var lang = utterance.lang || '';
+          if (utterance.voice && utterance.voice.voiceURI) {
+            voiceUri = utterance.voice.voiceURI;
+            lang = utterance.voice.lang || lang;
+          } else if (lang) {
+            // Find a voice matching the requested language
+            var exactMatch = _fkVoices.find(function(v) { return v.lang === lang; });
+            var prefixMatch = _fkVoices.find(function(v) { return v.lang.indexOf(lang.split('-')[0]) === 0; });
+            var bestVoice = exactMatch || prefixMatch || (utterance.voice || (_fkVoices[0] || null));
+            if (bestVoice && bestVoice.voiceURI) {
+              voiceUri = bestVoice.voiceURI;
+              lang = bestVoice.lang || lang;
+            }
+          }
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'SPEECH_SYNTH_SPEAK',
+            text: utterance.text,
+            lang: lang,
+            voiceUri: voiceUri,
+            rate: utterance.rate || 1,
+            pitch: utterance.pitch || 1,
+            volume: utterance.volume || 1
+          }));
+          if (utterance.onstart) {
+            try { utterance.onstart(new Event('start')); } catch(e) {}
+          }
+          // Estimate duration and fire onend (rough: 100ms per character for normal rate)
+          if (_fkEndTimer) clearTimeout(_fkEndTimer);
+          var estimatedMs = Math.max(500, utterance.text.length * 100 / (utterance.rate || 1));
+          var self = this;
+          var utt = utterance;
+          _fkEndTimer = setTimeout(function() {
+            self.speaking = false;
+            _fkSpeaking = false;
+            if (utt.onend) {
+              try { utt.onend(new Event('end')); } catch(e) {}
+            }
+          }, estimatedMs);
+        },
+        cancel: function() {
+          this.speaking = false;
+          _fkSpeaking = false;
+          _fkPendingSpeak = null;
+          if (_fkEndTimer) { clearTimeout(_fkEndTimer); _fkEndTimer = null; }
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'SPEECH_SYNTH_CANCEL' }));
+        },
+        pause: function() { this.paused = true; },
+        resume: function() { this.paused = false; },
+        getVoices: function() {
+          // Trigger async load on first call (browsers typically call getVoices()
+          // and then listen for voiceschanged event to get the real list)
+          if (!_fkVoicesLoaded && _fkVoices.length === 0) {
+            _fkLoadVoices();
+          }
+          return _fkVoices.slice();
+        },
+        addEventListener: function(type, fn) {
+          if (type === 'voiceschanged') {
+            if (_fkVoicesLoaded) {
+              // Voices already loaded, fire immediately
+              try { fn(new Event('voiceschanged')); } catch(e) {}
+            } else {
+              _fkVoicesChangedCbs.push(fn);
+            }
+          }
+        },
+        removeEventListener: function(type, fn) {
+          if (type === 'voiceschanged') {
+            _fkVoicesChangedCbs = _fkVoicesChangedCbs.filter(function(cb) { return cb !== fn; });
+          }
+        }
+      };
+      Object.defineProperty(synth, 'onvoiceschanged', {
+        get: function() { return _fkVoicesChangedCbs[0] || null; },
+        set: function(fn) {
+          _fkVoicesChangedCbs = fn ? [fn] : [];
+          if (fn && _fkVoicesLoaded) {
+            try { fn(new Event('voiceschanged')); } catch(e) {}
+          }
+        }
+      });
+      Object.defineProperty(window, 'speechSynthesis', {
+        get: function() { return synth; },
+        configurable: true
+      });
+      // Start loading voices immediately
+      _fkLoadVoices();
+    })();
+
+    // PDF link interception: prevent <a download href="...pdf"> from triggering
+    // the native Android DownloadManager — instead force a real navigation so
+    // onShouldStartLoadWithRequest can redirect to the local PDF viewer.
+    if (${pdfViewerEnabled ? 'true' : 'false'}) {
+      function interceptPdfLinks() {
+        document.querySelectorAll('a[href]').forEach(function(a) {
+          if (a.__pdfIntercepted) return;
+          var href = (a.getAttribute('href') || '').toLowerCase().split('?')[0].split('#')[0];
+          var hasDownload = a.hasAttribute('download');
+          if (href.endsWith('.pdf') || hasDownload) {
+            a.__pdfIntercepted = true;
+            // Strip the download attribute so Android doesn't trigger the DownloadManager
+            a.removeAttribute('download');
+          }
+        });
+      }
+      // Run immediately and watch for DOM changes (SPAs)
+      interceptPdfLinks();
+      var pdfObserver = new MutationObserver(interceptPdfLinks);
+      pdfObserver.observe(document.body, { childList: true, subtree: true });
+    }
+  })();
+  true;
+  `;
+
+  // Script d'injection pour forcer le clavier numérique
+  const getKeyboardModeScript = (): string => {
+    if (keyboardMode === 'default') {
+      return '';
+    }
+
+    if (keyboardMode === 'force_numeric') {
+      return `
+        (function() {
+          function forceNumericKeyboard() {
+            const inputs = document.querySelectorAll('input');
+            inputs.forEach(input => {
+              // Ne pas modifier les types spéciaux
+              const type = input.type.toLowerCase();
+              if (type !== 'hidden' && type !== 'submit' && type !== 'button' && type !== 'checkbox' && type !== 'radio') {
+                input.setAttribute('inputmode', 'numeric');
+                input.setAttribute('pattern', '[0-9]*');
+              }
+            });
+          }
+          
+          // Appliquer immédiatement
+          forceNumericKeyboard();
+          
+          // Observer les changements du DOM
+          const observer = new MutationObserver(forceNumericKeyboard);
+          observer.observe(document.body, { childList: true, subtree: true });
+        })();
+      `;
+    }
+
+    if (keyboardMode === 'smart') {
+      return `
+        (function() {
+          function smartDetectNumeric() {
+            const inputs = document.querySelectorAll('input');
+            inputs.forEach(input => {
+              const type = input.type.toLowerCase();
+              const name = (input.name || '').toLowerCase();
+              const id = (input.id || '').toLowerCase();
+              const placeholder = (input.placeholder || '').toLowerCase();
+              const className = (input.className || '').toLowerCase();
+              
+              // Détecter les champs numériques
+              const isNumericType = type === 'number' || type === 'tel';
+              const hasNumericPattern = input.pattern && /[0-9]/.test(input.pattern);
+              const hasNumericName = /price|quantity|qty|amount|number|num|phone|tel|code|zip|postal|card/.test(name + id + placeholder + className);
+              
+              if (isNumericType || hasNumericPattern || hasNumericName) {
+                input.setAttribute('inputmode', 'numeric');
+                input.setAttribute('pattern', '[0-9]*');
+              }
+            });
+          }
+          
+          // Appliquer immédiatement
+          smartDetectNumeric();
+          
+          // Observer les changements du DOM
+          const observer = new MutationObserver(smartDetectNumeric);
+          observer.observe(document.body, { childList: true, subtree: true });
+        })();
+      `;
+    }
+
+    return '';
+  };
+
+  const combinedInjectedJavaScript = injectedJavaScript + getKeyboardModeScript();
+
+  // Gestion des messages venant de la webview
+  const onMessageHandler = (event: any) => {
+    const message = event.nativeEvent.data;
+    
+    if (message === 'user-interaction' && onUserInteraction) {
+      onUserInteraction();
+    } else if (message.startsWith('{')) {
+      // Parse JSON message
+      try {
+        const data = JSON.parse(message);
+        if (data.type === 'FIVE_TAP_CLICK' && onUserInteraction) {
+          onUserInteraction({ isTap: true, x: data.x, y: data.y });
+        } else if (data.type === 'SPEECH_SYNTH_SPEAK') {
+          // speechSynthesis polyfill: bridge to native Android TTS
+          if (HttpServerModule?.speak) {
+            HttpServerModule.speak(data.text || '', data.lang || '', data.voiceUri || '')
+              .catch((err: any) => console.error('[WebView] TTS speak failed:', err));
+          }
+        } else if (data.type === 'SPEECH_SYNTH_CANCEL') {
+          // speechSynthesis polyfill: stop native TTS
+          if (HttpServerModule?.stopSpeaking) {
+            HttpServerModule.stopSpeaking()
+              .catch((err: any) => console.error('[WebView] TTS cancel failed:', err));
+          }
+        } else if (data.type === 'SPEECH_SYNTH_GET_VOICES') {
+          // speechSynthesis polyfill: query available TTS voices from native
+          if (HttpServerModule?.getTtsVoices) {
+            HttpServerModule.getTtsVoices()
+              .then((voices: any[]) => {
+                const voicesJson = JSON.stringify(voices || []);
+                // Use JSON.stringify on the already-stringified JSON to properly escape
+                // quotes and special chars for injection into a JS string literal
+                const safeArg = JSON.stringify(voicesJson);
+                webViewRef.current?.injectJavaScript(
+                  `window.__fkSetVoices && window.__fkSetVoices(${safeArg}); true;`
+                );
+              })
+              .catch((err: any) => console.error('[WebView] TTS getVoices failed:', err));
+          }
+        } else if (data.type === 'PRINT_REQUEST') {
+          // Handle print request from window.print()
+          PrintModule.printWebView(data.title || 'Ali MDM Print', data.paperSize || 'A4')
+            .then(() => console.log('[WebView] Print job started'))
+            .catch((err: any) => console.error('[WebView] Print failed:', err));
+        } else if (data.type === 'PDF_VIEWER_CLOSE') {
+          // User closed PDF viewer, go back to previous page
+          if (webViewRef.current) {
+            webViewRef.current.goBack();
+          }
+        }
+      } catch (e) {
+        // Ignore parse errors
+      }
+    } else if (message === 'FIVE_TAP_CLICK' && onUserInteraction) {
+      // Legacy: Dedicated tap event for 5-tap detection (no coordinates)
+      onUserInteraction({ isTap: true });
+    }
+  };
+
+  const handleError = (event: WebViewErrorEvent): void => {
+    console.error('[AliMDM] WebView error:', event.nativeEvent);
+    setError(true);
+    setLoading(false);
+    
+    // Load about:blank to clear the native Android error page
+    // This is the ONLY way to prevent the native WebView error page from covering our overlay
+    webViewRef.current?.injectJavaScript('window.location.href = "about:blank"; true;');
+    
+    if (autoReload) {
+      setTimeout(() => {
+        setError(false);
+        setLoading(true);
+        setPageLoaded(false);
+      }, 5000);
+    }
+  };
+
+  const handleHttpError = (event: any): void => {
+    const statusCode = event.nativeEvent.statusCode;
+    const failedUrl = event.nativeEvent.url;
+    console.error('[AliMDM] HTTP Error:', statusCode, failedUrl);
+
+    // Only treat the error as fatal when it comes from the main document.
+    // onReceivedHttpError also fires for sub-resources (images, scripts,
+    // favicons…); a 404 on those must not hijack an otherwise-working page.
+    if (failedUrl && lastTopFrameUrlRef.current && failedUrl !== lastTopFrameUrlRef.current) {
+      return;
+    }
+
+    // Show the error overlay (with the fallback settings button) for ANY main-page
+    // HTTP error code, regardless of autoReload — otherwise the user is stranded
+    // with no way back to settings when the page can't load (#180).
+    setError(true);
+    setLoading(false);
+    webViewRef.current?.injectJavaScript('window.location.href = "about:blank"; true;');
+
+    // Auto-retry only when the feature is enabled.
+    if (autoReload) {
+      setTimeout(() => {
+        setError(false);
+        setLoading(true);
+        setPageLoaded(false);
+      }, 5000);
+    }
+  };
+
+  // #198 — The Chromium renderer process died (typically an OOM kill). The native
+  // RNCWebViewClient already returns true so the app process survives, but the WebView
+  // instance is now defunct (blank white screen) and, per Android's contract, must be
+  // remounted rather than reused. Best-effort clear the WebView cache to rebuild the
+  // corrupted Chromium code-cache index, then ask the parent to bump webViewKey for a
+  // full remount (same recovery pattern as inactivity return / planner).
+  const handleRenderProcessGone = (event: WebViewRenderProcessGoneEvent): void => {
+    const didCrash = !!event?.nativeEvent?.didCrash;
+    console.error('[AliMDM] WebView renderer process gone (didCrash=' + didCrash + '), recovering...');
+    try {
+      webViewRef.current?.clearCache(true);
+    } catch {
+      // Defunct WebView — clearing may throw; the remount below is the real recovery.
+    }
+    if (onRenderProcessGone) {
+      onRenderProcessGone(didCrash);
+    }
+  };
+
+  const handleReload = (): void => {
+    setError(false);
+    setLoading(true);
+    setPageLoaded(false);
+  };
+
+  const handleNavigateToSettings = (): void => {
+    navigation.navigate('Pin');
+  };
+
+  const handleOpenGitHub = (): void => {
+    Linking.openURL('https://github.com/mic-tech/ali-mdm').catch(err =>
+      console.error('[AliMDM] Failed to open GitHub URL:', err)
+    );
+  };
+
+  if (!url) {
+    return (
+      <View style={styles.welcomeContainer}>
+        <ScrollView 
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <Animated.View style={[styles.welcomeContent, { opacity: fadeAnim }]}>
+              
+              {/* Logo / Icon */}
+            <View style={styles.logoContainer}>
+              <View style={styles.logoCircle}>
+                <Image 
+                  source={require('../assets/images/logo_circle.png')} 
+                  style={styles.logoImage}
+                  resizeMode="contain"
+                />
+              </View>
+            </View>
+
+            {/* Title */}
+            <Text style={styles.welcomeTitle}>Ali MDM</Text>
+            <Text style={styles.welcomeSubtitle}>
+              Professional Kiosk Application
+            </Text>
+
+            {/* Features List */}
+            <View style={styles.featuresList}>
+              <FeatureItem
+                icon="shield-check"
+                text="Secure kiosk mode"
+              />
+              <FeatureItem
+                icon="flash"
+                text="Optimal performance"
+              />
+              <FeatureItem
+                icon="github"
+                text="100% free & open source"
+              />
+            </View>
+
+            {/* Action Button */}
+            <TouchableOpacity
+              style={[styles.setupButton, styles.rowCenter]}
+              onPress={handleNavigateToSettings}
+              activeOpacity={0.8}
+            >
+              <Icon name="rocket-launch" size={20} color="#2b7fff" style={styles.buttonLeadingIcon} />
+              <Text style={styles.setupButtonText}>
+                Start Configuration
+              </Text>
+            </TouchableOpacity>
+
+            {/* GitHub Support Button */}
+            <TouchableOpacity
+              style={[styles.githubButton, styles.rowCenter]}
+              onPress={handleOpenGitHub}
+              activeOpacity={0.7}
+            >
+              <Icon name="github" size={20} color="#fff" style={styles.buttonLeadingIcon} />
+              <Text style={styles.githubButtonText}>
+                Support us on GitHub
+              </Text>
+            </TouchableOpacity>
+
+            {/* Hint */}
+            <View style={styles.hintContainer}>
+              <Text style={styles.hintText}>
+                Tip: Tap 5× anywhere on the screen to access settings
+              </Text>
+            </View>
+
+            {/* Footer */}
+            <Text style={styles.footerText}>
+              {appVersion ? `Version ${appVersion} • by Rushb` : 'by Rushb'}
+            </Text>
+          </Animated.View>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container} ref={containerViewRef}>
+      <WebView
+        ref={webViewRef}
+        source={{ uri: error ? 'about:blank' : url }}
+        style={styles.webview}
+        
+        // User Agent - Modern Chrome on Android to avoid WAF blocks (e.g. SiteGround)
+        // Custom UA takes precedence if set, otherwise use a recent Chrome stable UA
+        userAgent={customUserAgent?.trim() || "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"}
+        
+        originWhitelist={pdfViewerEnabled ? ['http://*', 'https://*', 'file://*'] : ['http://*', 'https://*']}
+        mixedContentMode="always"
+        onHttpError={handleHttpError}
+        basicAuthCredential={basicAuthCredential}
+
+        onLoadStart={() => {
+          // Don't reset error state when loading about:blank (error recovery)
+          if (!error) {
+            setLoading(true);
+            setPageLoaded(false);
+          }
+
+          // Fire OS/Fire Tablet workaround: Force hide loading spinner after 10s
+          // This handles cases where onLoadEnd doesn't fire on SPAs or redirects.
+          // Only start the timer once — don't reset it on intermediate redirect/frame
+          // events, otherwise a redirect chain can keep resetting the countdown forever.
+          if (!error && !loadingTimeoutRef.current) {
+            loadingTimeoutRef.current = setTimeout(() => {
+              setLoading(false);
+              loadingTimeoutRef.current = null;
+            }, 10000);
+          }
+        }}
+        onLoadEnd={() => {
+          // Don't mark as loaded when loading about:blank during error state
+          if (!error) {
+            setLoading(false);
+            setPageLoaded(true);
+          }
+
+          // Clear timeout since load completed normally
+          if (loadingTimeoutRef.current) {
+            clearTimeout(loadingTimeoutRef.current);
+            loadingTimeoutRef.current = null;
+          }
+        }}
+        onLoadProgress={({ nativeEvent }) => {
+          // For SPAs like Nuxt/Home Assistant, hide spinner when fully loaded
+          if (nativeEvent.progress === 1 && !error) {
+            setLoading(false);
+            setPageLoaded(true);
+
+            // Clear timeout since we've reached 100%
+            if (loadingTimeoutRef.current) {
+              clearTimeout(loadingTimeoutRef.current);
+              loadingTimeoutRef.current = null;
+            }
+          }
+        }}
+        onError={handleError}
+        onRenderProcessGone={handleRenderProcessGone}
+
+        javaScriptEnabled={true}
+        domStorageEnabled={true}
+        injectedJavaScript={combinedInjectedJavaScript}
+
+        onMessage={onMessageHandler}
+
+        startInLoadingState={true}
+
+        onShouldStartLoadWithRequest={(request: ShouldStartLoadRequest) => {
+          // Security: Block dangerous URL schemes
+          const urlLower = request.url.toLowerCase();
+          
+          // Allow file:// only for our bundled PDF viewer
+          if (urlLower.startsWith('file:///android_asset/pdfjs/')) {
+            return true;
+          }
+          
+          if (urlLower.startsWith('file://') ||
+              urlLower.startsWith('javascript:')) {
+            console.warn('[AliMDM] Blocked dangerous URL scheme:', request.url);
+            return false;
+          }
+          
+          // data: URLs - allow when printing is enabled (some label/receipt sites
+          // generate print content as data:text/html popups)
+          if (urlLower.startsWith('data:')) {
+            if (printEnabled) {
+              console.log('[AliMDM] Allowing data: URL (printing enabled)');
+              return true;
+            }
+            console.warn('[AliMDM] Blocked data: URL (printing disabled):', request.url.substring(0, 100));
+            return false;
+          }
+
+          // PDF Viewer: intercept PDF links and redirect to local viewer
+          if (pdfViewerEnabled && request.isTopFrame) {
+            // Check direct PDF URLs (path ends with .pdf)
+            const urlPath = urlLower.split('?')[0].split('#')[0];
+            let pdfUrl: string | null = null;
+
+            if (urlPath.endsWith('.pdf')) {
+              pdfUrl = request.url;
+            }
+
+            // Check Google redirect URLs: google.com/url?...url=<pdf_url>...
+            if (!pdfUrl && (urlLower.includes('google.com/url?') || urlLower.includes('google.com/url&'))) {
+              try {
+                const queryStart = request.url.indexOf('?');
+                if (queryStart !== -1) {
+                  const queryStr = request.url.substring(queryStart + 1);
+                  const params = queryStr.split('&');
+                  for (const param of params) {
+                    const [key, ...valueParts] = param.split('=');
+                    if (key === 'url' || key === 'q') {
+                      const targetUrl = decodeURIComponent(valueParts.join('='));
+                      const targetPath = targetUrl.toLowerCase().split('?')[0].split('#')[0];
+                      if (targetPath.endsWith('.pdf')) {
+                        pdfUrl = targetUrl;
+                        break;
+                      }
+                    }
+                  }
+                }
+              } catch (e) {
+                // Invalid URL, ignore
+              }
+            }
+
+            if (pdfUrl) {
+              console.log('[AliMDM] PDF detected, opening in viewer:', pdfUrl);
+              const viewerUrl = `file:///android_asset/pdfjs/viewer.html?file=${encodeURIComponent(pdfUrl)}`;
+              if (webViewRef.current) {
+                webViewRef.current.injectJavaScript(
+                  `window.location.href = ${JSON.stringify(viewerUrl)}; true;`
+                );
+              }
+              return false;
+            }
+          }
+
+          // URL Filtering (blacklist/whitelist)
+          if (isUrlBlocked(request.url)) {
+            showBlockedFeedback(request.url);
+            return false;
+          }
+
+          // Remember the main-document navigation target so HTTP errors can be
+          // attributed to the main frame vs. a sub-resource (see handleHttpError).
+          if (request.isTopFrame) {
+            lastTopFrameUrlRef.current = request.url;
+          }
+
+          return true;
+        }}
+
+        onNavigationStateChange={(navState) => {
+          // Track web navigation state (for back button and dashboard nav)
+          if (onNavigationStateChange) {
+            onNavigationStateChange({
+              canGoBack: navState.canGoBack,
+              canGoForward: navState.canGoForward,
+              title: navState.title || '',
+            });
+          }
+          // Report URL changes for inactivity return feature
+          if (onPageNavigated && navState.url) {
+            onPageNavigated(navState.url);
+          }
+          // URL Filtering: catch SPA/client-side navigations (pushState, router.push)
+          // that don't trigger onShouldStartLoadWithRequest
+          if (navState.url && !isGoingBackRef.current && isUrlBlocked(navState.url)) {
+            showBlockedFeedback(navState.url);
+            // Navigate back to cancel the SPA navigation
+            isGoingBackRef.current = true;
+            if (webViewRef.current) {
+              webViewRef.current.goBack();
+            }
+            // Reset guard after a short delay
+            setTimeout(() => { isGoingBackRef.current = false; }, 500);
+          }
+        }}
+
+        textZoom={100}
+        scalesPageToFit={true}
+        cacheEnabled={true}
+        incognito={false}
+        sharedCookiesEnabled={true}
+        thirdPartyCookiesEnabled={true}
+        
+        // Storage settings for Pinia/Nuxt compatibility
+        cacheMode="LOAD_DEFAULT"
+        
+        // Allow popups/new windows - required for some login flows
+        // Instead of opening a new window, we redirect in the same WebView
+        setSupportMultipleWindows={true}
+        onOpenWindow={(syntheticEvent) => {
+          const { nativeEvent } = syntheticEvent;
+          if (!nativeEvent.targetUrl) return;
+
+          // PDF Viewer: intercept PDF popups before URL filtering
+          // Some sites open PDFs via window.open() — handle them the same as link navigations
+          if (pdfViewerEnabled) {
+            const popupLower = nativeEvent.targetUrl.toLowerCase();
+            const popupPath = popupLower.split('?')[0].split('#')[0];
+            if (popupPath.endsWith('.pdf')) {
+              console.log('[AliMDM] PDF popup detected, opening in viewer:', nativeEvent.targetUrl);
+              const viewerUrl = `file:///android_asset/pdfjs/viewer.html?file=${encodeURIComponent(nativeEvent.targetUrl)}`;
+              if (webViewRef.current) {
+                webViewRef.current.injectJavaScript(
+                  `window.location.href = ${JSON.stringify(viewerUrl)}; true;`
+                );
+              }
+              return;
+            }
+          }
+
+          // URL Filtering: block popups to filtered URLs
+          if (isUrlBlocked(nativeEvent.targetUrl)) {
+            showBlockedFeedback(nativeEvent.targetUrl);
+            return;
+          }
+          // Load the URL in the same WebView instead of opening a popup
+          if (webViewRef.current) {
+            webViewRef.current.injectJavaScript(
+              `window.location.href = ${JSON.stringify(nativeEvent.targetUrl)};`
+            );
+          }
+        }}
+
+        // Security: File access disabled by default.
+        // When PDF viewer is enabled, allow file access for loading bundled PDF.js from assets
+        // and allow universal access so PDF.js can fetch remote PDF files.
+        allowFileAccess={pdfViewerEnabled}
+        allowUniversalAccessFromFileURLs={pdfViewerEnabled}
+        allowFileAccessFromFileURLs={pdfViewerEnabled}
+
+        nestedScrollEnabled={true}
+
+        mediaPlaybackRequiresUserAction={false}
+        allowsInlineMediaPlayback={true}
+
+        // Kiosk mode: auto-grant camera/microphone permissions to web pages.
+        // On Android this is handled by our RNCWebChromeClient patch (auto-grant in onPermissionRequest).
+        // On iOS this prop handles it natively.
+        mediaCapturePermissionGrantType="grant"
+      />
+      
+      {loading && !error && (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#2b7fff" />
+          <Text style={styles.loadingText}>Loading...</Text>
+          {/* Fallback settings button inside loading overlay */}
+          <TouchableOpacity
+            style={styles.fallbackSettingsButton}
+            activeOpacity={0.7}
+            onPress={() => {
+              if (onUserInteraction) {
+                onUserInteraction({ isTap: true, x: 0, y: 0, fromFallbackButton: true });
+              }
+            }}
+          >
+            <Icon name="cog" size={24} color="#333" />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {error && (
+        <View style={styles.errorContainer}>
+          <Icon name="alert" size={48} color="#f59e0b" style={styles.errorIcon} />
+          <Text style={styles.errorText}>Loading Error</Text>
+          <Text style={styles.errorSubtext}>URL: {url}</Text>
+          {autoReload && (
+            <Text style={styles.helpText}>
+              Automatic reload in 5 seconds...
+            </Text>
+          )}
+          <TouchableOpacity style={[styles.reloadButton, styles.rowCenter]} onPress={handleReload}>
+            <Icon name="refresh" size={18} color="#fff" style={styles.buttonLeadingIcon} />
+            <Text style={styles.reloadText}>Reload Now</Text>
+          </TouchableOpacity>
+          {/* Fallback settings button inside error overlay */}
+          <Text style={styles.fallbackSettingsHint}>
+            Tap the settings button 5× to return to settings
+          </Text>
+          <TouchableOpacity
+            style={styles.fallbackSettingsButton}
+            activeOpacity={0.7}
+            onPress={() => {
+              if (onUserInteraction) {
+                onUserInteraction({ isTap: true, x: 0, y: 0, fromFallbackButton: true });
+              }
+            }}
+          >
+            <Icon name="cog" size={24} color="#333" />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {blockedUrlMessage && (
+        <View style={[styles.blockedToast, styles.rowCenter]}>
+          <Icon name="block-helper" size={15} color="#fff" style={styles.buttonLeadingIcon} />
+          <Text style={styles.blockedToastText}>{blockedUrlMessage}</Text>
+        </View>
+      )}
+    </View>
+  );
+});
+
+
+const FeatureItem: React.FC<{ icon: IconName; text: string }> = ({ icon, text }) => (
+  <View style={styles.featureItem}>
+    <Icon name={icon} size={22} color="#2b7fff" style={styles.featureIcon} />
+    <Text style={styles.featureText}>{text}</Text>
+  </View>
+);
+
+
+const styles = StyleSheet.create({
+  // WELCOME SCREEN STYLES
+  welcomeContainer: {
+    flex: 1,
+    backgroundColor: '#2b7fff',
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 24,
+  },
+  welcomeContent: {
+    width: '100%',
+    maxWidth: 500,
+    alignSelf: 'center',
+    alignItems: 'center',
+  },
+  logoContainer: {
+    marginBottom: 32,
+  },
+  logoCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  logoImage: {
+    width: 80,
+    height: 80,
+    tintColor: undefined,
+  },
+  welcomeTitle: {
+    fontSize: 42,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  welcomeSubtitle: {
+    fontSize: 18,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginBottom: 48,
+    textAlign: 'center',
+  },
+  featuresList: {
+    width: '100%',
+    marginBottom: 40,
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  featureIcon: {
+    marginRight: 16,
+  },
+  rowCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonLeadingIcon: {
+    marginRight: 10,
+  },
+  featureText: {
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: '500',
+    flex: 1,
+  },
+  setupButton: {
+    backgroundColor: '#fff',
+    paddingVertical: 18,
+    paddingHorizontal: 40,
+    borderRadius: 12,
+    width: '100%',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    marginBottom: 24,
+  },
+  setupButtonText: {
+    color: '#2b7fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  hintContainer: {
+    marginTop: 8,
+    padding: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  hintText: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.9)',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  githubButton: {
+    marginTop: 20,
+    marginBottom: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+    alignItems: 'center',
+  },
+  githubButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  footerText: {
+    marginTop: 32,
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.6)',
+    textAlign: 'center',
+  },
+
+  // WEBVIEW STYLES
+  container: { 
+    flex: 1, 
+    backgroundColor: '#000' 
+  },
+  webview: { 
+    flex: 1 
+  },
+  loadingContainer: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  loadingText: { 
+    marginTop: 10, 
+    fontSize: 16, 
+    color: '#666' 
+  },
+  errorContainer: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 20,
+  },
+  errorIcon: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  errorText: { 
+    fontSize: 18, 
+    color: '#333', 
+    marginBottom: 10, 
+    textAlign: 'center', 
+    fontWeight: 'bold' 
+  },
+  errorSubtext: { 
+    fontSize: 14, 
+    color: '#666', 
+    marginBottom: 10, 
+    textAlign: 'center' 
+  },
+  helpText: { 
+    fontSize: 14, 
+    color: '#666', 
+    marginBottom: 20, 
+    textAlign: 'center' 
+  },
+  reloadButton: { 
+    backgroundColor: '#2b7fff', 
+    paddingHorizontal: 30, 
+    paddingVertical: 15, 
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  reloadText: { 
+    color: '#fff', 
+    fontSize: 16, 
+    fontWeight: 'bold' 
+  },
+  blockedToast: {
+    position: 'absolute',
+    bottom: 40,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  blockedToastText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  fallbackSettingsButton: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(0, 0, 0, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+    elevation: 9999,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.12)',
+  },
+  fallbackSettingsButtonText: {
+    fontSize: 22,
+    opacity: 1,
+  },
+  fallbackSettingsHint: {
+    position: 'absolute',
+    bottom: 76,
+    right: 8,
+    fontSize: 11,
+    color: '#999',
+    textAlign: 'right',
+  },
+});
+
+WebViewComponent.displayName = 'WebViewComponent';
+
+export default WebViewComponent;

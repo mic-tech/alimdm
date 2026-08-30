@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Play Store manifest overlay.
+  Merged with higher priority than src/main when -Pplaystore is set.
+  tools:node="remove" completely strips the AccessibilityService from the
+  final merged manifest, so BIND_ACCESSIBILITY_SERVICE never appears.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Strip REQUEST_INSTALL_PACKAGES (self-update) -->
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:node="remove" />
+
+    <!-- Strip REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (App power management policy) -->
+    <uses-permission
+        android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:node="remove" />
+
+    <!-- Strip READ_MEDIA_* (photo/video policy) -->
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_VIDEO"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_IMAGES"
+        tools:node="remove" />
+
+    <application>
+        <!-- Strip AccessibilityService (BIND_ACCESSIBILITY_SERVICE) -->
+        <service
+            android:name="com.alimdm.AliMdmAccessibilityService"
+            tools:node="remove" />
+    </application>
+
+</manifest>

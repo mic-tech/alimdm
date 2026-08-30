@@ -1,0 +1,3493 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { BlockingRegion } from '../types/blockingOverlay';
+import { ScreenScheduleRule } from '../types/screenScheduler';
+import { DashboardTile } from '../types/dashboard';
+import { ManagedApp } from '../types/managedApps';
+import { MediaItem, MediaFitMode } from '../types/mediaPlayer';
+import { saveSecureApiKey, getSecureApiKey, clearSecureApiKey, clearSecureMqttPassword } from './secureStorage';
+
+export const KEYS = {
+  URL: '@kiosk_url',
+  PIN: '@kiosk_pin',
+  AUTO_RELOAD: '@kiosk_auto_reload',
+  KIOSK_ENABLED: '@kiosk_enabled',
+  AUTO_LAUNCH: '@kiosk_auto_launch',
+  SCREEN_LOCK_COMPAT: '@kiosk_screen_lock_compat',
+  ALLOW_REMOTE_SCREENSHOT: '@kiosk_allow_remote_screenshot',
+  DEFAULT_LAUNCHER: '@kiosk_default_launcher',
+  INTERCOM_MODE: '@kiosk_intercom_mode',
+  SCREENSAVER_ENABLED: '@screensaver_enabled',
+  SCREENSAVER_INACTIVITY_ENABLED: '@screensaver_inactivity_enabled',
+  SCREENSAVER_INACTIVITY_DELAY: '@screensaver_inactivity_delay',
+  SCREENSAVER_MOTION_ENABLED: '@screensaver_motion_enabled',
+  SCREENSAVER_MOTION_SENSITIVITY: '@screensaver_motion_sensitivity',
+  SCREENSAVER_MOTION_DELAY: '@screensaver_motion_delay',
+  SCREENSAVER_PROXIMITY_ENABLED: '@screensaver_proximity_enabled',
+  SCREENSAVER_BRIGHTNESS: '@screensaver_brightness',
+  SCREENSAVER_TYPE: '@screensaver_type',
+  SCREENSAVER_URL: '@screensaver_url',
+  SCREENSAVER_VIDEO_ITEMS: '@screensaver_video_items',
+  SCREENSAVER_VIDEO_LOOP: '@screensaver_video_loop',
+  DEFAULT_BRIGHTNESS: '@default_brightness',
+  DISPLAY_MODE: '@kiosk_display_mode',
+  EXTERNAL_APP_PACKAGE: '@kiosk_external_app_package',
+  EXTERNAL_APP_MODE: '@kiosk_external_app_mode', // 'single' | 'multi'
+  AUTO_RELAUNCH_APP: '@kiosk_auto_relaunch_app',
+  OVERLAY_BUTTON_VISIBLE: '@kiosk_overlay_button_visible',
+  OVERLAY_BUTTON_POSITION: '@kiosk_overlay_button_position',
+  PIN_MAX_ATTEMPTS: '@kiosk_pin_max_attempts',
+  STATUS_BAR_ENABLED: '@kiosk_status_bar_enabled',
+  STATUS_BAR_ON_OVERLAY: '@kiosk_status_bar_on_overlay',
+  STATUS_BAR_ON_RETURN: '@kiosk_status_bar_on_return',
+  STATUS_BAR_SHOW_BATTERY: '@kiosk_status_bar_show_battery',
+  STATUS_BAR_SHOW_WIFI: '@kiosk_status_bar_show_wifi',
+  STATUS_BAR_SHOW_BLUETOOTH: '@kiosk_status_bar_show_bluetooth',
+  STATUS_BAR_SHOW_VOLUME: '@kiosk_status_bar_show_volume',
+  STATUS_BAR_SHOW_TIME: '@kiosk_status_bar_show_time',
+  STATUS_BAR_THEME: '@kiosk_status_bar_theme',
+  EXTERNAL_APP_TEST_MODE: '@kiosk_external_app_test_mode',
+  BACK_BUTTON_MODE: '@kiosk_back_button_mode',
+  BACK_BUTTON_TIMER_DELAY: '@kiosk_back_button_timer_delay',
+  KEYBOARD_MODE: '@kiosk_keyboard_mode',
+  // PIN Mode
+  PIN_MODE: '@kiosk_pin_mode', // 'numeric' or 'alphanumeric'
+  // URL Rotation
+  URL_ROTATION_ENABLED: '@kiosk_url_rotation_enabled',
+  URL_ROTATION_LIST: '@kiosk_url_rotation_list',
+  URL_ROTATION_INTERVAL: '@kiosk_url_rotation_interval',
+  // URL Planner
+  URL_PLANNER_ENABLED: '@kiosk_url_planner_enabled',
+  URL_PLANNER_EVENTS: '@kiosk_url_planner_events',
+  // REST API (Home Assistant integration)
+  REST_API_ENABLED: '@kiosk_rest_api_enabled',
+  REST_API_PORT: '@kiosk_rest_api_port',
+  REST_API_KEY: '@kiosk_rest_api_key',
+  REST_API_ALLOW_CONTROL: '@kiosk_rest_api_allow_control',
+  // Power Button setting
+  ALLOW_POWER_BUTTON: '@kiosk_allow_power_button',
+  // Block factory reset in system Settings (Device Owner user restriction) (#201)
+  BLOCK_FACTORY_RESET: '@kiosk_block_factory_reset',
+  // Notifications (NFC support)
+  ALLOW_NOTIFICATIONS: '@kiosk_allow_notifications',
+  // Allow System Info (audio fix for Samsung in lock mode)
+  ALLOW_SYSTEM_INFO: '@kiosk_allow_system_info',
+  // Return to Settings
+  RETURN_TAP_COUNT: '@kiosk_return_tap_count',
+  RETURN_TAP_TIMEOUT: '@kiosk_return_tap_timeout',
+  RETURN_MODE: '@kiosk_return_mode', // 'tap_anywhere' | 'button'
+  RETURN_BUTTON_POSITION: '@kiosk_return_button_position', // 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
+  VOLUME_UP_5TAP_ENABLED: '@kiosk_volume_up_5tap_enabled',
+  // Blocking Overlays
+  BLOCKING_OVERLAYS_ENABLED: '@kiosk_blocking_overlays_enabled',
+  BLOCKING_OVERLAYS_REGIONS: '@kiosk_blocking_overlays_regions',
+  // Camera preference for motion detection
+  MOTION_CAMERA_POSITION: '@motion_camera_position',
+  // WebView Back Button
+  WEBVIEW_BACK_BUTTON_ENABLED: '@kiosk_webview_back_button_enabled',
+  WEBVIEW_BACK_BUTTON_X_PERCENT: '@kiosk_webview_back_button_x_percent',
+  WEBVIEW_BACK_BUTTON_Y_PERCENT: '@kiosk_webview_back_button_y_percent',
+  // Auto-Brightness
+  AUTO_BRIGHTNESS_ENABLED: '@kiosk_auto_brightness_enabled',
+  AUTO_BRIGHTNESS_MIN: '@kiosk_auto_brightness_min',
+  AUTO_BRIGHTNESS_MAX: '@kiosk_auto_brightness_max',
+  AUTO_BRIGHTNESS_OFFSET: '@kiosk_auto_brightness_offset',
+  AUTO_BRIGHTNESS_UPDATE_INTERVAL: '@kiosk_auto_brightness_update_interval',
+  AUTO_BRIGHTNESS_SAVED_MANUAL: '@kiosk_auto_brightness_saved_manual',
+  // Brightness Management (allow system to manage)
+  BRIGHTNESS_MANAGEMENT_ENABLED: '@brightness_management_enabled',
+  // Screen Sleep Scheduler
+  SCREEN_SCHEDULER_ENABLED: '@kiosk_screen_scheduler_enabled',
+  SCREEN_SCHEDULER_RULES: '@kiosk_screen_scheduler_rules',
+  SCREEN_SCHEDULER_WAKE_ON_TOUCH: '@kiosk_screen_scheduler_wake_on_touch',
+  // Keep Screen On (FLAG_KEEP_SCREEN_ON)
+  KEEP_SCREEN_ON: '@kiosk_keep_screen_on',
+  // Auto Wake on Screen Off
+  AUTO_WAKE_ON_SCREEN_OFF: '@kiosk_auto_wake_on_screen_off',
+  // Inactivity Return to Home
+  INACTIVITY_RETURN_ENABLED: '@kiosk_inactivity_return_enabled',
+  INACTIVITY_RETURN_DELAY: '@kiosk_inactivity_return_delay',
+  INACTIVITY_RETURN_RESET_ON_NAV: '@kiosk_inactivity_return_reset_on_nav',
+  INACTIVITY_RETURN_CLEAR_CACHE: '@kiosk_inactivity_return_clear_cache',
+  INACTIVITY_RETURN_SCROLL_TOP: '@kiosk_inactivity_return_scroll_top',
+  // URL Filtering (Blacklist/Whitelist)
+  URL_FILTER_ENABLED: '@kiosk_url_filter_enabled',
+  URL_FILTER_MODE: '@kiosk_url_filter_mode', // 'blacklist' | 'whitelist'
+  URL_FILTER_LIST: '@kiosk_url_filter_list',
+  URL_FILTER_SHOW_FEEDBACK: '@kiosk_url_filter_show_feedback',
+  // PDF Viewer
+  PDF_VIEWER_ENABLED: '@kiosk_pdf_viewer_enabled',
+  // Printing
+  PRINT_ENABLED: '@kiosk_print_enabled',
+  PRINT_PAPER_SIZE: '@kiosk_print_paper_size',
+  // WebView Zoom Level
+  WEBVIEW_ZOOM_LEVEL: '@kiosk_webview_zoom_level',
+  // WebView Zoom Mode ('standard' = CSS zoom | 'fit' = viewport reflow, #188)
+  WEBVIEW_ZOOM_MODE: '@kiosk_webview_zoom_mode',
+  // Disable User Zoom (pinch-to-zoom)
+  DISABLE_USER_ZOOM: '@kiosk_disable_user_zoom',
+  // Custom User Agent
+  CUSTOM_USER_AGENT: '@kiosk_custom_user_agent',
+  // #177 — Pause WebView audio/video when the page is hidden (screensaver / screen off / background)
+  PAUSE_WEB_MEDIA_WHEN_HIDDEN: '@kiosk_pause_web_media_when_hidden',
+  // MQTT (Home Assistant integration)
+  MQTT_ENABLED: '@kiosk_mqtt_enabled',
+  MQTT_BROKER_URL: '@kiosk_mqtt_broker_url',
+  MQTT_PORT: '@kiosk_mqtt_port',
+  MQTT_USERNAME: '@kiosk_mqtt_username',
+  MQTT_CLIENT_ID: '@kiosk_mqtt_client_id',
+  MQTT_BASE_TOPIC: '@kiosk_mqtt_base_topic',
+  MQTT_DISCOVERY_PREFIX: '@kiosk_mqtt_discovery_prefix',
+  MQTT_STATUS_INTERVAL: '@kiosk_mqtt_status_interval',
+  MQTT_ALLOW_CONTROL: '@kiosk_mqtt_allow_control',
+  MQTT_DEVICE_NAME: '@kiosk_mqtt_device_name',
+  MQTT_MOTION_ALWAYS_ON: '@kiosk_mqtt_motion_always_on',
+  // Beta Updates
+  BETA_UPDATES_ENABLED: '@kiosk_beta_updates_enabled',
+  // Managed Apps (multi-app mode, background apps, accessibility whitelist)
+  MANAGED_APPS: '@kiosk_managed_apps',
+  // Media Player
+  MEDIA_PLAYER_ITEMS: '@kiosk_media_player_items',
+  MEDIA_PLAYER_AUTOPLAY: '@kiosk_media_player_autoplay',
+  MEDIA_PLAYER_LOOP: '@kiosk_media_player_loop',
+  MEDIA_PLAYER_SHUFFLE: '@kiosk_media_player_shuffle',
+  MEDIA_PLAYER_IMAGE_DURATION: '@kiosk_media_player_image_duration',
+  MEDIA_PLAYER_SHOW_CONTROLS: '@kiosk_media_player_show_controls',
+  MEDIA_PLAYER_FIT_MODE: '@kiosk_media_player_fit_mode',
+  MEDIA_PLAYER_BG_COLOR: '@kiosk_media_player_bg_color',
+  MEDIA_PLAYER_TRANSITION: '@kiosk_media_player_transition',
+  MEDIA_PLAYER_TRANSITION_DURATION: '@kiosk_media_player_transition_duration',
+  MEDIA_PLAYER_MUTE: '@kiosk_media_player_mute',
+  // Legacy keys for backward compatibility
+  SCREENSAVER_DELAY: '@screensaver_delay',
+  MOTION_DETECTION_ENABLED: '@motion_detection_enabled',
+  MOTION_SENSITIVITY: '@motion_sensitivity',
+  MOTION_DELAY: '@motion_delay',
+  // Dashboard
+  DASHBOARD_MODE_ENABLED: '@kiosk_dashboard_mode_enabled',
+  DASHBOARD_TILES: '@kiosk_dashboard_tiles',
+  // Lock Screen Controls
+  LOCKSCREEN_CONTROLS_ENABLED: '@kiosk_lockscreen_controls_enabled',
+  LOCKSCREEN_WIFI_ENABLED: '@kiosk_lockscreen_wifi_enabled',
+  LOCKSCREEN_BLUETOOTH_ENABLED: '@kiosk_lockscreen_bluetooth_enabled',
+  LOCKSCREEN_EMERGENCY_CALL_ENABLED: '@kiosk_lockscreen_emergency_call_enabled',
+  LOCKSCREEN_AUDIO_ENABLED: '@kiosk_lockscreen_audio_enabled',
+  LOCKSCREEN_FLASHLIGHT_ENABLED: '@kiosk_lockscreen_flashlight_enabled',
+  LOCKSCREEN_BRIGHTNESS_ENABLED: '@kiosk_lockscreen_brightness_enabled',
+  LOCKSCREEN_ROTATION_LOCK_ENABLED: '@kiosk_lockscreen_rotation_lock_enabled',
+  // HTTP Basic Auth
+  HTTP_BASIC_AUTH_USERNAME: '@kiosk_http_basic_auth_username',
+  // Cloud sync metadata (local tracking only, never synced)
+  CONFIG_UPDATED_AT: '@cloud_config_updated_at',
+  CONFIG_VERSION: '@cloud_config_version',
+  LAST_SENT_CONFIG_HASH: '@cloud_last_sent_hash',
+  // Full raw config last received from the cloud. Used to preserve fields this app
+  // version doesn't model yet, so unknown settings survive an export round-trip
+  // (prevents an older app from stripping newer settings when it echoes to the cloud).
+  RAW_CLOUD_CONFIG: '@cloud_raw_config',
+  // Command results that could not be POSTed back to the cloud (network down at the
+  // moment of reporting). Retried on the next poll: without this the server keeps the
+  // command in 'sent' forever, since it only ever hands out 'pending' ones.
+  CLOUD_PENDING_REPORTS: '@cloud_pending_reports',
+  // The command currently being executed, persisted before dispatch so a command that
+  // kills the process (reboot, self-update) can still be reported after the restart.
+  CLOUD_INFLIGHT_COMMAND: '@cloud_inflight_command',
+  // Mirrors "this device is enrolled" as a plain boolean, because the credentials
+  // themselves live encrypted in the Keychain and KioskWatchdogService reads its flags
+  // straight out of the AsyncStorage SQLite file, with no JS bridge available.
+  CLOUD_ENROLLED: '@cloud_enrolled',
+};
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * Deep-merge `overlay` onto `base`. Plain objects merge recursively; arrays and
+ * primitives from `overlay` replace `base`. Keys present only in `base` are kept.
+ * Used so exportConfig can overlay this app's known settings on top of the last raw
+ * config from the cloud, preserving fields this version doesn't understand.
+ */
+const deepMerge = (base: unknown, overlay: unknown): unknown => {
+  if (!isPlainObject(overlay) || !isPlainObject(base)) return overlay;
+  const out: Record<string, unknown> = { ...base };
+  for (const k of Object.keys(overlay)) {
+    out[k] = deepMerge(base[k], overlay[k]);
+  }
+  return out;
+};
+
+export const StorageService = {
+  //URL
+  saveUrl: async (url: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.URL, url);
+    } catch (error) {
+      console.error('Error saving URL:', error);
+    }
+  },
+
+  getUrl: async (): Promise<string | null> => {
+    try {
+      const url = await AsyncStorage.getItem(KEYS.URL);
+      return url;
+    } catch (error) {
+      console.error('Error getting URL:', error);
+      return null;
+    }
+  },
+
+  //PIN
+  savePin: async (pin: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.PIN, pin);
+    } catch (error) {
+      console.error('Error saving PIN:', error);
+    }
+  },
+
+  getPin: async (): Promise<string | null> => {
+    try {
+      const pin = await AsyncStorage.getItem(KEYS.PIN);
+      return pin;
+    } catch (error) {
+      console.error('Error getting PIN:', error);
+      return null;
+    }
+  },
+
+  //AUTORELOAD
+  saveAutoReload: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.AUTO_RELOAD, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving auto reload:', error);
+    }
+  },
+
+  getAutoReload: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.AUTO_RELOAD);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting auto reload:', error);
+      return false;
+    }
+  },
+
+  //KIOSKMODE
+  saveKioskEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.KIOSK_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving kiosk enabled:', error);
+    }
+  },
+
+  getKioskEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.KIOSK_ENABLED);
+      // Par défaut FALSE (kiosk activé si null)
+      return value === null ? false : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting kiosk enabled:', error);
+      return false; // Default OFF
+    }
+  },
+
+  //AUTOLAUNCH
+  saveAutoLaunch: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.AUTO_LAUNCH, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving auto launch:', error);
+    }
+  },
+
+  getAutoLaunch: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.AUTO_LAUNCH);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting auto launch:', error);
+      return false;
+    }
+  },
+
+  //SCREEN LOCK COMPATIBILITY (#199) — opt-in; default false so behavior is unchanged
+  saveScreenLockCompat: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREEN_LOCK_COMPAT, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screen lock compatibility:', error);
+    }
+  },
+
+  getScreenLockCompat: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREEN_LOCK_COMPAT);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting screen lock compatibility:', error);
+      return false;
+    }
+  },
+
+  // REMOTE SCREENSHOT (#229) - opt-in; default false so the Device Owner screen-capture
+  // policy (#172) is never lifted unless the admin asked for it.
+  saveAllowRemoteScreenshot: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.ALLOW_REMOTE_SCREENSHOT, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving allow remote screenshot:', error);
+    }
+  },
+
+  getAllowRemoteScreenshot: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.ALLOW_REMOTE_SCREENSHOT);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting allow remote screenshot:', error);
+      return false;
+    }
+  },
+
+  //DEFAULT LAUNCHER (#199) — opt-in, Device Owner only; default false → behavior unchanged
+  saveDefaultLauncher: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.DEFAULT_LAUNCHER, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving default launcher:', error);
+    }
+  },
+
+  getDefaultLauncher: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.DEFAULT_LAUNCHER);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting default launcher:', error);
+      return false;
+    }
+  },
+
+  //2-WAY AUDIO / INTERCOM MODE (#205) — opt-in; default false → behavior unchanged
+  saveIntercomMode: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.INTERCOM_MODE, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving intercom mode:', error);
+    }
+  },
+
+  getIntercomMode: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.INTERCOM_MODE);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting intercom mode:', error);
+      return false;
+    }
+  },
+
+  //CLEAR ALL
+  async clearAll(): Promise<void> {
+    try {
+      await AsyncStorage.multiRemove([
+        KEYS.URL,
+        KEYS.PIN,
+        KEYS.AUTO_RELOAD,
+        KEYS.KIOSK_ENABLED,
+        KEYS.AUTO_LAUNCH,
+        KEYS.SCREENSAVER_ENABLED,
+        KEYS.SCREENSAVER_INACTIVITY_ENABLED,
+        KEYS.SCREENSAVER_INACTIVITY_DELAY,
+        KEYS.SCREENSAVER_MOTION_ENABLED,
+        KEYS.SCREENSAVER_MOTION_SENSITIVITY,
+        KEYS.SCREENSAVER_MOTION_DELAY,
+        KEYS.SCREENSAVER_BRIGHTNESS,
+        KEYS.SCREENSAVER_TYPE,
+        KEYS.SCREENSAVER_URL,
+        KEYS.SCREENSAVER_VIDEO_ITEMS,
+        KEYS.SCREENSAVER_VIDEO_LOOP,
+        KEYS.DEFAULT_BRIGHTNESS,
+        KEYS.DISPLAY_MODE,
+        KEYS.EXTERNAL_APP_PACKAGE,
+        KEYS.EXTERNAL_APP_MODE,
+        KEYS.AUTO_RELAUNCH_APP,
+        KEYS.OVERLAY_BUTTON_VISIBLE,
+        KEYS.OVERLAY_BUTTON_POSITION,
+        KEYS.PIN_MAX_ATTEMPTS,
+        KEYS.PIN_MODE,
+        KEYS.STATUS_BAR_ENABLED,
+        KEYS.STATUS_BAR_ON_OVERLAY,
+        KEYS.STATUS_BAR_ON_RETURN,
+        KEYS.STATUS_BAR_SHOW_BATTERY,
+        KEYS.STATUS_BAR_SHOW_WIFI,
+        KEYS.STATUS_BAR_SHOW_BLUETOOTH,
+        KEYS.STATUS_BAR_SHOW_VOLUME,
+        KEYS.STATUS_BAR_SHOW_TIME,
+        KEYS.STATUS_BAR_THEME,
+        KEYS.EXTERNAL_APP_TEST_MODE,
+        KEYS.BACK_BUTTON_MODE,
+        KEYS.BACK_BUTTON_TIMER_DELAY,
+        KEYS.KEYBOARD_MODE,
+        // URL Rotation
+        KEYS.URL_ROTATION_ENABLED,
+        KEYS.URL_ROTATION_LIST,
+        KEYS.URL_ROTATION_INTERVAL,
+        // URL Planner
+        KEYS.URL_PLANNER_ENABLED,
+        KEYS.URL_PLANNER_EVENTS,
+        // REST API
+        KEYS.REST_API_ENABLED,
+        KEYS.REST_API_PORT,
+        KEYS.REST_API_KEY,
+        KEYS.REST_API_ALLOW_CONTROL,
+        // Power Button
+        KEYS.ALLOW_POWER_BUTTON,
+        // Notifications
+        KEYS.ALLOW_NOTIFICATIONS,
+        // System Info (audio fix)
+        KEYS.ALLOW_SYSTEM_INFO,
+        // Return to Settings
+        KEYS.RETURN_TAP_COUNT,
+        KEYS.VOLUME_UP_5TAP_ENABLED,
+        // Blocking Overlays
+        KEYS.BLOCKING_OVERLAYS_ENABLED,
+        KEYS.BLOCKING_OVERLAYS_REGIONS,
+        // Return to Settings (missing keys)
+        KEYS.RETURN_TAP_TIMEOUT,
+        KEYS.RETURN_MODE,
+        KEYS.RETURN_BUTTON_POSITION,
+        // Camera preference
+        KEYS.MOTION_CAMERA_POSITION,
+        // WebView Back Button
+        KEYS.WEBVIEW_BACK_BUTTON_ENABLED,
+        KEYS.WEBVIEW_BACK_BUTTON_X_PERCENT,
+        KEYS.WEBVIEW_BACK_BUTTON_Y_PERCENT,
+        // Auto-Brightness
+        KEYS.AUTO_BRIGHTNESS_ENABLED,
+        KEYS.AUTO_BRIGHTNESS_MIN,
+        KEYS.AUTO_BRIGHTNESS_MAX,
+        KEYS.AUTO_BRIGHTNESS_OFFSET,
+        KEYS.AUTO_BRIGHTNESS_UPDATE_INTERVAL,
+        KEYS.AUTO_BRIGHTNESS_SAVED_MANUAL,
+        // Brightness Management
+        KEYS.BRIGHTNESS_MANAGEMENT_ENABLED,
+        // Screen Sleep Scheduler
+        KEYS.SCREEN_SCHEDULER_ENABLED,
+        KEYS.SCREEN_SCHEDULER_RULES,
+        KEYS.SCREEN_SCHEDULER_WAKE_ON_TOUCH,
+        // Keep Screen On
+        KEYS.KEEP_SCREEN_ON,
+        // Auto Wake on Screen Off
+        KEYS.AUTO_WAKE_ON_SCREEN_OFF,
+        // Inactivity Return to Home
+        KEYS.INACTIVITY_RETURN_ENABLED,
+        KEYS.INACTIVITY_RETURN_DELAY,
+        KEYS.INACTIVITY_RETURN_RESET_ON_NAV,
+        KEYS.INACTIVITY_RETURN_CLEAR_CACHE,
+        KEYS.INACTIVITY_RETURN_SCROLL_TOP,
+        // URL Filtering
+        KEYS.URL_FILTER_ENABLED,
+        KEYS.URL_FILTER_MODE,
+        KEYS.URL_FILTER_LIST,
+        KEYS.URL_FILTER_SHOW_FEEDBACK,
+        // PDF Viewer
+        KEYS.PDF_VIEWER_ENABLED,
+        // Printing
+        KEYS.PRINT_ENABLED,
+        // WebView Zoom Level
+        KEYS.WEBVIEW_ZOOM_LEVEL,
+        KEYS.WEBVIEW_ZOOM_MODE,
+        // Custom User Agent
+        KEYS.CUSTOM_USER_AGENT,
+        // MQTT
+        KEYS.MQTT_ENABLED,
+        KEYS.MQTT_BROKER_URL,
+        KEYS.MQTT_PORT,
+        KEYS.MQTT_USERNAME,
+        KEYS.MQTT_CLIENT_ID,
+        KEYS.MQTT_BASE_TOPIC,
+        KEYS.MQTT_DISCOVERY_PREFIX,
+        KEYS.MQTT_STATUS_INTERVAL,
+        KEYS.MQTT_ALLOW_CONTROL,
+        KEYS.MQTT_DEVICE_NAME,
+        KEYS.MQTT_MOTION_ALWAYS_ON,
+        // Dashboard
+        KEYS.DASHBOARD_MODE_ENABLED,
+        KEYS.DASHBOARD_TILES,
+        // Lock Screen Controls
+        KEYS.LOCKSCREEN_CONTROLS_ENABLED,
+        KEYS.LOCKSCREEN_WIFI_ENABLED,
+        KEYS.LOCKSCREEN_BLUETOOTH_ENABLED,
+        KEYS.LOCKSCREEN_EMERGENCY_CALL_ENABLED,
+        KEYS.LOCKSCREEN_AUDIO_ENABLED,
+        KEYS.LOCKSCREEN_FLASHLIGHT_ENABLED,
+        KEYS.LOCKSCREEN_BRIGHTNESS_ENABLED,
+        KEYS.LOCKSCREEN_ROTATION_LOCK_ENABLED,
+        // HTTP Basic Auth
+        KEYS.HTTP_BASIC_AUTH_USERNAME,
+        // Managed Apps
+        KEYS.MANAGED_APPS,
+        // Legacy keys
+        KEYS.SCREENSAVER_DELAY,
+        KEYS.MOTION_DETECTION_ENABLED,
+        KEYS.MOTION_SENSITIVITY,
+        KEYS.MOTION_DELAY,
+      ]);
+      // Also clear secure API key and MQTT password from Keychain
+      await clearSecureApiKey();
+      await clearSecureMqttPassword();
+    } catch (error) {
+      console.error('Error clearing all storage keys:', error);
+    }
+  },
+
+  //SCREENSAVER
+  saveScreensaverEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screensaver enabled:', error);
+    }
+  },
+
+  getScreensaverEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_ENABLED);
+      // Par défaut FALSE si clé absente
+      return value === null ? false : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting screensaver enabled:', error);
+      return false;
+    }
+  },
+
+  saveScreensaverDelay: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_DELAY, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screensaver delay:', error);
+    }
+  },
+
+  getScreensaverDelay: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_DELAY);
+      // Par défaut 600000 ms (10 minutes) si clé absente
+      return value === null ? 60000 : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting screensaver delay:', error);
+      return 600000;
+    }
+  },
+
+  //BRIGHTNESS
+  saveDefaultBrightness: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.DEFAULT_BRIGHTNESS, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving default brightness:', error);
+    }
+  },
+
+  getDefaultBrightness: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.DEFAULT_BRIGHTNESS);
+      // Par défaut 0.5 (50%) si clé absente
+      return value === null ? 0.5 : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting default brightness:', error);
+      return 0.5;
+    }
+  },
+
+  //MOTION DETECTION
+  saveMotionDetectionEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MOTION_DETECTION_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving motion detection enabled:', error);
+    }
+  },
+
+  getMotionDetectionEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MOTION_DETECTION_ENABLED);
+      return value === null ? false : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting motion detection enabled:', error);
+      return false;
+    }
+  },
+
+  saveMotionSensitivity: async (value: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MOTION_SENSITIVITY, value);
+    } catch (error) {
+      console.error('Error saving motion sensitivity:', error);
+    }
+  },
+
+  getMotionSensitivity: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MOTION_SENSITIVITY);
+      return value === null ? 'medium' : value;
+    } catch (error) {
+      console.error('Error getting motion sensitivity:', error);
+      return 'medium';
+    }
+  },
+
+  saveMotionDelay: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MOTION_DELAY, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving motion delay:', error);
+    }
+  },
+
+  getMotionDelay: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MOTION_DELAY);
+      // Par défaut 30000 ms (30 secondes) si clé absente
+      return value === null ? 30000 : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting motion delay:', error);
+      return 30000;
+    }
+  },
+
+  // MOTION CAMERA POSITION
+  saveMotionCameraPosition: async (value: 'front' | 'back'): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MOTION_CAMERA_POSITION, value);
+    } catch (error) {
+      console.error('Error saving motion camera position:', error);
+    }
+  },
+
+  getMotionCameraPosition: async (): Promise<'front' | 'back'> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MOTION_CAMERA_POSITION);
+      // Default 'front' = comportement actuel si clé absente
+      return (value as 'front' | 'back') || 'front';
+    } catch (error) {
+      console.error('Error getting motion camera position:', error);
+      return 'front'; // Fallback = comportement actuel
+    }
+  },
+
+  //SCREENSAVER NEW ARCHITECTURE
+  saveScreensaverInactivityEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_INACTIVITY_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screensaver inactivity enabled:', error);
+    }
+  },
+
+  getScreensaverInactivityEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_INACTIVITY_ENABLED);
+      return value === null ? true : JSON.parse(value); // Par défaut ON
+    } catch (error) {
+      console.error('Error getting screensaver inactivity enabled:', error);
+      return true;
+    }
+  },
+
+  saveScreensaverInactivityDelay: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_INACTIVITY_DELAY, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screensaver inactivity delay:', error);
+    }
+  },
+
+  getScreensaverInactivityDelay: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_INACTIVITY_DELAY);
+      return value === null ? 600000 : JSON.parse(value); // Par défaut 10 minutes
+    } catch (error) {
+      console.error('Error getting screensaver inactivity delay:', error);
+      return 600000;
+    }
+  },
+
+  saveScreensaverMotionEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_MOTION_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screensaver motion enabled:', error);
+    }
+  },
+
+  getScreensaverMotionEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_MOTION_ENABLED);
+      return value === null ? false : JSON.parse(value); // Par défaut OFF
+    } catch (error) {
+      console.error('Error getting screensaver motion enabled:', error);
+      return false;
+    }
+  },
+
+  saveScreensaverMotionSensitivity: async (value: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_MOTION_SENSITIVITY, value);
+    } catch (error) {
+      console.error('Error saving screensaver motion sensitivity:', error);
+    }
+  },
+
+  getScreensaverMotionSensitivity: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_MOTION_SENSITIVITY);
+      return value === null ? 'medium' : value;
+    } catch (error) {
+      console.error('Error getting screensaver motion sensitivity:', error);
+      return 'medium';
+    }
+  },
+
+  saveScreensaverMotionDelay: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_MOTION_DELAY, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screensaver motion delay:', error);
+    }
+  },
+
+  getScreensaverMotionDelay: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_MOTION_DELAY);
+      return value === null ? 30000 : JSON.parse(value); // Par défaut 30 secondes
+    } catch (error) {
+      console.error('Error getting screensaver motion delay:', error);
+      return 30000;
+    }
+  },
+
+  saveScreensaverProximityEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_PROXIMITY_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screensaver proximity enabled:', error);
+    }
+  },
+
+  getScreensaverProximityEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_PROXIMITY_ENABLED);
+      return value === null ? false : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting screensaver proximity enabled:', error);
+      return false;
+    }
+  },
+
+  saveScreensaverBrightness: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_BRIGHTNESS, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screensaver brightness:', error);
+    }
+  },
+
+  getScreensaverBrightness: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_BRIGHTNESS);
+      return value === null ? 0 : JSON.parse(value); // Par défaut 0% (black screen)
+    } catch (error) {
+      console.error('Error getting screensaver brightness:', error);
+      return 0;
+    }
+  },
+
+  saveScreensaverType: async (value: 'dim' | 'url' | 'video'): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_TYPE, value);
+    } catch (error) {
+      console.error('Error saving screensaver type:', error);
+    }
+  },
+
+  getScreensaverType: async (): Promise<'dim' | 'url' | 'video'> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_TYPE);
+      return (value === 'url' || value === 'video') ? value : 'dim';
+    } catch (error) {
+      console.error('Error getting screensaver type:', error);
+      return 'dim';
+    }
+  },
+
+  saveScreensaverUrl: async (value: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_URL, value);
+    } catch (error) {
+      console.error('Error saving screensaver URL:', error);
+    }
+  },
+
+  getScreensaverUrl: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_URL);
+      return value ?? '';
+    } catch (error) {
+      console.error('Error getting screensaver URL:', error);
+      return '';
+    }
+  },
+
+  saveScreensaverVideoItems: async (items: unknown[]): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_VIDEO_ITEMS, JSON.stringify(items));
+    } catch (error) {
+      console.error('Error saving screensaver video items:', error);
+    }
+  },
+
+  getScreensaverVideoItems: async <T = unknown>(): Promise<T[]> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_VIDEO_ITEMS);
+      return value === null ? [] : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting screensaver video items:', error);
+      return [];
+    }
+  },
+
+  saveScreensaverVideoLoop: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREENSAVER_VIDEO_LOOP, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screensaver video loop:', error);
+    }
+  },
+
+  getScreensaverVideoLoop: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREENSAVER_VIDEO_LOOP);
+      return value === null ? true : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting screensaver video loop:', error);
+      return true;
+    }
+  },
+
+  //DISPLAY MODE
+  saveDisplayMode: async (mode: 'webview' | 'external_app' | 'media_player'): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.DISPLAY_MODE, mode);
+    } catch (error) {
+      console.error('Error saving display mode:', error);
+    }
+  },
+
+  getDisplayMode: async (): Promise<'webview' | 'external_app' | 'media_player'> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.DISPLAY_MODE);
+      if (value === 'external_app' || value === 'media_player') return value;
+      return 'webview'; // Par défaut 'webview'
+    } catch (error) {
+      console.error('Error getting display mode:', error);
+      return 'webview';
+    }
+  },
+
+  //EXTERNAL APP PACKAGE
+  saveExternalAppPackage: async (packageName: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.EXTERNAL_APP_PACKAGE, packageName);
+    } catch (error) {
+      console.error('Error saving external app package:', error);
+    }
+  },
+
+  getExternalAppPackage: async (): Promise<string | null> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.EXTERNAL_APP_PACKAGE);
+      return value;
+    } catch (error) {
+      console.error('Error getting external app package:', error);
+      return null;
+    }
+  },
+
+  //EXTERNAL APP MODE (single vs multi)
+  saveExternalAppMode: async (mode: 'single' | 'multi'): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.EXTERNAL_APP_MODE, mode);
+    } catch (error) {
+      console.error('Error saving external app mode:', error);
+    }
+  },
+
+  getExternalAppMode: async (): Promise<'single' | 'multi'> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.EXTERNAL_APP_MODE);
+      return value === 'multi' ? 'multi' : 'single'; // Default 'single' for backward compat
+    } catch (error) {
+      console.error('Error getting external app mode:', error);
+      return 'single';
+    }
+  },
+
+  //AUTO RELAUNCH APP
+  saveAutoRelaunchApp: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.AUTO_RELAUNCH_APP, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving auto relaunch app:', error);
+    }
+  },
+
+  getAutoRelaunchApp: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.AUTO_RELAUNCH_APP);
+      return value === null ? true : JSON.parse(value); // Par défaut true
+    } catch (error) {
+      console.error('Error getting auto relaunch app:', error);
+      return true;
+    }
+  },
+
+  // ======== MANAGED APPS (Multi-App Mode / Background Apps / Accessibility Whitelist) ========
+
+  saveManagedApps: async (apps: ManagedApp[]): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MANAGED_APPS, JSON.stringify(apps));
+    } catch (error) {
+      console.error('Error saving managed apps:', error);
+    }
+  },
+
+  getManagedApps: async (): Promise<ManagedApp[]> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MANAGED_APPS);
+      if (!value) return [];
+      const parsed = JSON.parse(value);
+      // Ensure backward compatibility: add missing fields with defaults
+      return parsed.map((app: any) => ({
+        packageName: app.packageName || '',
+        displayName: app.displayName || app.packageName || '',
+        showOnHomeScreen: app.showOnHomeScreen ?? true,
+        launchOnBoot: app.launchOnBoot ?? false,
+        keepAlive: app.keepAlive ?? false,
+        allowAccessibility: app.allowAccessibility ?? false,
+      }));
+    } catch (error) {
+      console.error('Error getting managed apps:', error);
+      return [];
+    }
+  },
+
+  addManagedApp: async (app: ManagedApp): Promise<ManagedApp[]> => {
+    try {
+      const current = await StorageService.getManagedApps();
+      // Avoid duplicates by package name
+      const filtered = current.filter(a => a.packageName !== app.packageName);
+      const updated = [...filtered, app];
+      await StorageService.saveManagedApps(updated);
+      return updated;
+    } catch (error) {
+      console.error('Error adding managed app:', error);
+      return [];
+    }
+  },
+
+  removeManagedApp: async (packageName: string): Promise<ManagedApp[]> => {
+    try {
+      const current = await StorageService.getManagedApps();
+      const updated = current.filter(a => a.packageName !== packageName);
+      await StorageService.saveManagedApps(updated);
+      return updated;
+    } catch (error) {
+      console.error('Error removing managed app:', error);
+      return [];
+    }
+  },
+
+  updateManagedApp: async (packageName: string, updates: Partial<ManagedApp>): Promise<ManagedApp[]> => {
+    try {
+      const current = await StorageService.getManagedApps();
+      const updated = current.map(a =>
+        a.packageName === packageName ? { ...a, ...updates } : a
+      );
+      await StorageService.saveManagedApps(updated);
+      return updated;
+    } catch (error) {
+      console.error('Error updating managed app:', error);
+      return [];
+    }
+  },
+
+  //OVERLAY BUTTON VISIBLE
+  saveOverlayButtonVisible: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.OVERLAY_BUTTON_VISIBLE, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving overlay button visible:', error);
+    }
+  },
+
+  getOverlayButtonVisible: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.OVERLAY_BUTTON_VISIBLE);
+      return value === null ? false : JSON.parse(value); // Par défaut false (invisible)
+    } catch (error) {
+      console.error('Error getting overlay button visible:', error);
+      return false;
+    }
+  },
+
+  //OVERLAY BUTTON POSITION
+  saveOverlayButtonPosition: async (value: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.OVERLAY_BUTTON_POSITION, value);
+    } catch (error) {
+      console.error('Error saving overlay button position:', error);
+    }
+  },
+
+  getOverlayButtonPosition: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.OVERLAY_BUTTON_POSITION);
+      return value ?? 'bottom-right'; // Par défaut bottom-right
+    } catch (error) {
+      console.error('Error getting overlay button position:', error);
+      return 'bottom-right';
+    }
+  },
+
+  //PIN MAX ATTEMPTS
+  savePinMaxAttempts: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.PIN_MAX_ATTEMPTS, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving PIN max attempts:', error);
+    }
+  },
+
+  getPinMaxAttempts: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.PIN_MAX_ATTEMPTS);
+      return value === null ? 5 : JSON.parse(value); // Par défaut 5
+    } catch (error) {
+      console.error('Error getting PIN max attempts:', error);
+      return 5;
+    }
+  },
+
+  //PIN MODE (numeric or alphanumeric)
+  savePinMode: async (mode: 'numeric' | 'alphanumeric'): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.PIN_MODE, mode);
+    } catch (error) {
+      console.error('Error saving PIN mode:', error);
+    }
+  },
+
+  getPinMode: async (): Promise<'numeric' | 'alphanumeric'> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.PIN_MODE);
+      return (value as 'numeric' | 'alphanumeric') || 'numeric'; // Default: numeric
+    } catch (error) {
+      console.error('Error getting PIN mode:', error);
+      return 'numeric';
+    }
+  },
+
+  //STATUS BAR
+  saveStatusBarEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.STATUS_BAR_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving status bar enabled:', error);
+    }
+  },
+
+  getStatusBarEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.STATUS_BAR_ENABLED);
+      return value === null ? false : JSON.parse(value); // Par défaut false (désactivée)
+    } catch (error) {
+      console.error('Error getting status bar enabled:', error);
+      return false;
+    }
+  },
+
+  //STATUS BAR ON OVERLAY (External app mode)
+  saveStatusBarOnOverlay: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.STATUS_BAR_ON_OVERLAY, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving status bar on overlay:', error);
+    }
+  },
+
+  getStatusBarOnOverlay: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.STATUS_BAR_ON_OVERLAY);
+      return value === null ? true : JSON.parse(value); // Par défaut true (activée)
+    } catch (error) {
+      console.error('Error getting status bar on overlay:', error);
+      return true;
+    }
+  },
+
+  //STATUS BAR ON RETURN SCREEN (External app mode)
+  saveStatusBarOnReturn: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.STATUS_BAR_ON_RETURN, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving status bar on return:', error);
+    }
+  },
+
+  getStatusBarOnReturn: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.STATUS_BAR_ON_RETURN);
+      return value === null ? true : JSON.parse(value); // Par défaut true (activée)
+    } catch (error) {
+      console.error('Error getting status bar on return:', error);
+      return true;
+    }
+  },
+
+  //STATUS BAR ITEMS VISIBILITY
+  saveStatusBarShowBattery: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.STATUS_BAR_SHOW_BATTERY, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving status bar show battery:', error);
+    }
+  },
+
+  getStatusBarShowBattery: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.STATUS_BAR_SHOW_BATTERY);
+      return value === null ? true : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting status bar show battery:', error);
+      return true;
+    }
+  },
+
+  saveStatusBarShowWifi: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.STATUS_BAR_SHOW_WIFI, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving status bar show wifi:', error);
+    }
+  },
+
+  getStatusBarShowWifi: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.STATUS_BAR_SHOW_WIFI);
+      return value === null ? true : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting status bar show wifi:', error);
+      return true;
+    }
+  },
+
+  saveStatusBarShowBluetooth: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.STATUS_BAR_SHOW_BLUETOOTH, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving status bar show bluetooth:', error);
+    }
+  },
+
+  getStatusBarShowBluetooth: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.STATUS_BAR_SHOW_BLUETOOTH);
+      return value === null ? true : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting status bar show bluetooth:', error);
+      return true;
+    }
+  },
+
+  saveStatusBarShowVolume: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.STATUS_BAR_SHOW_VOLUME, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving status bar show volume:', error);
+    }
+  },
+
+  getStatusBarShowVolume: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.STATUS_BAR_SHOW_VOLUME);
+      return value === null ? true : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting status bar show volume:', error);
+      return true;
+    }
+  },
+
+  saveStatusBarShowTime: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.STATUS_BAR_SHOW_TIME, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving status bar show time:', error);
+    }
+  },
+
+  getStatusBarShowTime: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.STATUS_BAR_SHOW_TIME);
+      return value === null ? true : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting status bar show time:', error);
+      return true;
+    }
+  },
+
+  saveStatusBarTheme: async (value: 'dark' | 'light'): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.STATUS_BAR_THEME, value);
+    } catch (error) {
+      console.error('Error saving status bar theme:', error);
+    }
+  },
+
+  getStatusBarTheme: async (): Promise<'dark' | 'light'> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.STATUS_BAR_THEME);
+      return value === 'light' ? 'light' : 'dark';
+    } catch (error) {
+      console.error('Error getting status bar theme:', error);
+      return 'dark';
+    }
+  },
+
+  //EXTERNAL APP TEST MODE
+  saveExternalAppTestMode: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.EXTERNAL_APP_TEST_MODE, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving external app test mode:', error);
+    }
+  },
+
+  getExternalAppTestMode: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.EXTERNAL_APP_TEST_MODE);
+      return value === null ? true : JSON.parse(value); // Par défaut true (activé pour sécurité)
+    } catch (error) {
+      console.error('Error getting external app test mode:', error);
+      return true;
+    }
+  },
+
+  // Keyboard Mode
+  saveKeyboardMode: async (mode: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.KEYBOARD_MODE, mode);
+    } catch (error) {
+      console.error('Error saving keyboard mode:', error);
+    }
+  },
+
+  getKeyboardMode: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.KEYBOARD_MODE);
+      return value || 'default'; // default, force_numeric, smart
+    } catch (error) {
+      console.error('Error getting keyboard mode:', error);
+      return 'default';
+    }
+  },
+
+  // Back Button Mode: 'test' | 'immediate' | 'timer'
+  saveBackButtonMode: async (mode: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.BACK_BUTTON_MODE, mode);
+    } catch (error) {
+      console.error('Error saving back button mode:', error);
+    }
+  },
+
+  getBackButtonMode: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.BACK_BUTTON_MODE);
+      return value || 'test'; // Par défaut test (sécurité)
+    } catch (error) {
+      console.error('Error getting back button mode:', error);
+      return 'test';
+    }
+  },
+
+  // Back Button Timer Delay (en secondes, 1-3600)
+  saveBackButtonTimerDelay: async (delay: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.BACK_BUTTON_TIMER_DELAY, String(delay));
+    } catch (error) {
+      console.error('Error saving back button timer delay:', error);
+    }
+  },
+
+  getBackButtonTimerDelay: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.BACK_BUTTON_TIMER_DELAY);
+      const delay = value ? parseInt(value, 10) : 10;
+      return isNaN(delay) ? 10 : Math.max(1, Math.min(3600, delay));
+    } catch (error) {
+      console.error('Error getting back button timer delay:', error);
+      return 10;
+    }
+  },
+
+  // ============ URL ROTATION ============
+  
+  saveUrlRotationEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.URL_ROTATION_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving URL rotation enabled:', error);
+    }
+  },
+
+  getUrlRotationEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.URL_ROTATION_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting URL rotation enabled:', error);
+      return false;
+    }
+  },
+
+  saveUrlRotationList: async (urls: string[]): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.URL_ROTATION_LIST, JSON.stringify(urls));
+    } catch (error) {
+      console.error('Error saving URL rotation list:', error);
+    }
+  },
+
+  getUrlRotationList: async (): Promise<string[]> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.URL_ROTATION_LIST);
+      return value ? JSON.parse(value) : [];
+    } catch (error) {
+      console.error('Error getting URL rotation list:', error);
+      return [];
+    }
+  },
+
+  saveUrlRotationInterval: async (seconds: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.URL_ROTATION_INTERVAL, String(seconds));
+    } catch (error) {
+      console.error('Error saving URL rotation interval:', error);
+    }
+  },
+
+  getUrlRotationInterval: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.URL_ROTATION_INTERVAL);
+      const interval = value ? parseInt(value, 10) : 30;
+      return isNaN(interval) ? 30 : Math.max(5, interval);
+    } catch (error) {
+      console.error('Error getting URL rotation interval:', error);
+      return 30;
+    }
+  },
+
+  // ============ URL PLANNER ============
+  
+  saveUrlPlannerEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.URL_PLANNER_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving URL planner enabled:', error);
+    }
+  },
+
+  getUrlPlannerEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.URL_PLANNER_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting URL planner enabled:', error);
+      return false;
+    }
+  },
+
+  saveUrlPlannerEvents: async (events: any[]): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.URL_PLANNER_EVENTS, JSON.stringify(events));
+    } catch (error) {
+      console.error('Error saving URL planner events:', error);
+    }
+  },
+
+  getUrlPlannerEvents: async (): Promise<any[]> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.URL_PLANNER_EVENTS);
+      return value ? JSON.parse(value) : [];
+    } catch (error) {
+      console.error('Error getting URL planner events:', error);
+      return [];
+    }
+  },
+
+  // ============ REST API (Home Assistant) ============
+  
+  saveRestApiEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.REST_API_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving REST API enabled:', error);
+    }
+  },
+
+  getRestApiEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.REST_API_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting REST API enabled:', error);
+      return false;
+    }
+  },
+
+  saveRestApiPort: async (port: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.REST_API_PORT, port.toString());
+    } catch (error) {
+      console.error('Error saving REST API port:', error);
+    }
+  },
+
+  getRestApiPort: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.REST_API_PORT);
+      const port = value ? parseInt(value, 10) : 8080;
+      return isNaN(port) ? 8080 : port;
+    } catch (error) {
+      console.error('Error getting REST API port:', error);
+      return 8080;
+    }
+  },
+
+  saveRestApiKey: async (key: string): Promise<void> => {
+    try {
+      await saveSecureApiKey(key);
+    } catch (error) {
+      console.error('Error saving REST API key:', error);
+    }
+  },
+
+  getRestApiKey: async (): Promise<string> => {
+    try {
+      return await getSecureApiKey();
+    } catch (error) {
+      console.error('Error getting REST API key:', error);
+      return '';
+    }
+  },
+
+  saveRestApiAllowControl: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.REST_API_ALLOW_CONTROL, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving REST API allow control:', error);
+    }
+  },
+
+  getRestApiAllowControl: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.REST_API_ALLOW_CONTROL);
+      return value ? JSON.parse(value) : true;
+    } catch (error) {
+      console.error('Error getting REST API allow control:', error);
+      return true;
+    }
+  },
+
+  // POWER BUTTON
+  saveAllowPowerButton: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.ALLOW_POWER_BUTTON, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving allow power button:', error);
+    }
+  },
+
+  getAllowPowerButton: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.ALLOW_POWER_BUTTON);
+      return value ? JSON.parse(value) : true; // Default ON - prevents Samsung/OneUI audio mute in lock task mode
+    } catch (error) {
+      console.error('Error getting allow power button:', error);
+      return false;
+    }
+  },
+
+  // BLOCK FACTORY RESET (#201)
+  saveBlockFactoryReset: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.BLOCK_FACTORY_RESET, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving block factory reset:', error);
+    }
+  },
+
+  getBlockFactoryReset: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.BLOCK_FACTORY_RESET);
+      return value ? JSON.parse(value) : false; // Default OFF - opt-in, no behavior change for existing installs
+    } catch (error) {
+      console.error('Error getting block factory reset:', error);
+      return false;
+    }
+  },
+
+  // NOTIFICATIONS (NFC SUPPORT)
+  saveAllowNotifications: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.ALLOW_NOTIFICATIONS, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving allow notifications:', error);
+    }
+  },
+
+  getAllowNotifications: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.ALLOW_NOTIFICATIONS);
+      return value ? JSON.parse(value) : false; // Default OFF for maximum security
+    } catch (error) {
+      console.error('Error getting allow notifications:', error);
+      return false;
+    }
+  },
+
+  // ALLOW SYSTEM INFO (audio fix for Samsung in lock mode)
+  saveAllowSystemInfo: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.ALLOW_SYSTEM_INFO, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving allow system info:', error);
+    }
+  },
+
+  getAllowSystemInfo: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.ALLOW_SYSTEM_INFO);
+      return value ? JSON.parse(value) : false; // Default OFF
+    } catch (error) {
+      console.error('Error getting allow system info:', error);
+      return false;
+    }
+  },
+
+  // RETURN TAP COUNT
+  saveReturnTapCount: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.RETURN_TAP_COUNT, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving return tap count:', error);
+    }
+  },
+
+  getReturnTapCount: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.RETURN_TAP_COUNT);
+      return value ? JSON.parse(value) : 5; // Default 5 taps
+    } catch (error) {
+      console.error('Error getting return tap count:', error);
+      return 5;
+    }
+  },
+
+  // RETURN TAP TIMEOUT (milliseconds)
+  saveReturnTapTimeout: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.RETURN_TAP_TIMEOUT, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving return tap timeout:', error);
+    }
+  },
+
+  getReturnTapTimeout: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.RETURN_TAP_TIMEOUT);
+      return value ? JSON.parse(value) : 1500; // Default 1500ms
+    } catch (error) {
+      console.error('Error getting return tap timeout:', error);
+      return 1500;
+    }
+  },
+
+  // RETURN MODE ('tap_anywhere' or 'button')
+  saveReturnMode: async (value: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.RETURN_MODE, value);
+    } catch (error) {
+      console.error('Error saving return mode:', error);
+    }
+  },
+
+  getReturnMode: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.RETURN_MODE);
+      return value || 'tap_anywhere'; // Default tap_anywhere
+    } catch (error) {
+      console.error('Error getting return mode:', error);
+      return 'tap_anywhere';
+    }
+  },
+
+  // RETURN BUTTON POSITION
+  saveReturnButtonPosition: async (value: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.RETURN_BUTTON_POSITION, value);
+    } catch (error) {
+      console.error('Error saving return button position:', error);
+    }
+  },
+
+  getReturnButtonPosition: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.RETURN_BUTTON_POSITION);
+      return value || 'bottom-right'; // Default bottom-right
+    } catch (error) {
+      console.error('Error getting return button position:', error);
+      return 'bottom-right';
+    }
+  },
+
+  // VOLUME UP 5-TAP
+  saveVolumeUp5TapEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.VOLUME_UP_5TAP_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving volume up 5-tap enabled:', error);
+    }
+  },
+
+  getVolumeUp5TapEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.VOLUME_UP_5TAP_ENABLED);
+      return value ? JSON.parse(value) : true; // Default ON for backward compatibility
+    } catch (error) {
+      console.error('Error getting volume up 5-tap enabled:', error);
+      return true;
+    }
+  },
+
+  // BLOCKING OVERLAYS
+  saveBlockingOverlaysEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.BLOCKING_OVERLAYS_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving blocking overlays enabled:', error);
+    }
+  },
+
+  getBlockingOverlaysEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.BLOCKING_OVERLAYS_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting blocking overlays enabled:', error);
+      return false;
+    }
+  },
+
+  saveBlockingOverlaysRegions: async (regions: BlockingRegion[]): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.BLOCKING_OVERLAYS_REGIONS, JSON.stringify(regions));
+    } catch (error) {
+      console.error('Error saving blocking overlays regions:', error);
+    }
+  },
+
+  getBlockingOverlaysRegions: async (): Promise<BlockingRegion[]> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.BLOCKING_OVERLAYS_REGIONS);
+      return value ? JSON.parse(value) : [];
+    } catch (error) {
+      console.error('Error getting blocking overlays regions:', error);
+      return [];
+    }
+  },
+
+  // WebView Back Button
+  saveWebViewBackButtonEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.WEBVIEW_BACK_BUTTON_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving webview back button enabled:', error);
+    }
+  },
+
+  getWebViewBackButtonEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.WEBVIEW_BACK_BUTTON_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting webview back button enabled:', error);
+      return false;
+    }
+  },
+
+  saveWebViewBackButtonXPercent: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.WEBVIEW_BACK_BUTTON_X_PERCENT, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving webview back button X percent:', error);
+    }
+  },
+
+  getWebViewBackButtonXPercent: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.WEBVIEW_BACK_BUTTON_X_PERCENT);
+      return value ? JSON.parse(value) : 2; // 2% from left by default
+    } catch (error) {
+      console.error('Error getting webview back button X percent:', error);
+      return 2;
+    }
+  },
+
+  saveWebViewBackButtonYPercent: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.WEBVIEW_BACK_BUTTON_Y_PERCENT, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving webview back button Y percent:', error);
+    }
+  },
+
+  getWebViewBackButtonYPercent: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.WEBVIEW_BACK_BUTTON_Y_PERCENT);
+      return value ? JSON.parse(value) : 10; // 10% from top by default (to avoid StatusBar)
+    } catch (error) {
+      console.error('Error getting webview back button Y percent:', error);
+      return 10;
+    }
+  },
+
+  // AUTO-BRIGHTNESS
+  saveAutoBrightnessEnabled: async (enabled: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.AUTO_BRIGHTNESS_ENABLED, JSON.stringify(enabled));
+    } catch (error) {
+      console.error('Error saving auto brightness enabled:', error);
+    }
+  },
+
+  getAutoBrightnessEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.AUTO_BRIGHTNESS_ENABLED);
+      return value ? JSON.parse(value) : false; // Default: OFF for backward compatibility
+    } catch (error) {
+      console.error('Error getting auto brightness enabled:', error);
+      return false;
+    }
+  },
+
+  saveAutoBrightnessMin: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.AUTO_BRIGHTNESS_MIN, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving auto brightness min:', error);
+    }
+  },
+
+  getAutoBrightnessMin: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.AUTO_BRIGHTNESS_MIN);
+      return value ? JSON.parse(value) : 0.1; // Default: 10%
+    } catch (error) {
+      console.error('Error getting auto brightness min:', error);
+      return 0.1;
+    }
+  },
+
+  saveAutoBrightnessMax: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.AUTO_BRIGHTNESS_MAX, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving auto brightness max:', error);
+    }
+  },
+
+  getAutoBrightnessMax: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.AUTO_BRIGHTNESS_MAX);
+      return value ? JSON.parse(value) : 1.0; // Default: 100%
+    } catch (error) {
+      console.error('Error getting auto brightness max:', error);
+      return 1.0;
+    }
+  },
+
+  saveAutoBrightnessOffset: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.AUTO_BRIGHTNESS_OFFSET, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving auto brightness offset:', error);
+    }
+  },
+
+  getAutoBrightnessOffset: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.AUTO_BRIGHTNESS_OFFSET);
+      return value ? JSON.parse(value) : 0.0; // Default: no offset
+    } catch (error) {
+      console.error('Error getting auto brightness offset:', error);
+      return 0.0;
+    }
+  },
+
+  saveAutoBrightnessUpdateInterval: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.AUTO_BRIGHTNESS_UPDATE_INTERVAL, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving auto brightness update interval:', error);
+    }
+  },
+
+  getAutoBrightnessUpdateInterval: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.AUTO_BRIGHTNESS_UPDATE_INTERVAL);
+      return value ? JSON.parse(value) : 1000; // Default: 1 second
+    } catch (error) {
+      console.error('Error getting auto brightness update interval:', error);
+      return 1000;
+    }
+  },
+
+  saveAutoBrightnessSavedManual: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.AUTO_BRIGHTNESS_SAVED_MANUAL, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving auto brightness saved manual:', error);
+    }
+  },
+
+  getAutoBrightnessSavedManual: async (): Promise<number | null> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.AUTO_BRIGHTNESS_SAVED_MANUAL);
+      return value ? JSON.parse(value) : null; // Null if never saved
+    } catch (error) {
+      console.error('Error getting auto brightness saved manual:', error);
+      return null;
+    }
+  },
+
+  // ============ BRIGHTNESS MANAGEMENT ============
+
+  saveBrightnessManagementEnabled: async (enabled: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.BRIGHTNESS_MANAGEMENT_ENABLED, JSON.stringify(enabled));
+    } catch (error) {
+      console.error('Error saving brightness management enabled:', error);
+    }
+  },
+
+  getBrightnessManagementEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.BRIGHTNESS_MANAGEMENT_ENABLED);
+      return value ? JSON.parse(value) : true; // Default: true (app manages brightness) for backward compat
+    } catch (error) {
+      console.error('Error getting brightness management enabled:', error);
+      return true;
+    }
+  },
+
+  // ============ SCREEN SLEEP SCHEDULER ============
+
+  saveScreenSchedulerEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREEN_SCHEDULER_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screen scheduler enabled:', error);
+    }
+  },
+
+  getScreenSchedulerEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREEN_SCHEDULER_ENABLED);
+      return value ? JSON.parse(value) : false; // Default: OFF
+    } catch (error) {
+      console.error('Error getting screen scheduler enabled:', error);
+      return false;
+    }
+  },
+
+  saveScreenSchedulerRules: async (rules: ScreenScheduleRule[]): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREEN_SCHEDULER_RULES, JSON.stringify(rules));
+    } catch (error) {
+      console.error('Error saving screen scheduler rules:', error);
+    }
+  },
+
+  getScreenSchedulerRules: async (): Promise<ScreenScheduleRule[]> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREEN_SCHEDULER_RULES);
+      return value ? JSON.parse(value) : [];
+    } catch (error) {
+      console.error('Error getting screen scheduler rules:', error);
+      return [];
+    }
+  },
+
+  saveScreenSchedulerWakeOnTouch: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.SCREEN_SCHEDULER_WAKE_ON_TOUCH, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving screen scheduler wake on touch:', error);
+    }
+  },
+
+  getScreenSchedulerWakeOnTouch: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.SCREEN_SCHEDULER_WAKE_ON_TOUCH);
+      return value ? JSON.parse(value) : true; // Default: ON (allow wake on touch)
+    } catch (error) {
+      console.error('Error getting screen scheduler wake on touch:', error);
+      return true;
+    }
+  },
+
+  // ============ KEEP SCREEN ON (FLAG_KEEP_SCREEN_ON) ============
+
+  saveKeepScreenOn: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.KEEP_SCREEN_ON, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving keep screen on:', error);
+    }
+  },
+
+  getKeepScreenOn: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.KEEP_SCREEN_ON);
+      return value !== null ? JSON.parse(value) : true; // Default: ON (screen always on)
+    } catch (error) {
+      console.error('Error getting keep screen on:', error);
+      return true;
+    }
+  },
+
+  // ============ AUTO WAKE ON SCREEN OFF ============
+
+  saveAutoWakeOnScreenOff: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.AUTO_WAKE_ON_SCREEN_OFF, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving auto wake on screen off:', error);
+    }
+  },
+
+  getAutoWakeOnScreenOff: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.AUTO_WAKE_ON_SCREEN_OFF);
+      return value !== null ? JSON.parse(value) : false; // Default: OFF
+    } catch (error) {
+      console.error('Error getting auto wake on screen off:', error);
+      return false;
+    }
+  },
+
+  // ============ INACTIVITY RETURN TO HOME ============
+
+  saveInactivityReturnEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.INACTIVITY_RETURN_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving inactivity return enabled:', error);
+    }
+  },
+
+  getInactivityReturnEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.INACTIVITY_RETURN_ENABLED);
+      return value ? JSON.parse(value) : false; // Default: OFF
+    } catch (error) {
+      console.error('Error getting inactivity return enabled:', error);
+      return false;
+    }
+  },
+
+  saveInactivityReturnDelay: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.INACTIVITY_RETURN_DELAY, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving inactivity return delay:', error);
+    }
+  },
+
+  getInactivityReturnDelay: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.INACTIVITY_RETURN_DELAY);
+      return value ? JSON.parse(value) : 60; // Default: 60 seconds
+    } catch (error) {
+      console.error('Error getting inactivity return delay:', error);
+      return 60;
+    }
+  },
+
+  saveInactivityReturnResetOnNav: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.INACTIVITY_RETURN_RESET_ON_NAV, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving inactivity return reset on nav:', error);
+    }
+  },
+
+  getInactivityReturnResetOnNav: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.INACTIVITY_RETURN_RESET_ON_NAV);
+      return value ? JSON.parse(value) : true; // Default: ON
+    } catch (error) {
+      console.error('Error getting inactivity return reset on nav:', error);
+      return true;
+    }
+  },
+
+  saveInactivityReturnClearCache: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.INACTIVITY_RETURN_CLEAR_CACHE, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving inactivity return clear cache:', error);
+    }
+  },
+
+  getInactivityReturnClearCache: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.INACTIVITY_RETURN_CLEAR_CACHE);
+      return value ? JSON.parse(value) : false; // Default: OFF
+    } catch (error) {
+      console.error('Error getting inactivity return clear cache:', error);
+      return false;
+    }
+  },
+
+  saveInactivityReturnScrollTop: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.INACTIVITY_RETURN_SCROLL_TOP, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving inactivity return scroll top:', error);
+    }
+  },
+
+  getInactivityReturnScrollTop: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.INACTIVITY_RETURN_SCROLL_TOP);
+      return value ? JSON.parse(value) : true; // Default: ON
+    } catch (error) {
+      console.error('Error getting inactivity return scroll top:', error);
+      return true;
+    }
+  },
+
+  // ============ URL FILTERING ============
+
+  saveUrlFilterEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.URL_FILTER_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving URL filter enabled:', error);
+    }
+  },
+
+  getUrlFilterEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.URL_FILTER_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting URL filter enabled:', error);
+      return false;
+    }
+  },
+
+  saveUrlFilterMode: async (mode: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.URL_FILTER_MODE, mode);
+    } catch (error) {
+      console.error('Error saving URL filter mode:', error);
+    }
+  },
+
+  getUrlFilterMode: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.URL_FILTER_MODE);
+      return value || 'blacklist';
+    } catch (error) {
+      console.error('Error getting URL filter mode:', error);
+      return 'blacklist';
+    }
+  },
+
+  saveUrlFilterList: async (patterns: string[]): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.URL_FILTER_LIST, JSON.stringify(patterns));
+    } catch (error) {
+      console.error('Error saving URL filter list:', error);
+    }
+  },
+
+  getUrlFilterList: async (): Promise<string[]> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.URL_FILTER_LIST);
+      return value ? JSON.parse(value) : [];
+    } catch (error) {
+      console.error('Error getting URL filter list:', error);
+      return [];
+    }
+  },
+
+  saveUrlFilterShowFeedback: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.URL_FILTER_SHOW_FEEDBACK, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving URL filter show feedback:', error);
+    }
+  },
+
+  getUrlFilterShowFeedback: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.URL_FILTER_SHOW_FEEDBACK);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting URL filter show feedback:', error);
+      return false;
+    }
+  },
+
+  // ============ PDF VIEWER ============
+
+  savePdfViewerEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.PDF_VIEWER_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving PDF viewer enabled:', error);
+    }
+  },
+
+  getPdfViewerEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.PDF_VIEWER_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting PDF viewer enabled:', error);
+      return false;
+    }
+  },
+
+  // ============ PRINTING ============
+
+  savePrintEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.PRINT_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving print enabled:', error);
+    }
+  },
+
+  getPrintEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.PRINT_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting print enabled:', error);
+      return false;
+    }
+  },
+
+  savePrintPaperSize: async (value: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.PRINT_PAPER_SIZE, value);
+    } catch (error) {
+      console.error('Error saving print paper size:', error);
+    }
+  },
+
+  getPrintPaperSize: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.PRINT_PAPER_SIZE);
+      return value || 'A4';
+    } catch (error) {
+      console.error('Error getting print paper size:', error);
+      return 'A4';
+    }
+  },
+
+  // ============ WebView Zoom Level ============
+
+  saveWebViewZoomLevel: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.WEBVIEW_ZOOM_LEVEL, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving WebView zoom level:', error);
+    }
+  },
+
+  getWebViewZoomLevel: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.WEBVIEW_ZOOM_LEVEL);
+      return value ? JSON.parse(value) : 100;
+    } catch (error) {
+      console.error('Error getting WebView zoom level:', error);
+      return 100;
+    }
+  },
+
+  // ============ WebView Zoom Mode (#188) ============
+  // 'standard' = CSS zoom on document.documentElement (<html>).
+  // 'fit' = CSS zoom on document.body instead (the HADashboard method), so Home
+  //          Assistant dashboards re-flow their cards and fill the screen.
+
+  saveWebViewZoomMode: async (value: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.WEBVIEW_ZOOM_MODE, value);
+    } catch (error) {
+      console.error('Error saving WebView zoom mode:', error);
+    }
+  },
+
+  getWebViewZoomMode: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.WEBVIEW_ZOOM_MODE);
+      return value || 'standard';
+    } catch (error) {
+      console.error('Error getting WebView zoom mode:', error);
+      return 'standard';
+    }
+  },
+
+  // ============ Disable User Zoom ============
+
+  saveDisableUserZoom: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.DISABLE_USER_ZOOM, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving disable user zoom:', error);
+    }
+  },
+
+  getDisableUserZoom: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.DISABLE_USER_ZOOM);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting disable user zoom:', error);
+      return false;
+    }
+  },
+
+  // ============ Custom User Agent ============
+
+  saveCustomUserAgent: async (value: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.CUSTOM_USER_AGENT, value);
+    } catch (error) {
+      console.error('Error saving custom user agent:', error);
+    }
+  },
+
+  getCustomUserAgent: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.CUSTOM_USER_AGENT);
+      return value ?? '';
+    } catch (error) {
+      console.error('Error getting custom user agent:', error);
+      return '';
+    }
+  },
+
+  // ============ Pause web media when hidden (#177) ============
+
+  savePauseWebMediaWhenHidden: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.PAUSE_WEB_MEDIA_WHEN_HIDDEN, value.toString());
+    } catch (error) {
+      console.error('Error saving pause web media when hidden:', error);
+    }
+  },
+
+  getPauseWebMediaWhenHidden: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.PAUSE_WEB_MEDIA_WHEN_HIDDEN);
+      // Default ON
+      return value === null ? true : value === 'true';
+    } catch (error) {
+      console.error('Error getting pause web media when hidden:', error);
+      return true;
+    }
+  },
+
+  // ============ MQTT (Home Assistant) ============
+
+  saveMqttEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MQTT_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving MQTT enabled:', error);
+    }
+  },
+
+  getMqttEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MQTT_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting MQTT enabled:', error);
+      return false;
+    }
+  },
+
+  saveMqttBrokerUrl: async (url: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MQTT_BROKER_URL, url);
+    } catch (error) {
+      console.error('Error saving MQTT broker URL:', error);
+    }
+  },
+
+  getMqttBrokerUrl: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MQTT_BROKER_URL);
+      return value || '';
+    } catch (error) {
+      console.error('Error getting MQTT broker URL:', error);
+      return '';
+    }
+  },
+
+  saveMqttPort: async (port: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MQTT_PORT, port.toString());
+    } catch (error) {
+      console.error('Error saving MQTT port:', error);
+    }
+  },
+
+  getMqttPort: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MQTT_PORT);
+      const port = value ? parseInt(value, 10) : 1883;
+      return isNaN(port) ? 1883 : port;
+    } catch (error) {
+      console.error('Error getting MQTT port:', error);
+      return 1883;
+    }
+  },
+
+  saveMqttUsername: async (username: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MQTT_USERNAME, username);
+    } catch (error) {
+      console.error('Error saving MQTT username:', error);
+    }
+  },
+
+  getMqttUsername: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MQTT_USERNAME);
+      return value || '';
+    } catch (error) {
+      console.error('Error getting MQTT username:', error);
+      return '';
+    }
+  },
+
+  saveMqttClientId: async (clientId: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MQTT_CLIENT_ID, clientId);
+    } catch (error) {
+      console.error('Error saving MQTT client ID:', error);
+    }
+  },
+
+  getMqttClientId: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MQTT_CLIENT_ID);
+      return value || '';
+    } catch (error) {
+      console.error('Error getting MQTT client ID:', error);
+      return '';
+    }
+  },
+
+  saveMqttBaseTopic: async (topic: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MQTT_BASE_TOPIC, topic);
+    } catch (error) {
+      console.error('Error saving MQTT base topic:', error);
+    }
+  },
+
+  getMqttBaseTopic: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MQTT_BASE_TOPIC);
+      return value || 'alimdm';
+    } catch (error) {
+      console.error('Error getting MQTT base topic:', error);
+      return 'alimdm';
+    }
+  },
+
+  saveMqttDiscoveryPrefix: async (prefix: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MQTT_DISCOVERY_PREFIX, prefix);
+    } catch (error) {
+      console.error('Error saving MQTT discovery prefix:', error);
+    }
+  },
+
+  getMqttDiscoveryPrefix: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MQTT_DISCOVERY_PREFIX);
+      return value || 'homeassistant';
+    } catch (error) {
+      console.error('Error getting MQTT discovery prefix:', error);
+      return 'homeassistant';
+    }
+  },
+
+  saveMqttStatusInterval: async (seconds: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MQTT_STATUS_INTERVAL, seconds.toString());
+    } catch (error) {
+      console.error('Error saving MQTT status interval:', error);
+    }
+  },
+
+  getMqttStatusInterval: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MQTT_STATUS_INTERVAL);
+      const interval = value ? parseInt(value, 10) : 30;
+      return isNaN(interval) ? 30 : Math.max(5, interval);
+    } catch (error) {
+      console.error('Error getting MQTT status interval:', error);
+      return 30;
+    }
+  },
+
+  saveMqttAllowControl: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MQTT_ALLOW_CONTROL, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving MQTT allow control:', error);
+    }
+  },
+
+  getMqttAllowControl: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MQTT_ALLOW_CONTROL);
+      return value ? JSON.parse(value) : true;
+    } catch (error) {
+      console.error('Error getting MQTT allow control:', error);
+      return true;
+    }
+  },
+
+  saveMqttDeviceName: async (name: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MQTT_DEVICE_NAME, name);
+    } catch (error) {
+      console.error('Error saving MQTT device name:', error);
+    }
+  },
+
+  getMqttDeviceName: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MQTT_DEVICE_NAME);
+      return value || '';
+    } catch (error) {
+      console.error('Error getting MQTT device name:', error);
+      return '';
+    }
+  },
+
+  saveMqttMotionAlwaysOn: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MQTT_MOTION_ALWAYS_ON, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving MQTT motion always on:', error);
+    }
+  },
+
+  getMqttMotionAlwaysOn: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MQTT_MOTION_ALWAYS_ON);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting MQTT motion always on:', error);
+      return false;
+    }
+  },
+
+  // BETA UPDATES
+  saveBetaUpdatesEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.BETA_UPDATES_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving beta updates enabled:', error);
+    }
+  },
+
+  getBetaUpdatesEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.BETA_UPDATES_ENABLED);
+      return value ? JSON.parse(value) : false; // Default OFF
+    } catch (error) {
+      console.error('Error getting beta updates enabled:', error);
+      return false;
+    }
+  },
+
+  /**
+   * Batch load all settings in a single multiGet call.
+   * This is much faster than 50+ sequential getItem calls (single bridge crossing).
+   * Returns a Map for O(1) key lookup.
+   */
+
+  // MEDIA PLAYER
+  saveMediaPlayerItems: async (items: MediaItem[]): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MEDIA_PLAYER_ITEMS, JSON.stringify(items));
+    } catch (error) {
+      console.error('Error saving media player items:', error);
+    }
+  },
+
+  getMediaPlayerItems: async (): Promise<MediaItem[]> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MEDIA_PLAYER_ITEMS);
+      return value ? JSON.parse(value) : [];
+    } catch (error) {
+      console.error('Error getting media player items:', error);
+      return [];
+    }
+  },
+
+  saveMediaPlayerAutoPlay: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MEDIA_PLAYER_AUTOPLAY, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving media player autoplay:', error);
+    }
+  },
+
+  getMediaPlayerAutoPlay: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MEDIA_PLAYER_AUTOPLAY);
+      return value !== null ? JSON.parse(value) : true;
+    } catch (error) {
+      console.error('Error getting media player autoplay:', error);
+      return true;
+    }
+  },
+
+  saveMediaPlayerLoop: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MEDIA_PLAYER_LOOP, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving media player loop:', error);
+    }
+  },
+
+  getMediaPlayerLoop: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MEDIA_PLAYER_LOOP);
+      return value !== null ? JSON.parse(value) : true;
+    } catch (error) {
+      console.error('Error getting media player loop:', error);
+      return true;
+    }
+  },
+
+  saveMediaPlayerShuffle: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MEDIA_PLAYER_SHUFFLE, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving media player shuffle:', error);
+    }
+  },
+
+  getMediaPlayerShuffle: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MEDIA_PLAYER_SHUFFLE);
+      return value !== null ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting media player shuffle:', error);
+      return false;
+    }
+  },
+
+  saveMediaPlayerImageDuration: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MEDIA_PLAYER_IMAGE_DURATION, String(value));
+    } catch (error) {
+      console.error('Error saving media player image duration:', error);
+    }
+  },
+
+  getMediaPlayerImageDuration: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MEDIA_PLAYER_IMAGE_DURATION);
+      return value !== null ? parseInt(value, 10) : 10;
+    } catch (error) {
+      console.error('Error getting media player image duration:', error);
+      return 10;
+    }
+  },
+
+  saveMediaPlayerShowControls: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MEDIA_PLAYER_SHOW_CONTROLS, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving media player show controls:', error);
+    }
+  },
+
+  getMediaPlayerShowControls: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MEDIA_PLAYER_SHOW_CONTROLS);
+      return value !== null ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting media player show controls:', error);
+      return false;
+    }
+  },
+
+  saveMediaPlayerFitMode: async (value: MediaFitMode): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MEDIA_PLAYER_FIT_MODE, value);
+    } catch (error) {
+      console.error('Error saving media player fit mode:', error);
+    }
+  },
+
+  getMediaPlayerFitMode: async (): Promise<MediaFitMode> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MEDIA_PLAYER_FIT_MODE);
+      if (value === 'cover' || value === 'fill' || value === 'contain') return value;
+      return 'contain';
+    } catch (error) {
+      console.error('Error getting media player fit mode:', error);
+      return 'contain';
+    }
+  },
+
+  saveMediaPlayerBgColor: async (value: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MEDIA_PLAYER_BG_COLOR, value);
+    } catch (error) {
+      console.error('Error saving media player bg color:', error);
+    }
+  },
+
+  getMediaPlayerBgColor: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MEDIA_PLAYER_BG_COLOR);
+      return value || '#000000';
+    } catch (error) {
+      console.error('Error getting media player bg color:', error);
+      return '#000000';
+    }
+  },
+
+  saveMediaPlayerTransition: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MEDIA_PLAYER_TRANSITION, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving media player transition:', error);
+    }
+  },
+
+  getMediaPlayerTransition: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MEDIA_PLAYER_TRANSITION);
+      return value !== null ? JSON.parse(value) : true;
+    } catch (error) {
+      console.error('Error getting media player transition:', error);
+      return true;
+    }
+  },
+
+  saveMediaPlayerTransitionDuration: async (value: number): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MEDIA_PLAYER_TRANSITION_DURATION, String(value));
+    } catch (error) {
+      console.error('Error saving media player transition duration:', error);
+    }
+  },
+
+  getMediaPlayerTransitionDuration: async (): Promise<number> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MEDIA_PLAYER_TRANSITION_DURATION);
+      return value !== null ? parseInt(value, 10) : 500;
+    } catch (error) {
+      console.error('Error getting media player transition duration:', error);
+      return 500;
+    }
+  },
+
+  saveMediaPlayerMute: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.MEDIA_PLAYER_MUTE, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving media player mute:', error);
+    }
+  },
+
+  getMediaPlayerMute: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.MEDIA_PLAYER_MUTE);
+      return value !== null ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting media player mute:', error);
+      return false;
+    }
+  },
+
+  // DASHBOARD
+  saveDashboardModeEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.DASHBOARD_MODE_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving dashboard mode enabled:', error);
+    }
+  },
+
+  getDashboardModeEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.DASHBOARD_MODE_ENABLED);
+      return value === null ? false : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting dashboard mode enabled:', error);
+      return false;
+    }
+  },
+
+  saveDashboardTiles: async (tiles: DashboardTile[]): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.DASHBOARD_TILES, JSON.stringify(tiles));
+    } catch (error) {
+      console.error('Error saving dashboard tiles:', error);
+    }
+  },
+
+  getDashboardTiles: async (): Promise<DashboardTile[]> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.DASHBOARD_TILES);
+      return value === null ? [] : JSON.parse(value);
+    } catch (error) {
+      console.error('Error getting dashboard tiles:', error);
+      return [];
+    }
+  },
+
+  saveHttpBasicAuthUsername: async (username: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.HTTP_BASIC_AUTH_USERNAME, username);
+    } catch (error) {
+      console.error('Error saving HTTP basic auth username:', error);
+    }
+  },
+
+  getHttpBasicAuthUsername: async (): Promise<string> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.HTTP_BASIC_AUTH_USERNAME);
+      return value ?? '';
+    } catch (error) {
+      console.error('Error getting HTTP basic auth username:', error);
+      return '';
+    }
+  },
+
+  getAllSettings: async (): Promise<Map<string, string | null>> => {
+    try {
+      const allKeys = Object.values(KEYS);
+      const pairs = await AsyncStorage.multiGet(allKeys);
+      const map = new Map<string, string | null>();
+      for (const [key, value] of pairs) {
+        map.set(key, value);
+      }
+      return map;
+    } catch (error) {
+      console.error('Error batch loading settings:', error);
+      return new Map();
+    }
+  },
+
+  /** Expose KEYS for external multiGet consumers */
+  KEYS,
+
+  // ============ CLOUD SYNC METADATA ============
+
+  getConfigUpdatedAt: async (): Promise<string | null> => {
+    try { return await AsyncStorage.getItem(KEYS.CONFIG_UPDATED_AT); }
+    catch { return null; }
+  },
+
+  saveConfigUpdatedAt: async (ts: string): Promise<void> => {
+    try { await AsyncStorage.setItem(KEYS.CONFIG_UPDATED_AT, ts); }
+    catch (error) { console.error('Error saving config_updated_at:', error); }
+  },
+
+  getConfigVersion: async (): Promise<number> => {
+    try {
+      const v = await AsyncStorage.getItem(KEYS.CONFIG_VERSION);
+      return v ? parseInt(v, 10) : 0;
+    } catch { return 0; }
+  },
+
+  saveConfigVersion: async (version: number): Promise<void> => {
+    try { await AsyncStorage.setItem(KEYS.CONFIG_VERSION, version.toString()); }
+    catch (error) { console.error('Error saving config version:', error); }
+  },
+
+  getLastSentConfigHash: async (): Promise<string | null> => {
+    try { return await AsyncStorage.getItem(KEYS.LAST_SENT_CONFIG_HASH); }
+    catch { return null; }
+  },
+
+  saveLastSentConfigHash: async (hash: string): Promise<void> => {
+    try { await AsyncStorage.setItem(KEYS.LAST_SENT_CONFIG_HASH, hash); }
+    catch (error) { console.error('Error saving last sent config hash:', error); }
+  },
+
+  resetSyncMetadata: async (): Promise<void> => {
+    try {
+      await AsyncStorage.multiRemove([
+        KEYS.CONFIG_UPDATED_AT,
+        KEYS.CONFIG_VERSION,
+        KEYS.LAST_SENT_CONFIG_HASH,
+      ]);
+    } catch (error) { console.error('Error resetting sync metadata:', error); }
+  },
+
+  /**
+   * Native-readable mirror of the enrolment state. Written as JSON so it matches the
+   * "true"/"false" the watchdog's readFlag() compares against.
+   */
+  saveCloudEnrolled: async (value: boolean): Promise<void> => {
+    try { await AsyncStorage.setItem(KEYS.CLOUD_ENROLLED, JSON.stringify(value)); }
+    catch (error) { console.error('Error saving cloud enrolled flag:', error); }
+  },
+
+  // ============ CLOUD COMMAND DELIVERY ============
+
+  getPendingReports: async (): Promise<unknown[]> => {
+    try {
+      const raw = await AsyncStorage.getItem(KEYS.CLOUD_PENDING_REPORTS);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  },
+
+  savePendingReports: async (reports: unknown[]): Promise<void> => {
+    try { await AsyncStorage.setItem(KEYS.CLOUD_PENDING_REPORTS, JSON.stringify(reports)); }
+    catch (error) { console.error('Error saving pending cloud reports:', error); }
+  },
+
+  getInflightCommand: async (): Promise<Record<string, unknown> | null> => {
+    try {
+      const raw = await AsyncStorage.getItem(KEYS.CLOUD_INFLIGHT_COMMAND);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return isPlainObject(parsed) ? parsed : null;
+    } catch { return null; }
+  },
+
+  saveInflightCommand: async (cmd: Record<string, unknown> | null): Promise<void> => {
+    try {
+      if (cmd === null) await AsyncStorage.removeItem(KEYS.CLOUD_INFLIGHT_COMMAND);
+      else await AsyncStorage.setItem(KEYS.CLOUD_INFLIGHT_COMMAND, JSON.stringify(cmd));
+    } catch (error) { console.error('Error saving in-flight cloud command:', error); }
+  },
+
+  // ============ CONFIG EXPORT / IMPORT ============
+
+  exportConfig: async (): Promise<Record<string, unknown>> => {
+    const s = await StorageService.getAllSettings();
+    const str = (key: string, def = ''): string => (s.get(key) ?? def) as string;
+    const bool = (key: string, def = false): boolean => {
+      const v = s.get(key);
+      return v !== null && v !== undefined ? JSON.parse(v as string) : def;
+    };
+    const num = (key: string, def = 0): number => {
+      const v = s.get(key);
+      return v !== null && v !== undefined ? parseFloat(v as string) || def : def;
+    };
+    const json = (key: string, def: unknown = null): unknown => {
+      const v = s.get(key);
+      if (v === null || v === undefined) return def;
+      try { return JSON.parse(v as string); } catch { return def; }
+    };
+
+    const structured: Record<string, unknown> = {
+      general: {
+        displayMode: str(KEYS.DISPLAY_MODE, 'webview'),
+        url: str(KEYS.URL),
+        autoReload: bool(KEYS.AUTO_RELOAD),
+        pdfViewerEnabled: bool(KEYS.PDF_VIEWER_ENABLED),
+        printEnabled: bool(KEYS.PRINT_ENABLED),
+        printPaperSize: str(KEYS.PRINT_PAPER_SIZE, 'A4'),
+        urlRotation: {
+          enabled: bool(KEYS.URL_ROTATION_ENABLED),
+          list: json(KEYS.URL_ROTATION_LIST, []),
+          interval: num(KEYS.URL_ROTATION_INTERVAL, 30),
+        },
+        urlPlanner: {
+          enabled: bool(KEYS.URL_PLANNER_ENABLED),
+          events: json(KEYS.URL_PLANNER_EVENTS, []),
+        },
+        webviewBackButton: {
+          enabled: bool(KEYS.WEBVIEW_BACK_BUTTON_ENABLED),
+          xPercent: num(KEYS.WEBVIEW_BACK_BUTTON_X_PERCENT, 2),
+          yPercent: num(KEYS.WEBVIEW_BACK_BUTTON_Y_PERCENT, 10),
+        },
+        inactivityReturn: {
+          enabled: bool(KEYS.INACTIVITY_RETURN_ENABLED),
+          delay: num(KEYS.INACTIVITY_RETURN_DELAY, 60),
+          resetOnNav: bool(KEYS.INACTIVITY_RETURN_RESET_ON_NAV, true),
+          clearCache: bool(KEYS.INACTIVITY_RETURN_CLEAR_CACHE),
+          scrollTop: bool(KEYS.INACTIVITY_RETURN_SCROLL_TOP, true),
+        },
+        mediaPlayer: {
+          items: json(KEYS.MEDIA_PLAYER_ITEMS, []),
+          autoPlay: bool(KEYS.MEDIA_PLAYER_AUTOPLAY, true),
+          loop: bool(KEYS.MEDIA_PLAYER_LOOP, true),
+          shuffle: bool(KEYS.MEDIA_PLAYER_SHUFFLE),
+          imageDuration: num(KEYS.MEDIA_PLAYER_IMAGE_DURATION, 10),
+          showControls: bool(KEYS.MEDIA_PLAYER_SHOW_CONTROLS),
+          fitMode: str(KEYS.MEDIA_PLAYER_FIT_MODE, 'contain'),
+          bgColor: str(KEYS.MEDIA_PLAYER_BG_COLOR, '#000000'),
+          transition: bool(KEYS.MEDIA_PLAYER_TRANSITION, true),
+          transitionDuration: num(KEYS.MEDIA_PLAYER_TRANSITION_DURATION, 500),
+          mute: bool(KEYS.MEDIA_PLAYER_MUTE),
+        },
+        httpBasicAuth: { username: str(KEYS.HTTP_BASIC_AUTH_USERNAME) },
+        externalApp: {
+          package: str(KEYS.EXTERNAL_APP_PACKAGE),
+          mode: str(KEYS.EXTERNAL_APP_MODE, 'single'),
+          testMode: bool(KEYS.EXTERNAL_APP_TEST_MODE, true),
+        },
+        managedApps: json(KEYS.MANAGED_APPS, []),
+        dashboardMode: bool(KEYS.DASHBOARD_MODE_ENABLED),
+        dashboardTiles: json(KEYS.DASHBOARD_TILES, []),
+        pauseWebMediaWhenHidden: bool(KEYS.PAUSE_WEB_MEDIA_WHEN_HIDDEN, true),
+        intercomMode: bool(KEYS.INTERCOM_MODE),
+      },
+      display: {
+        brightnessManagement: bool(KEYS.BRIGHTNESS_MANAGEMENT_ENABLED, true),
+        defaultBrightness: num(KEYS.DEFAULT_BRIGHTNESS, 0.5),
+        autoBrightness: {
+          enabled: bool(KEYS.AUTO_BRIGHTNESS_ENABLED),
+          min: num(KEYS.AUTO_BRIGHTNESS_MIN, 0.1),
+          max: num(KEYS.AUTO_BRIGHTNESS_MAX, 1.0),
+          offset: num(KEYS.AUTO_BRIGHTNESS_OFFSET, 0),
+          updateInterval: num(KEYS.AUTO_BRIGHTNESS_UPDATE_INTERVAL, 1000),
+        },
+        statusBar: {
+          enabled: bool(KEYS.STATUS_BAR_ENABLED),
+          onOverlay: bool(KEYS.STATUS_BAR_ON_OVERLAY, true),
+          onReturn: bool(KEYS.STATUS_BAR_ON_RETURN, true),
+          showBattery: bool(KEYS.STATUS_BAR_SHOW_BATTERY, true),
+          showWifi: bool(KEYS.STATUS_BAR_SHOW_WIFI, true),
+          showBluetooth: bool(KEYS.STATUS_BAR_SHOW_BLUETOOTH, true),
+          showVolume: bool(KEYS.STATUS_BAR_SHOW_VOLUME, true),
+          showTime: bool(KEYS.STATUS_BAR_SHOW_TIME, true),
+          theme: str(KEYS.STATUS_BAR_THEME, 'dark'),
+        },
+        keyboardMode: str(KEYS.KEYBOARD_MODE, 'default'),
+        zoom: {
+          level: num(KEYS.WEBVIEW_ZOOM_LEVEL, 100),
+          mode: str(KEYS.WEBVIEW_ZOOM_MODE, 'standard'),
+          disableUserZoom: bool(KEYS.DISABLE_USER_ZOOM),
+        },
+        customUserAgent: str(KEYS.CUSTOM_USER_AGENT),
+        screensaver: {
+          enabled: bool(KEYS.SCREENSAVER_ENABLED),
+          inactivityEnabled: bool(KEYS.SCREENSAVER_INACTIVITY_ENABLED, true),
+          inactivityDelay: num(KEYS.SCREENSAVER_INACTIVITY_DELAY, 600000),
+          delay: num(KEYS.SCREENSAVER_DELAY, 60000),
+          brightness: num(KEYS.SCREENSAVER_BRIGHTNESS, 0),
+          type: str(KEYS.SCREENSAVER_TYPE, 'dim'),
+          url: str(KEYS.SCREENSAVER_URL),
+          videoItems: json(KEYS.SCREENSAVER_VIDEO_ITEMS, []),
+          videoLoop: bool(KEYS.SCREENSAVER_VIDEO_LOOP, true),
+        },
+        motionDetection: {
+          enabled: bool(KEYS.SCREENSAVER_MOTION_ENABLED),
+          sensitivity: str(KEYS.SCREENSAVER_MOTION_SENSITIVITY, 'medium'),
+          cameraPosition: str(KEYS.MOTION_CAMERA_POSITION, 'front'),
+          delay: num(KEYS.SCREENSAVER_MOTION_DELAY, 30000),
+          proximityEnabled: bool(KEYS.SCREENSAVER_PROXIMITY_ENABLED),
+        },
+        screenScheduler: {
+          enabled: bool(KEYS.SCREEN_SCHEDULER_ENABLED),
+          rules: json(KEYS.SCREEN_SCHEDULER_RULES, []),
+          wakeOnTouch: bool(KEYS.SCREEN_SCHEDULER_WAKE_ON_TOUCH, true),
+        },
+        keepScreenOn: bool(KEYS.KEEP_SCREEN_ON, true),
+        autoWakeOnScreenOff: bool(KEYS.AUTO_WAKE_ON_SCREEN_OFF),
+      },
+      security: {
+        kioskEnabled: bool(KEYS.KIOSK_ENABLED),
+        allowPowerButton: bool(KEYS.ALLOW_POWER_BUTTON, true),
+        allowNotifications: bool(KEYS.ALLOW_NOTIFICATIONS),
+        allowSystemInfo: bool(KEYS.ALLOW_SYSTEM_INFO),
+        returnMode: str(KEYS.RETURN_MODE, 'tap_anywhere'),
+        returnTapCount: num(KEYS.RETURN_TAP_COUNT, 5),
+        returnTapTimeout: num(KEYS.RETURN_TAP_TIMEOUT, 1500),
+        returnButtonPosition: str(KEYS.RETURN_BUTTON_POSITION, 'bottom-right'),
+        overlayButtonVisible: bool(KEYS.OVERLAY_BUTTON_VISIBLE),
+        volumeUp5Tap: bool(KEYS.VOLUME_UP_5TAP_ENABLED, true),
+        autoLaunch: bool(KEYS.AUTO_LAUNCH),
+        autoRelaunchApp: bool(KEYS.AUTO_RELAUNCH_APP, true),
+        backButtonMode: str(KEYS.BACK_BUTTON_MODE, 'test'),
+        backButtonTimerDelay: num(KEYS.BACK_BUTTON_TIMER_DELAY, 10),
+        pinMode: str(KEYS.PIN_MODE, 'numeric'),
+        pinMaxAttempts: num(KEYS.PIN_MAX_ATTEMPTS, 5),
+        urlFilter: {
+          enabled: bool(KEYS.URL_FILTER_ENABLED),
+          mode: str(KEYS.URL_FILTER_MODE, 'blacklist'),
+          list: json(KEYS.URL_FILTER_LIST, []),
+          showFeedback: bool(KEYS.URL_FILTER_SHOW_FEEDBACK),
+        },
+        blockingOverlays: {
+          enabled: bool(KEYS.BLOCKING_OVERLAYS_ENABLED),
+          regions: json(KEYS.BLOCKING_OVERLAYS_REGIONS, []),
+        },
+        overlayButtonPosition: str(KEYS.OVERLAY_BUTTON_POSITION, 'bottom-right'),
+        blockFactoryReset: bool(KEYS.BLOCK_FACTORY_RESET),
+        defaultLauncher: bool(KEYS.DEFAULT_LAUNCHER),
+        screenLockCompat: bool(KEYS.SCREEN_LOCK_COMPAT),
+        lockscreen: {
+          enabled: bool(KEYS.LOCKSCREEN_CONTROLS_ENABLED),
+          wifi: bool(KEYS.LOCKSCREEN_WIFI_ENABLED),
+          bluetooth: bool(KEYS.LOCKSCREEN_BLUETOOTH_ENABLED),
+          emergencyCall: bool(KEYS.LOCKSCREEN_EMERGENCY_CALL_ENABLED),
+          audio: bool(KEYS.LOCKSCREEN_AUDIO_ENABLED),
+          flashlight: bool(KEYS.LOCKSCREEN_FLASHLIGHT_ENABLED),
+          brightness: bool(KEYS.LOCKSCREEN_BRIGHTNESS_ENABLED),
+          rotationLock: bool(KEYS.LOCKSCREEN_ROTATION_LOCK_ENABLED),
+        },
+      },
+      advanced: {
+        restApi: {
+          enabled: bool(KEYS.REST_API_ENABLED),
+          port: num(KEYS.REST_API_PORT, 8080),
+          allowControl: bool(KEYS.REST_API_ALLOW_CONTROL, true),
+        },
+        mqtt: {
+          enabled: bool(KEYS.MQTT_ENABLED),
+          brokerUrl: str(KEYS.MQTT_BROKER_URL),
+          port: num(KEYS.MQTT_PORT, 1883),
+          username: str(KEYS.MQTT_USERNAME),
+          clientId: str(KEYS.MQTT_CLIENT_ID),
+          baseTopic: str(KEYS.MQTT_BASE_TOPIC, 'alimdm'),
+          discoveryPrefix: str(KEYS.MQTT_DISCOVERY_PREFIX, 'homeassistant'),
+          statusInterval: num(KEYS.MQTT_STATUS_INTERVAL, 30),
+          allowControl: bool(KEYS.MQTT_ALLOW_CONTROL, true),
+          deviceName: str(KEYS.MQTT_DEVICE_NAME),
+          motionAlwaysOn: bool(KEYS.MQTT_MOTION_ALWAYS_ON),
+        },
+      },
+    };
+
+    // Preserve fields a newer app/cloud sent that this version doesn't model: overlay the
+    // current (structured) config on top of the last raw config received, so unknown keys
+    // survive the round-trip instead of being dropped and echoed back as a downgrade.
+    const rawStr = s.get(KEYS.RAW_CLOUD_CONFIG) as string | null | undefined;
+    if (rawStr) {
+      try {
+        const raw = JSON.parse(rawStr);
+        if (isPlainObject(raw)) return deepMerge(raw, structured) as Record<string, unknown>;
+      } catch { /* malformed raw: fall through to the structured config */ }
+    }
+    return structured;
+  },
+
+  importConfig: async (config: Record<string, unknown>): Promise<void> => {
+    const pairs: [string, string][] = [];
+    const set = (key: string, value: unknown) => {
+      if (value === undefined || value === null) return;
+      pairs.push([key, typeof value === 'string' ? value : JSON.stringify(value)]);
+    };
+
+    // Remember the full raw config so exportConfig can re-emit any fields this app
+    // version doesn't model (forward-compatible round-trip; see deepMerge).
+    set(KEYS.RAW_CLOUD_CONFIG, config);
+
+    const g = config.general as Record<string, unknown> | undefined;
+    const d = config.display as Record<string, unknown> | undefined;
+    const sec = config.security as Record<string, unknown> | undefined;
+    const adv = config.advanced as Record<string, unknown> | undefined;
+
+    if (g) {
+      set(KEYS.DISPLAY_MODE, g.displayMode);
+      set(KEYS.URL, g.url);
+      set(KEYS.AUTO_RELOAD, g.autoReload);
+      set(KEYS.PDF_VIEWER_ENABLED, g.pdfViewerEnabled);
+      set(KEYS.PRINT_ENABLED, g.printEnabled);
+      set(KEYS.PRINT_PAPER_SIZE, g.printPaperSize);
+      const ur = g.urlRotation as Record<string, unknown> | undefined;
+      if (ur) {
+        set(KEYS.URL_ROTATION_ENABLED, ur.enabled);
+        set(KEYS.URL_ROTATION_LIST, ur.list);
+        set(KEYS.URL_ROTATION_INTERVAL, ur.interval);
+      }
+      const up = g.urlPlanner as Record<string, unknown> | undefined;
+      if (up) {
+        set(KEYS.URL_PLANNER_ENABLED, up.enabled);
+        set(KEYS.URL_PLANNER_EVENTS, up.events);
+      }
+      const wbb = g.webviewBackButton as Record<string, unknown> | undefined;
+      if (wbb) {
+        set(KEYS.WEBVIEW_BACK_BUTTON_ENABLED, wbb.enabled);
+        set(KEYS.WEBVIEW_BACK_BUTTON_X_PERCENT, wbb.xPercent);
+        set(KEYS.WEBVIEW_BACK_BUTTON_Y_PERCENT, wbb.yPercent);
+      }
+      const ir = g.inactivityReturn as Record<string, unknown> | undefined;
+      if (ir) {
+        set(KEYS.INACTIVITY_RETURN_ENABLED, ir.enabled);
+        set(KEYS.INACTIVITY_RETURN_DELAY, ir.delay);
+        set(KEYS.INACTIVITY_RETURN_RESET_ON_NAV, ir.resetOnNav);
+        set(KEYS.INACTIVITY_RETURN_CLEAR_CACHE, ir.clearCache);
+        set(KEYS.INACTIVITY_RETURN_SCROLL_TOP, ir.scrollTop);
+      }
+      const mp = g.mediaPlayer as Record<string, unknown> | undefined;
+      if (mp) {
+        set(KEYS.MEDIA_PLAYER_ITEMS, mp.items);
+        set(KEYS.MEDIA_PLAYER_AUTOPLAY, mp.autoPlay);
+        set(KEYS.MEDIA_PLAYER_LOOP, mp.loop);
+        set(KEYS.MEDIA_PLAYER_SHUFFLE, mp.shuffle);
+        set(KEYS.MEDIA_PLAYER_IMAGE_DURATION, mp.imageDuration);
+        set(KEYS.MEDIA_PLAYER_SHOW_CONTROLS, mp.showControls);
+        set(KEYS.MEDIA_PLAYER_FIT_MODE, mp.fitMode);
+        set(KEYS.MEDIA_PLAYER_BG_COLOR, mp.bgColor);
+        set(KEYS.MEDIA_PLAYER_TRANSITION, mp.transition);
+        set(KEYS.MEDIA_PLAYER_TRANSITION_DURATION, mp.transitionDuration);
+        set(KEYS.MEDIA_PLAYER_MUTE, mp.mute);
+      }
+      const hba = g.httpBasicAuth as Record<string, unknown> | undefined;
+      if (hba) set(KEYS.HTTP_BASIC_AUTH_USERNAME, hba.username);
+      const ea = g.externalApp as Record<string, unknown> | undefined;
+      if (ea) {
+        set(KEYS.EXTERNAL_APP_PACKAGE, ea.package);
+        set(KEYS.EXTERNAL_APP_MODE, ea.mode);
+        if (ea.testMode !== undefined) set(KEYS.EXTERNAL_APP_TEST_MODE, ea.testMode);
+      }
+      set(KEYS.MANAGED_APPS, g.managedApps);
+      set(KEYS.DASHBOARD_MODE_ENABLED, g.dashboardMode);
+      set(KEYS.DASHBOARD_TILES, g.dashboardTiles);
+      set(KEYS.PAUSE_WEB_MEDIA_WHEN_HIDDEN, g.pauseWebMediaWhenHidden);
+      set(KEYS.INTERCOM_MODE, g.intercomMode);
+    }
+
+    if (d) {
+      set(KEYS.BRIGHTNESS_MANAGEMENT_ENABLED, d.brightnessManagement);
+      set(KEYS.DEFAULT_BRIGHTNESS, d.defaultBrightness);
+      const ab = d.autoBrightness as Record<string, unknown> | undefined;
+      if (ab) {
+        set(KEYS.AUTO_BRIGHTNESS_ENABLED, ab.enabled);
+        set(KEYS.AUTO_BRIGHTNESS_MIN, ab.min);
+        set(KEYS.AUTO_BRIGHTNESS_MAX, ab.max);
+        set(KEYS.AUTO_BRIGHTNESS_OFFSET, ab.offset);
+        set(KEYS.AUTO_BRIGHTNESS_UPDATE_INTERVAL, ab.updateInterval);
+      }
+      const sb = d.statusBar as Record<string, unknown> | undefined;
+      if (sb) {
+        set(KEYS.STATUS_BAR_ENABLED, sb.enabled);
+        set(KEYS.STATUS_BAR_ON_OVERLAY, sb.onOverlay);
+        set(KEYS.STATUS_BAR_ON_RETURN, sb.onReturn);
+        set(KEYS.STATUS_BAR_SHOW_BATTERY, sb.showBattery);
+        set(KEYS.STATUS_BAR_SHOW_WIFI, sb.showWifi);
+        set(KEYS.STATUS_BAR_SHOW_BLUETOOTH, sb.showBluetooth);
+        set(KEYS.STATUS_BAR_SHOW_VOLUME, sb.showVolume);
+        set(KEYS.STATUS_BAR_SHOW_TIME, sb.showTime);
+        set(KEYS.STATUS_BAR_THEME, sb.theme);
+      }
+      set(KEYS.KEYBOARD_MODE, d.keyboardMode);
+      const z = d.zoom as Record<string, unknown> | undefined;
+      if (z) {
+        set(KEYS.WEBVIEW_ZOOM_LEVEL, z.level);
+        set(KEYS.WEBVIEW_ZOOM_MODE, z.mode);
+        set(KEYS.DISABLE_USER_ZOOM, z.disableUserZoom);
+      }
+      set(KEYS.CUSTOM_USER_AGENT, d.customUserAgent);
+      const ss = d.screensaver as Record<string, unknown> | undefined;
+      if (ss) {
+        set(KEYS.SCREENSAVER_ENABLED, ss.enabled);
+        set(KEYS.SCREENSAVER_INACTIVITY_ENABLED, ss.inactivityEnabled);
+        set(KEYS.SCREENSAVER_INACTIVITY_DELAY, ss.inactivityDelay);
+        set(KEYS.SCREENSAVER_DELAY, ss.delay);
+        set(KEYS.SCREENSAVER_BRIGHTNESS, ss.brightness);
+        set(KEYS.SCREENSAVER_TYPE, ss.type);
+        set(KEYS.SCREENSAVER_URL, ss.url);
+        set(KEYS.SCREENSAVER_VIDEO_ITEMS, ss.videoItems);
+        set(KEYS.SCREENSAVER_VIDEO_LOOP, ss.videoLoop);
+      }
+      const md = d.motionDetection as Record<string, unknown> | undefined;
+      if (md) {
+        set(KEYS.SCREENSAVER_MOTION_ENABLED, md.enabled);
+        set(KEYS.MOTION_DETECTION_ENABLED, md.enabled);
+        set(KEYS.SCREENSAVER_MOTION_SENSITIVITY, md.sensitivity);
+        set(KEYS.MOTION_SENSITIVITY, md.sensitivity);
+        set(KEYS.MOTION_CAMERA_POSITION, md.cameraPosition);
+        set(KEYS.SCREENSAVER_MOTION_DELAY, md.delay);
+        set(KEYS.MOTION_DELAY, md.delay);
+        set(KEYS.SCREENSAVER_PROXIMITY_ENABLED, md.proximityEnabled);
+      }
+      const sch = d.screenScheduler as Record<string, unknown> | undefined;
+      if (sch) {
+        set(KEYS.SCREEN_SCHEDULER_ENABLED, sch.enabled);
+        set(KEYS.SCREEN_SCHEDULER_RULES, sch.rules);
+        set(KEYS.SCREEN_SCHEDULER_WAKE_ON_TOUCH, sch.wakeOnTouch);
+      }
+      set(KEYS.KEEP_SCREEN_ON, d.keepScreenOn);
+      set(KEYS.AUTO_WAKE_ON_SCREEN_OFF, d.autoWakeOnScreenOff);
+    }
+
+    if (sec) {
+      set(KEYS.KIOSK_ENABLED, sec.kioskEnabled);
+      set(KEYS.ALLOW_POWER_BUTTON, sec.allowPowerButton);
+      set(KEYS.ALLOW_NOTIFICATIONS, sec.allowNotifications);
+      set(KEYS.ALLOW_SYSTEM_INFO, sec.allowSystemInfo);
+      set(KEYS.RETURN_MODE, sec.returnMode);
+      set(KEYS.RETURN_TAP_COUNT, sec.returnTapCount);
+      set(KEYS.RETURN_TAP_TIMEOUT, sec.returnTapTimeout);
+      set(KEYS.RETURN_BUTTON_POSITION, sec.returnButtonPosition);
+      set(KEYS.OVERLAY_BUTTON_VISIBLE, sec.overlayButtonVisible);
+      set(KEYS.VOLUME_UP_5TAP_ENABLED, sec.volumeUp5Tap);
+      set(KEYS.AUTO_LAUNCH, sec.autoLaunch);
+      set(KEYS.AUTO_RELAUNCH_APP, sec.autoRelaunchApp);
+      set(KEYS.BACK_BUTTON_MODE, sec.backButtonMode);
+      set(KEYS.BACK_BUTTON_TIMER_DELAY, sec.backButtonTimerDelay);
+      set(KEYS.PIN_MODE, sec.pinMode);
+      set(KEYS.PIN_MAX_ATTEMPTS, sec.pinMaxAttempts);
+      const uf = sec.urlFilter as Record<string, unknown> | undefined;
+      if (uf) {
+        set(KEYS.URL_FILTER_ENABLED, uf.enabled);
+        set(KEYS.URL_FILTER_MODE, uf.mode);
+        set(KEYS.URL_FILTER_LIST, uf.list);
+        set(KEYS.URL_FILTER_SHOW_FEEDBACK, uf.showFeedback);
+      }
+      const bo = sec.blockingOverlays as Record<string, unknown> | undefined;
+      if (bo) {
+        set(KEYS.BLOCKING_OVERLAYS_ENABLED, bo.enabled);
+        set(KEYS.BLOCKING_OVERLAYS_REGIONS, bo.regions);
+      }
+      set(KEYS.OVERLAY_BUTTON_POSITION, sec.overlayButtonPosition);
+      set(KEYS.BLOCK_FACTORY_RESET, sec.blockFactoryReset);
+      set(KEYS.DEFAULT_LAUNCHER, sec.defaultLauncher);
+      set(KEYS.SCREEN_LOCK_COMPAT, sec.screenLockCompat);
+      const ls = sec.lockscreen as Record<string, unknown> | undefined;
+      if (ls) {
+        set(KEYS.LOCKSCREEN_CONTROLS_ENABLED, ls.enabled);
+        set(KEYS.LOCKSCREEN_WIFI_ENABLED, ls.wifi);
+        set(KEYS.LOCKSCREEN_BLUETOOTH_ENABLED, ls.bluetooth);
+        set(KEYS.LOCKSCREEN_EMERGENCY_CALL_ENABLED, ls.emergencyCall);
+        set(KEYS.LOCKSCREEN_AUDIO_ENABLED, ls.audio);
+        set(KEYS.LOCKSCREEN_FLASHLIGHT_ENABLED, ls.flashlight);
+        set(KEYS.LOCKSCREEN_BRIGHTNESS_ENABLED, ls.brightness);
+        set(KEYS.LOCKSCREEN_ROTATION_LOCK_ENABLED, ls.rotationLock);
+      }
+    }
+
+    if (adv) {
+      const ra = adv.restApi as Record<string, unknown> | undefined;
+      if (ra) {
+        set(KEYS.REST_API_ENABLED, ra.enabled);
+        set(KEYS.REST_API_PORT, ra.port);
+        set(KEYS.REST_API_ALLOW_CONTROL, ra.allowControl);
+      }
+      const mq = adv.mqtt as Record<string, unknown> | undefined;
+      if (mq) {
+        set(KEYS.MQTT_ENABLED, mq.enabled);
+        set(KEYS.MQTT_BROKER_URL, mq.brokerUrl);
+        set(KEYS.MQTT_PORT, mq.port);
+        set(KEYS.MQTT_USERNAME, mq.username);
+        set(KEYS.MQTT_CLIENT_ID, mq.clientId);
+        set(KEYS.MQTT_BASE_TOPIC, mq.baseTopic);
+        set(KEYS.MQTT_DISCOVERY_PREFIX, mq.discoveryPrefix);
+        set(KEYS.MQTT_STATUS_INTERVAL, mq.statusInterval);
+        set(KEYS.MQTT_ALLOW_CONTROL, mq.allowControl);
+        set(KEYS.MQTT_DEVICE_NAME, mq.deviceName);
+        set(KEYS.MQTT_MOTION_ALWAYS_ON, mq.motionAlwaysOn);
+      }
+    }
+
+    if (pairs.length > 0) {
+      await AsyncStorage.multiSet(pairs);
+    }
+  },
+
+  // ============ LOCK SCREEN CONTROLS ============
+
+  saveLockscreenControlsEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.LOCKSCREEN_CONTROLS_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving lockscreen controls enabled:', error);
+    }
+  },
+
+  getLockscreenControlsEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.LOCKSCREEN_CONTROLS_ENABLED);
+      if (value !== null) {
+        return JSON.parse(value);
+      }
+
+      const legacyValues = await AsyncStorage.multiGet([
+        KEYS.LOCKSCREEN_WIFI_ENABLED,
+        KEYS.LOCKSCREEN_BLUETOOTH_ENABLED,
+        KEYS.LOCKSCREEN_EMERGENCY_CALL_ENABLED,
+        KEYS.LOCKSCREEN_AUDIO_ENABLED,
+        KEYS.LOCKSCREEN_FLASHLIGHT_ENABLED,
+        KEYS.LOCKSCREEN_BRIGHTNESS_ENABLED,
+        KEYS.LOCKSCREEN_ROTATION_LOCK_ENABLED,
+      ]);
+      return legacyValues.some(([, stored]) => stored ? JSON.parse(stored) : false);
+    } catch (error) {
+      console.error('Error getting lockscreen controls enabled:', error);
+      return false;
+    }
+  },
+
+  saveLockscreenWifiEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.LOCKSCREEN_WIFI_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving lockscreen wifi enabled:', error);
+    }
+  },
+
+  getLockscreenWifiEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.LOCKSCREEN_WIFI_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting lockscreen wifi enabled:', error);
+      return false;
+    }
+  },
+
+  saveLockscreenBluetoothEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.LOCKSCREEN_BLUETOOTH_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving lockscreen bluetooth enabled:', error);
+    }
+  },
+
+  getLockscreenBluetoothEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.LOCKSCREEN_BLUETOOTH_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting lockscreen bluetooth enabled:', error);
+      return false;
+    }
+  },
+
+  saveLockscreenEmergencyCallEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.LOCKSCREEN_EMERGENCY_CALL_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving lockscreen emergency call enabled:', error);
+    }
+  },
+
+  getLockscreenEmergencyCallEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.LOCKSCREEN_EMERGENCY_CALL_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting lockscreen emergency call enabled:', error);
+      return false;
+    }
+  },
+
+  saveLockscreenAudioEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.LOCKSCREEN_AUDIO_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving lockscreen audio enabled:', error);
+    }
+  },
+
+  getLockscreenAudioEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.LOCKSCREEN_AUDIO_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting lockscreen audio enabled:', error);
+      return false;
+    }
+  },
+
+  saveLockscreenFlashlightEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.LOCKSCREEN_FLASHLIGHT_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving lockscreen flashlight enabled:', error);
+    }
+  },
+
+  getLockscreenFlashlightEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.LOCKSCREEN_FLASHLIGHT_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting lockscreen flashlight enabled:', error);
+      return false;
+    }
+  },
+
+  saveLockscreenBrightnessEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.LOCKSCREEN_BRIGHTNESS_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving lockscreen brightness enabled:', error);
+    }
+  },
+
+  getLockscreenBrightnessEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.LOCKSCREEN_BRIGHTNESS_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting lockscreen brightness enabled:', error);
+      return false;
+    }
+  },
+
+  saveLockscreenRotationLockEnabled: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.LOCKSCREEN_ROTATION_LOCK_ENABLED, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving lockscreen rotation lock enabled:', error);
+    }
+  },
+
+  getLockscreenRotationLockEnabled: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.LOCKSCREEN_ROTATION_LOCK_ENABLED);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error getting lockscreen rotation lock enabled:', error);
+      return false;
+    }
+  },
+
+};
