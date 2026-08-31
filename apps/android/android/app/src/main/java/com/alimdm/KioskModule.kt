@@ -15,6 +15,7 @@ import android.os.BatteryManager
 import android.os.Environment
 import android.os.StatFs
 import android.os.SystemClock
+import android.provider.Settings
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -916,6 +917,64 @@ class KioskModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         MainActivity.blockAutoRelaunch = block
         DebugLog.d("KioskModule", "setBlockAutoRelaunch = $block")
         promise.resolve(true)
+    }
+
+    /**
+     * A stable identifier for this tablet, used as its device id in the cloud.
+     *
+     * This must be unique per physical device: the server falls back to hashing
+     * the *enrolment token* when it gets nothing, and since a whole fleet shares
+     * one token, every tablet would otherwise collapse into a single record —
+     * each enrolment overwriting the last one's API key.
+     *
+     * Preference order, most to least useful operationally:
+     *  1. Hardware serial. Readable here because a Device Owner is exempt from
+     *     the API 29+ restriction, and it matches what `adb devices` prints, so
+     *     a console row maps to a tablet you can physically pick up.
+     *  2. ANDROID_ID — stable per (device, user, signing key), survives app
+     *     updates, changes only on a factory reset.
+     *  3. A UUID minted once and persisted, so even a device that refuses both
+     *     of the above still gets something unique to itself.
+     */
+    @ReactMethod
+    fun getDeviceIdentifier(promise: Promise) {
+        val ctx = reactApplicationContext
+        try {
+            val serial = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Build.getSerial()
+            } else {
+                @Suppress("DEPRECATION")
+                Build.SERIAL
+            }
+            if (!serial.isNullOrBlank() &&
+                !serial.equals(Build.UNKNOWN, ignoreCase = true) &&
+                !serial.equals("unknown", ignoreCase = true)
+            ) {
+                promise.resolve(serial)
+                return
+            }
+        } catch (e: Exception) {
+            // SecurityException when not Device Owner — fall through.
+            android.util.Log.w("KioskModule", "Serial unavailable: ${e.message}")
+        }
+        try {
+            val androidId = Settings.Secure.getString(
+                ctx.contentResolver, Settings.Secure.ANDROID_ID,
+            )
+            if (!androidId.isNullOrBlank()) {
+                promise.resolve("android-$androidId")
+                return
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("KioskModule", "ANDROID_ID unavailable: ${e.message}")
+        }
+        val prefs = ctx.getSharedPreferences("alimdm_device_identity", Context.MODE_PRIVATE)
+        var uid = prefs.getString("device_uid", null)
+        if (uid.isNullOrBlank()) {
+            uid = "uid-" + java.util.UUID.randomUUID().toString()
+            prefs.edit().putString("device_uid", uid).commit()
+        }
+        promise.resolve(uid)
     }
 
     @ReactMethod

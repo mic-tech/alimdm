@@ -283,7 +283,13 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	}
 	id := strVal(req.DeviceInfo["serial_number"])
 	if id == "" {
-		id = "tablet-" + shortHash(req.Token)
+		// Never derive the id from the enrolment token: a fleet shares one
+		// token, so every tablet would land on the same device id and each
+		// enrolment would overwrite the previous one's API key. A random id
+		// keeps devices distinct; the cost is that a client which reports no
+		// serial gets a fresh row if it ever re-enrols, which is strictly
+		// better than two tablets silently sharing one.
+		id = "tablet-" + randomID()
 	}
 	key, _ := auth.GenerateAPIKey()
 	now := time.Now().UTC().Format(time.RFC3339)

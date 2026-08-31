@@ -13,6 +13,8 @@ interface KioskModuleInterface {
   clearBlockAutoRelaunch(): Promise<boolean>;
   setBlockAutoRelaunch(block: boolean): Promise<boolean>;
   removeDeviceOwner(): Promise<boolean>;
+  /** Stable per-device id: hardware serial, else ANDROID_ID, else a persisted UUID. */
+  getDeviceIdentifier(): Promise<string>;
   setScreenLockCompatMode(enabled: boolean): Promise<boolean>;
   // #201 — Block/unblock the factory reset option in system Settings (Device Owner user restriction)
   setFactoryResetBlocked(blocked: boolean): Promise<boolean>;

@@ -16,7 +16,7 @@ import { ApiSettingsSection } from '../../../components/ApiSettingsSection';
 import { MqttSettingsSection } from '../../../components/MqttSettingsSection';
 import { CertificateInfo } from '../../../utils/CertificateModule';
 import AccessibilityModule from '../../../utils/AccessibilityModule';
-import { CloudSyncService } from '../../../utils/CloudSyncService';
+import { CloudSyncService, getDeviceSerial } from '../../../utils/CloudSyncService';
 import { CLOUD_ENABLED } from '../../../config/features';
 import QrScannerModal from '../../../components/QrScannerModal';
 import PermissionWizard from '../../../components/PermissionWizard';
@@ -153,7 +153,7 @@ const AdvancedTab: React.FC<AdvancedTabProps> = ({
               manufacturer: PC?.Manufacturer ?? '',
               android_version: PC?.Release ?? '',
               app_version: PC?.appVersion ?? '',
-              serial_number: '',
+              serial_number: await getDeviceSerial(),
             });
             setEnrolling(false);
             if (result.success) {

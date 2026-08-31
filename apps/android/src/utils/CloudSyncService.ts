@@ -50,6 +50,22 @@ interface HeartbeatResponse {
   agent_update?: AgentUpdateOffer | null;
 }
 
+/**
+ * Stable id for this tablet, sent as `serial_number` at enrolment.
+ *
+ * Must not be empty: the server falls back to hashing the enrolment token, and
+ * because a fleet shares one token every tablet would land on the same device
+ * id, each enrolment overwriting the previous one's API key.
+ */
+export async function getDeviceSerial(): Promise<string> {
+  try {
+    return (await KioskModule.getDeviceIdentifier()) || '';
+  } catch {
+    // Let the server assign one rather than blocking enrolment outright.
+    return '';
+  }
+}
+
 async function simpleHash(str: string): Promise<string> {
   try {
     const g = globalThis as any;
@@ -409,7 +425,7 @@ class CloudSyncServiceClass {
         manufacturer: PC?.Manufacturer ?? '',
         android_version: PC?.Release ?? '',
         app_version: PC?.appVersion ?? '',
-        serial_number: '',
+        serial_number: await getDeviceSerial(),
       }, (pending as any).group_id);
       if (result.success) {
         // A device provisioned via the setup-wizard QR is a Device Owner kiosk:
