@@ -454,11 +454,30 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 			// The kiosk PIN is a secret: it travels in sensitive_config (which the
 			// app writes to secure storage) rather than the plain config, and is
 			// stripped from the config so it is never echoed back or logged.
-			if g, ok := cfg["general"].(map[string]any); ok {
-				if pin, _ := g["pin"].(string); pin != "" {
-					resp["sensitive_config"] = map[string]any{"pin": pin}
-					delete(g, "pin")
+			// The console writes the PIN to sensitive.pin. This used to read
+			// general.pin, which nothing ever wrote — so sensitive_config was
+			// never populated, no device was ever sent a PIN, and every one of
+			// them fell through to the hard-coded default in verifyPin(). A PIN
+			// set in the console had no effect on any tablet.
+			//
+			// general.pin is still honoured for any older config that used it.
+			pin := ""
+			if sec, ok := cfg["sensitive"].(map[string]any); ok {
+				if p, _ := sec["pin"].(string); p != "" {
+					pin = p
+					delete(sec, "pin")
 				}
+			}
+			if pin == "" {
+				if g, ok := cfg["general"].(map[string]any); ok {
+					if p, _ := g["pin"].(string); p != "" {
+						pin = p
+						delete(g, "pin")
+					}
+				}
+			}
+			if pin != "" {
+				resp["sensitive_config"] = map[string]any{"pin": pin}
 			}
 		}
 	}

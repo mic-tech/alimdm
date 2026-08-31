@@ -35,7 +35,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 
-	srv := New(st, auth.NewSigner("test-secret"), nil, nil, nil, "enroll", "http://x", "", "")
+	srv := New(st, auth.NewSigner("test-secret"), nil, nil, NewPokeQueue(), "enroll", "http://x", "", "")
 	return &testEnv{t: t, mux: srv.Routes(), st: st}
 }
 
