@@ -251,7 +251,7 @@ export const POLICY_FIELDS = [
   { path: "general.externalApp.testMode", label: "Test mode", type: "bool", tab: "general", section: "App Mode",
     help: "Back button returns to settings instead of being swallowed. For setup only." },
   { path: "general.inactivityReturn.scrollTop", label: "Scroll to top on return", type: "bool", tab: "general", section: "Inactivity Return" },
-  { path: "general.intercomMode", label: "Intercom mode", type: "bool", tab: "general", section: "Display Options" },
+  { path: "general.intercomMode", label: "Intercom mode", type: "bool", tab: "display", section: "Web Media" },
   { path: "general.mediaPlayer.transition", label: "Transition", type: "select", tab: "general", section: "Playback",
     options: [
       { value: "none", label: "None" },

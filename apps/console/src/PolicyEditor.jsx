@@ -366,6 +366,11 @@ const SHOW_IF = {
   "advanced.mqtt.deviceName":            { path: "advanced.mqtt.enabled", value: true },
   "advanced.mqtt.allowControl":          { path: "advanced.mqtt.enabled", value: true },
   "advanced.mqtt.motionAlwaysOn":        { path: "advanced.mqtt.enabled", value: true },
+  // Matches the app: the Show Button switch lives inside {returnMode === 'button'}.
+  "security.overlayButtonVisible":       { path: "security.returnMode", value: "button" },
+  // The app renders motion detection inside the Screensaver section, whose body
+  // is gated on the screensaver being enabled.
+  "display.motionDetection.enabled":     { path: "display.screensaver.enabled", value: true },
   "security.returnButtonPosition":      { path: "security.returnMode", value: "button" },
 };
 
