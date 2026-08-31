@@ -53,13 +53,13 @@ export const POLICY_FIELDS = [
   // ── GENERAL ──────────────────────────────────────────────────────────────
   { path: "general.displayMode", label: "Display mode", type: "select", tab: "general", section: "Display Mode",
     options: [
-      { value: "webview", label: "Web view (URL)" },
-      { value: "external_app", label: "External app" },
-      { value: "media_player", label: "Media player" },
+      { value: "webview", label: "Website" },
+      { value: "media_player", label: "Media" },
+      { value: "external_app", label: "App" },
     ], help: "What the kiosk shows: a web page, an installed app, or a media playlist." },
   { path: "general.url", label: "URL to display", type: "text", tab: "general", section: "URL to Display",
     placeholder: "https://…", help: "Used when display mode is Web view." },
-  { path: "general.autoReload", label: "Auto reload", type: "bool", tab: "general", section: "Auto Reload",
+  { path: "general.autoReload", label: "Reload on Error", type: "bool", tab: "general", section: "Auto Reload",
     help: "Reload the web view periodically to pick up changes." },
 
   // App Mode / Application / Managed Apps
@@ -86,42 +86,42 @@ export const POLICY_FIELDS = [
   { path: "general.mediaPlayer.bgColor", label: "Background color", type: "text", tab: "general", section: "Display Options", placeholder: "#000000" },
 
   // Website Authentication
-  { path: "general.httpBasicAuth.username", label: "Basic-auth username", type: "text", tab: "general", section: "Website Authentication",
+  { path: "general.httpBasicAuth.username", label: "Username", type: "text", tab: "general", section: "Website Authentication",
     help: "For sites that require HTTP basic auth. Password is set on the device." },
 
   // URL Rotation
-  { path: "general.urlRotation.enabled", label: "Enable URL rotation", type: "bool", tab: "general", section: "URL Rotation" },
+  { path: "general.urlRotation.enabled", label: "Enable Rotation", type: "bool", tab: "general", section: "URL Rotation" },
   { path: "general.urlRotation.list", label: "URLs (one per line)", type: "list", tab: "general", section: "URL Rotation" },
   { path: "general.urlRotation.interval", label: "Rotate every (s)", type: "number", tab: "general", section: "URL Rotation", min: 5, max: 86400, step: 5 },
 
   // URL Planner
-  { path: "general.urlPlanner.enabled", label: "Enable URL planner", type: "bool", tab: "general", section: "URL Planner",
+  { path: "general.urlPlanner.enabled", label: "Enable Scheduled URLs", type: "bool", tab: "general", section: "URL Planner",
     help: "Schedule different URLs at different times." },
 
   // Kiosk PIN — a secret. Stored under sensitive.pin; the server ships it via
   // sensitive_config and the app writes it to secure (hashed) storage.
   { path: "sensitive.pin", label: "Kiosk PIN", type: "text", tab: "general", section: "Password",
     placeholder: "e.g. 1234", help: "PIN required to leave the kiosk / open settings. Stored hashed on the device. Leave blank for no PIN.", danger: true },
-  { path: "security.pinMode", label: "PIN type", type: "select", tab: "general", section: "Password",
+  { path: "security.pinMode", label: "Advanced Password Mode", type: "select", tab: "general", section: "Password",
     options: [ { value: "numeric", label: "Numeric" }, { value: "alphanumeric", label: "Alphanumeric" } ] },
   { path: "security.pinMaxAttempts", label: "Max attempts before lockout", type: "number", tab: "general", section: "Password", min: 1, max: 10, step: 1 },
 
   // Inactivity Return
-  { path: "general.inactivityReturn.enabled", label: "Enable inactivity return", type: "bool", tab: "general", section: "Inactivity Return",
+  { path: "general.inactivityReturn.enabled", label: "Return to Start Page on Inactivity", type: "bool", tab: "general", section: "Inactivity Return",
     help: "Return to the kiosk home after the user is idle." },
   { path: "general.inactivityReturn.delay", label: "Idle delay (s)", type: "number", tab: "general", section: "Inactivity Return", min: 10, max: 86400, step: 10 },
   { path: "general.inactivityReturn.resetOnNav", label: "Reset timer on navigation", type: "bool", tab: "general", section: "Inactivity Return" },
   { path: "general.inactivityReturn.clearCache", label: "Clear cache on return", type: "bool", tab: "general", section: "Inactivity Return" },
 
   // PDF / Printing
-  { path: "general.pdfViewerEnabled", label: "PDF viewer", type: "bool", tab: "general", section: "PDF Viewer",
+  { path: "general.pdfViewerEnabled", label: "Inline PDF Viewer", type: "bool", tab: "general", section: "PDF Viewer",
     help: "Open PDF links in the built-in viewer instead of downloading." },
-  { path: "general.printEnabled", label: "Enable printing", type: "bool", tab: "general", section: "Printing" },
+  { path: "general.printEnabled", label: "Allow Printing", type: "bool", tab: "general", section: "Printing" },
   { path: "general.printPaperSize", label: "Paper size", type: "select", tab: "general", section: "Printing",
     options: [ { value: "a4", label: "A4" }, { value: "letter", label: "US Letter" }, { value: "a5", label: "A5" } ] },
 
   // Web Navigation Button
-  { path: "general.webviewBackButton.enabled", label: "Show back button", type: "bool", tab: "general", section: "Web Navigation Button" },
+  { path: "general.webviewBackButton.enabled", label: "Enable Back Button", type: "bool", tab: "general", section: "Web Navigation Button" },
   { path: "general.webviewBackButton.xPercent", label: "Position X (%)", type: "number", tab: "general", section: "Web Navigation Button", min: 0, max: 100, step: 1 },
   { path: "general.webviewBackButton.yPercent", label: "Position Y (%)", type: "number", tab: "general", section: "Web Navigation Button", min: 0, max: 100, step: 1 },
 
