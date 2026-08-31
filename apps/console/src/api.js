@@ -69,12 +69,11 @@ export const api = {
   rolloutAgent: (devices) => req("POST", "/agent/rollout", { devices }),
   // Multipart, so it bypasses req() (which JSON-encodes and would set the
   // wrong Content-Type) exactly like uploadAPK above.
-  uploadAgentRelease: (file, versionCode, versionName) => {
+  // Version is read from the APK server-side; nothing to pass but the file.
+  uploadAgentRelease: (file) => {
     const tok = getToken();
     const fd = new FormData();
     fd.append("file", file);
-    fd.append("version_code", String(versionCode));
-    fd.append("version_name", versionName || "");
     return fetch("/api/v1/agent/release", {
       method: "POST",
       headers: tok ? { Authorization: "Bearer " + tok } : {},

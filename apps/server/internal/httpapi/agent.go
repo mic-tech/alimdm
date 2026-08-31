@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"ali-mdm/server/internal/apkinfo"
 	"ali-mdm/server/internal/store"
 )
 
@@ -33,6 +34,9 @@ import (
 // rollout before the server stops offering it. Without this an update that
 // reliably crashes on apply would loop forever, re-downloading each heartbeat.
 const maxAgentAttempts = 3
+
+// The agent is this app; anything else uploaded here could not replace it.
+const agentPackageName = "com.alimdm"
 
 // uploadAgentRelease stores a new Ali MDM build and makes it the current release.
 // version_code is supplied by the operator: parsing it out of the APK would mean
@@ -50,25 +54,43 @@ func (s *Server) uploadAgentRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	versionCode, err := strconv.Atoi(strings.TrimSpace(r.FormValue("version_code")))
-	if err != nil || versionCode <= 0 {
-		http.Error(w, "version_code must be a positive integer", http.StatusBadRequest)
-		return
-	}
-	versionName := strings.TrimSpace(r.FormValue("version_name"))
-
 	name := hdr.Filename
 	if !strings.HasSuffix(strings.ToLower(name), ".apk") {
-		http.Error(w, "file must be an .apk", http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "file must be an .apk")
 		return
 	}
-	sha, _, size, err := s.agentAPKs.Ingest(file, name)
+	sha, path, size, err := s.agentAPKs.Ingest(file, name)
 	if err != nil {
-		http.Error(w, "store failed", http.StatusInternalServerError)
+		writeErr(w, http.StatusInternalServerError, "could not store the upload")
 		return
 	}
+
+	// Read the version out of the APK rather than asking for it. A hand-typed
+	// version that disagrees with the file is rejected by the device *after* it
+	// has downloaded the whole build, which reads as a network fault; and it is
+	// one more thing to get right on every release.
+	info, err := apkinfo.ReadAPK(path)
+	if err != nil {
+		_ = s.agentAPKs.Delete(baseName(name))
+		writeErr(w, http.StatusBadRequest, "could not read the APK's manifest: "+err.Error())
+		return
+	}
+	// Uploading a different app as the agent would hand every tablet a build
+	// that cannot replace the one it is running.
+	if info.PackageName != agentPackageName {
+		_ = s.agentAPKs.Delete(baseName(name))
+		writeErr(w, http.StatusBadRequest,
+			"that APK is "+info.PackageName+", not "+agentPackageName)
+		return
+	}
+	if info.VersionCode <= 0 {
+		_ = s.agentAPKs.Delete(baseName(name))
+		writeErr(w, http.StatusBadRequest, "the APK declares no versionCode")
+		return
+	}
+
 	rel := &store.AgentRelease{
-		VersionCode: versionCode, VersionName: versionName,
+		VersionCode: info.VersionCode, VersionName: info.VersionName,
 		FileName: baseName(name), SHA256: sha, Size: size,
 	}
 	if err := s.st.SaveAgentRelease(rel); err != nil {

@@ -535,8 +535,6 @@ function AppUpdate({ onErr }) {
   const [updates, setUpdates] = useState([]);
   const [devices, setDevices] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [versionCode, setVersionCode] = useState("");
-  const [versionName, setVersionName] = useState("");
   const [file, setFile] = useState(null);
   const [selected, setSelected] = useState({});
 
@@ -554,12 +552,11 @@ function AppUpdate({ onErr }) {
 
   async function upload() {
     if (!file) { onErr("Choose an APK first"); return; }
-    if (!/^\d+$/.test(versionCode.trim())) { onErr("Version code must be a whole number"); return; }
     setBusy(true);
     try {
-      await api.uploadAgentRelease(file, versionCode.trim(), versionName.trim());
-      toast("Agent build uploaded");
-      setFile(null); setVersionCode(""); setVersionName("");
+      const r = await api.uploadAgentRelease(file);
+      toast(`Uploaded ${r.version_name || ""} (versionCode ${r.version_code})`);
+      setFile(null);
       load();
     } catch (e) { onErr(e.message); }
     setBusy(false);
@@ -616,25 +613,13 @@ function AppUpdate({ onErr }) {
               <input id="agent-file" type="file" accept=".apk" disabled={busy}
                 onChange={(e) => setFile(e.target.files[0] || null)} style={{ display: "block", width: 240 }} />
             </div>
-            <div>
-              <label className="small subtle" htmlFor="agent-vc">Version code</label>
-              <input id="agent-vc" value={versionCode} placeholder="46" disabled={busy}
-                onChange={(e) => setVersionCode(e.target.value)}
-                style={{ display: "block", width: 110, height: 34 }} />
-            </div>
-            <div>
-              <label className="small subtle" htmlFor="agent-vn">Version name</label>
-              <input id="agent-vn" value={versionName} placeholder="1.2.21" disabled={busy}
-                onChange={(e) => setVersionName(e.target.value)}
-                style={{ display: "block", width: 130, height: 34 }} />
-            </div>
             <button className="btn" onClick={upload} disabled={busy}>
               <IconUpload />{busy ? "Uploading…" : "Upload build"}
             </button>
           </div>
           <p className="small subtle">
-            Version code must match the <span className="mono">versionCode</span> inside the APK — tablets
-            refuse a build whose version does not match what the rollout promised.
+            The version is read from the APK itself. Uploading anything other than an Ali MDM
+            build is rejected, since it could not replace the app the tablets are running.
           </p>
         </div>
       </CardTable>
