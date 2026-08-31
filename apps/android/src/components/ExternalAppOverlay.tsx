@@ -382,21 +382,8 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.content}>
-          {/* Logo/Icon Area */}
-          <View style={styles.logoContainer}>
-            <View style={styles.logoCircle}>
-              <Image
-                source={require('../assets/images/logo_circle.png')}
-                style={styles.logoImage}
-                resizeMode="contain"
-              />
-            </View>
-          </View>
-
-          {/* Title */}
-          <Text style={styles.title}>Ali MDM</Text>
-          <Text style={styles.subtitle}>External App Mode</Text>
-
+          {/* No logo or product name: these screens are what a pupil looks at,
+              and the status below is the only thing that tells them anything. */}
           {/* Status Message */}
           <View style={styles.statusContainer}>
             <View style={styles.statusCard}>
@@ -479,36 +466,6 @@ const styles = StyleSheet.create({
     maxWidth: 500,
     alignSelf: 'center',
     alignItems: 'center',
-  },
-  logoContainer: {
-    marginBottom: 32,
-  },
-  logoCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-  },
-  logoImage: {
-    width: 80,
-    height: 80,
-  },
-  title: {
-    fontSize: 42,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 18,
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginBottom: 40,
-    textAlign: 'center',
   },
   statusContainer: {
     width: '100%',

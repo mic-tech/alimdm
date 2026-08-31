@@ -1279,11 +1279,14 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    // The mark here is the brand's dark-theme (white) variant, so it reads
+    // directly on the #2b7fff welcome background; the disc is a soft halo
+    // rather than the thing making it legible.
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 3,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
+    borderColor: 'rgba(255, 255, 255, 0.35)',
   },
   logoImage: {
     width: 80,
