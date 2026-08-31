@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, NativeModules } from 'react-native';
-import { verifySecurePin, getLockoutStatus, hasSecurePin } from '../utils/secureStorage';
+import { verifySecurePin, getLockoutStatus } from '../utils/secureStorage';
 import { StorageService } from '../utils/storage';
 import WifiDialog from './WifiDialog';
 import BluetoothDialog from './BluetoothDialog';
@@ -22,7 +22,6 @@ const PinInput: React.FC<PinInputProps> = ({ onSuccess }) => {
   const [isLockedOut, setIsLockedOut] = useState<boolean>(false);
   const [lockoutTimeRemaining, setLockoutTimeRemaining] = useState<number>(0);
   const [attemptsRemaining, setAttemptsRemaining] = useState<number>(5);
-  const [hasPinConfigured, setHasPinConfigured] = useState<boolean>(false);
   const [pinMode, setPinMode] = useState<'numeric' | 'alphanumeric'>('numeric');
   const inputRef = useRef<TextInput>(null);
   const [showWifiButton, setShowWifiButton] = useState(false);
@@ -45,7 +44,6 @@ const PinInput: React.FC<PinInputProps> = ({ onSuccess }) => {
 
   useEffect(() => {
     checkLockoutStatus();
-    checkPinConfiguration();
     loadPinMode();
     loadLockscreenSettings();
     const interval = setInterval(checkLockoutStatus, 1000);
@@ -115,11 +113,6 @@ const PinInput: React.FC<PinInputProps> = ({ onSuccess }) => {
   const loadPinMode = async (): Promise<void> => {
     const mode = await StorageService.getPinMode();
     setPinMode(mode);
-  };
-
-  const checkPinConfiguration = async (): Promise<void> => {
-    const isPinConfigured = await hasSecurePin();
-    setHasPinConfigured(isPinConfigured);
   };
 
   const checkLockoutStatus = async (): Promise<void> => {
@@ -282,9 +275,13 @@ const PinInput: React.FC<PinInputProps> = ({ onSuccess }) => {
         </>
       ) : (
         <>
-          {!hasPinConfigured && (
-            <Text style={styles.subtitle}>Default code: 1234</Text>
-          )}
+          {/*
+            The default code is deliberately not shown. This screen is what
+            stands between a student and the device's settings, and printing the
+            code on it defeats the point — the more so because it appears
+            exactly when no PIN has been stored, which is when the fallback in
+            verifyPin() is the only thing guarding the device.
+          */}
 
           {attemptsRemaining < 5 && (
             <View style={styles.warningContainer}>
