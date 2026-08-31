@@ -1714,9 +1714,6 @@ function Shell({ onSignOut }) {
         <header className="header">
           <div className="container-fixed header-inner">
             <div className="header-title">{active.title}</div>
-            <div className="header-actions">
-              <span className="badge off"><span className="dot" style={{ background: "var(--green-500)" }} />Connected</span>
-            </div>
           </div>
         </header>
 
