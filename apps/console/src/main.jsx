@@ -376,16 +376,37 @@ function Devices({ onErr }) {
   const filtered = useMemo(() => {
     if (!devices) return [];
     const s = q.trim().toLowerCase();
-    if (!s) return devices;
-    return devices.filter((d) =>
-      [d.id, d.model, d.android_ver, d.group_id].some((v) => (v || "").toLowerCase().includes(s)));
+    const matched = !s ? devices : devices.filter((d) =>
+      [d.id, d.name, d.model, d.android_ver, d.group_id].some((v) => (v || "").toLowerCase().includes(s)));
+    // Offline first: in a fleet of twelve, the one that stopped reporting is
+    // the only row anyone urgently needs, and alphabetical order buries it.
+    return [...matched].sort((a, b) => (a.online === b.online ? 0 : a.online ? 1 : -1));
   }, [devices, q]);
+
+  const offline = useMemo(() => (devices || []).filter((d) => !d.online), [devices]);
 
   if (!devices) return <Loading label="Loading devices…" />;
   const online = devices.filter((d) => d.online).length;
 
   return (
     <div className="stack">
+      {offline.length > 0 && (
+        <Alert tone="warning" icon={IconWarning}
+          title={offline.length === 1 ? "1 device is not checking in" : `${offline.length} devices are not checking in`}>
+          A tablet that stops checking in keeps working on screen, so this is usually the only
+          sign. Commands and policy changes will not reach it until it returns.
+          <div style={{ marginTop: 8 }}>
+            {offline.map((d) => (
+              <div key={d.id} className="small">
+                <span className="strong">{d.name || d.id}</span>
+                <span className="muted">
+                  {" — "}{d.last_seen ? `silent ${timeAgo(d.last_seen)?.replace(" ago", "")}` : "never checked in"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Alert>
+      )}
       <div className="stat-grid">
         <div className="stat">
           <div className="stat-head">
@@ -1524,6 +1545,21 @@ function Shell({ onSignOut }) {
     if (me && !nav.some((n) => n.id === view)) setView("devices");
   }, [nav, view, me]);
 
+  // Offline count, polled here rather than on the Devices page so a silent
+  // tablet is visible from wherever the operator happens to be. This is the
+  // whole point: a device can stop being managed while looking perfectly fine
+  // in the room, so the console has to be the thing that notices.
+  const [offlineCount, setOfflineCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => api.listDevices()
+      .then((d) => { if (!cancelled) setOfflineCount(d.filter((x) => !x.online).length); })
+      .catch(() => {/* the page itself reports API errors */});
+    poll();
+    const t = setInterval(poll, 30000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
   useEffect(() => { window.scrollTo(0, 0); }, [view]);
 
   if (!me) {
@@ -1563,6 +1599,12 @@ function Shell({ onSignOut }) {
                     onClick={() => setView(n.id)} title={n.txt}>
                     <span className="navbtn-icon"><Icon /></span>
                     <span className="navbtn-title">{n.txt}</span>
+                    {n.id === "devices" && offlineCount > 0 && (
+                      <span className="badge off" title={`${offlineCount} device(s) not checking in`}
+                        style={{ marginLeft: "auto", fontSize: "0.6875rem", padding: "1px 7px" }}>
+                        {offlineCount}
+                      </span>
+                    )}
                   </button>
                 );
               })}

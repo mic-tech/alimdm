@@ -157,6 +157,14 @@ func migrate(db *sql.DB) error {
 		size INTEGER NOT NULL,
 		created_at TEXT NOT NULL
 	);
+	-- Whether a device is currently the subject of an unresolved offline alert.
+	-- Persisted so a server restart does not re-alert a fleet that was already
+	-- reported, and so recovery can be reported exactly once.
+	CREATE TABLE IF NOT EXISTS device_alerts(
+		device_id TEXT PRIMARY KEY,
+		state TEXT NOT NULL DEFAULT 'ok',
+		notified_at TEXT NOT NULL DEFAULT ''
+	);
 	CREATE TABLE IF NOT EXISTS agent_updates(
 		device_id TEXT PRIMARY KEY,
 		target_version_code INTEGER NOT NULL,
@@ -673,6 +681,40 @@ func (s *Store) ListAgentUpdates() ([]AgentUpdate, error) {
 		out = append(out, u)
 	}
 	return out, nil
+}
+
+// ── Offline alerting ─────────────────────────────────────────────────────────
+
+const (
+	AlertOK      = "ok"
+	AlertOffline = "offline"
+)
+
+// AlertStates returns the current alert state per device id. Devices with no
+// row have never alerted and are treated as "ok".
+func (s *Store) AlertStates() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT device_id, state FROM device_alerts`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, st string
+		if err := rows.Scan(&id, &st); err != nil {
+			return nil, err
+		}
+		out[id] = st
+	}
+	return out, nil
+}
+
+func (s *Store) SetAlertState(deviceID, state string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO device_alerts(device_id, state, notified_at) VALUES(?,?,?)
+		 ON CONFLICT(device_id) DO UPDATE SET state=excluded.state, notified_at=excluded.notified_at`,
+		deviceID, state, nowISO())
+	return err
 }
 
 // nowISO is a helper for timestamps.

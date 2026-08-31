@@ -24,6 +24,19 @@ import {
 export const CONFIG_UPDATED_EVENT = 'ALIMDM_CONFIG_UPDATED';
 /** Fired when the operator changes this tablet's label in the console. */
 export const DEVICE_LABEL_UPDATED_EVENT = 'ALIMDM_DEVICE_LABEL_UPDATED';
+/** Fired when the cloud connection state changes, so the kiosk can show it. */
+export const CLOUD_STATUS_EVENT = 'ALIMDM_CLOUD_STATUS';
+
+/**
+ * unmanaged — no cloud enrolment on this device at all.
+ * offline   — enrolled, but nothing has reached the server recently (usually Wi-Fi).
+ * online    — enrolled and checking in.
+ */
+export type CloudStatus = 'unmanaged' | 'offline' | 'online';
+
+// Matches the console's own Online/Offline threshold, so the tablet and the
+// dashboard never disagree about the same device.
+const CLOUD_OFFLINE_AFTER_MS = 3 * 60_000;
 export const FORCE_UNENROLL_EVENT = 'ALIMDM_FORCE_UNENROLL';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -87,6 +100,11 @@ async function simpleHash(str: string): Promise<string> {
 class CloudSyncServiceClass {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastHeartbeatAtMs = 0;
+  // Distinct from lastHeartbeatAtMs, which is stamped *before* the attempt: only
+  // a reply from the server counts as being connected.
+  private lastHeartbeatOkAtMs = 0;
+  private startedAtMs = Date.now();
+  private lastStatus: CloudStatus | null = null;
   private isRunning = false;
 
   // ─── Lifecycle ───────────────────────────────────────────────────────────────
@@ -252,6 +270,9 @@ class CloudSyncServiceClass {
         return;
       }
       if (!response.ok) return;
+      // The server answered: this is the one place we know the link works.
+      this.lastHeartbeatOkAtMs = Date.now();
+      this._publishStatus();
 
       const data: HeartbeatResponse = await response.json();
 
@@ -375,6 +396,33 @@ class CloudSyncServiceClass {
       // Best-effort: the server re-offers the update on the next heartbeat, and
       // reconcile() is idempotent, so a dropped report costs one extra cycle.
     }
+  }
+
+  /**
+   * Current cloud connection state, for display on the kiosk itself.
+   *
+   * A tablet whose Wi-Fi has dropped keeps showing its apps and looks perfectly
+   * healthy, so without this the only place the problem is visible is a console
+   * nobody in the room is looking at.
+   */
+  async getCloudStatus(): Promise<CloudStatus> {
+    const creds = await getCloudCredentials();
+    if (!creds) return 'unmanaged';
+    if (this.lastHeartbeatOkAtMs === 0) {
+      // Nothing has succeeded yet this process. Stay quiet briefly after launch
+      // rather than flashing a warning during normal start-up.
+      return Date.now() - this.startedAtMs > CLOUD_OFFLINE_AFTER_MS ? 'offline' : 'online';
+    }
+    return Date.now() - this.lastHeartbeatOkAtMs > CLOUD_OFFLINE_AFTER_MS ? 'offline' : 'online';
+  }
+
+  /** Emit only on change, so the kiosk re-renders once per transition. */
+  private _publishStatus(): void {
+    this.getCloudStatus().then((status) => {
+      if (status === this.lastStatus) return;
+      this.lastStatus = status;
+      DeviceEventEmitter.emit(CLOUD_STATUS_EVENT, status);
+    }).catch(() => {/* display-only */});
   }
 
   // ─── Enrollment ──────────────────────────────────────────────────────────────

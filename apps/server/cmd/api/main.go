@@ -1,11 +1,13 @@
 package main
 
 import (
-	"strings"
+	"context"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"ali-mdm/server/internal/apk"
 	"ali-mdm/server/internal/auth"
@@ -29,6 +31,15 @@ func envOr(name, def string) string {
 	return def
 }
 
+// atoiOr parses n, falling back to def for empty or malformed values so a typo
+// in configuration degrades to the default rather than disabling alerting.
+func atoiOr(s string, def int) int {
+	if v, err := strconv.Atoi(strings.TrimSpace(s)); err == nil && v > 0 {
+		return v
+	}
+	return def
+}
+
 func main() {
 	dbPath := envOr("DB", "alimdm.db")
 	secret := envOr("SECRET", "change-me-in-prod")
@@ -37,7 +48,7 @@ func main() {
 	addr := envOr("ADDR", ":8080")
 	enrollToken := envOr("ENROLL_TOKEN", "alimdm-enroll")
 	baseURL := envOr("BASE_URL", "http://localhost:8080")
-	consoleDir := env("CONSOLE_DIR") // e.g. ../console/dist
+	consoleDir := env("CONSOLE_DIR")     // e.g. ../console/dist
 	provisionAPK := env("PROVISION_APK") // path to Ali MDM APK for zero-touch QR
 
 	st, err := store.Open(dbPath)
@@ -57,6 +68,13 @@ func main() {
 		if err := httpapi.NewMQTTBridge(pokes).Start(mqttURL); err != nil {
 			log.Printf("mqtt: %v (continuing without push)", err)
 		}
+	}
+
+	// Offline alerting: a silent tablet still looks fine in the room, so the
+	// only way anyone learns is if something tells them. No webhook = no watcher.
+	if w := httpapi.NewAlertWatcher(st, env("ALERT_WEBHOOK_URL"), baseURL,
+		atoiOr(env("ALERT_OFFLINE_MINUTES"), 15)); w != nil {
+		w.Start(context.Background())
 	}
 
 	srv := httpapi.New(st, signer, apks, agentAPKs, pokes, enrollToken, baseURL, consoleDir, provisionAPK)

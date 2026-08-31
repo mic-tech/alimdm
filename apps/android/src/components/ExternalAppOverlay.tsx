@@ -5,7 +5,7 @@ import Icon from './Icon';
 import AppLauncherModule, { AppInfo } from '../utils/AppLauncherModule';
 import { ManagedApp } from '../types/managedApps';
 import { StorageService } from '../utils/storage';
-import { DEVICE_LABEL_UPDATED_EVENT } from '../utils/CloudSyncService';
+import { CLOUD_STATUS_EVENT, CloudStatus, CloudSyncService, DEVICE_LABEL_UPDATED_EVENT } from '../utils/CloudSyncService';
 
 interface ExternalAppOverlayProps {
   /** Legacy single-app package (backward compat) */
@@ -83,6 +83,10 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
   // Operator-set label for this tablet, shown bottom-right. Set from the console
   // and delivered on the heartbeat; empty means "show nothing".
   const [deviceLabel, setDeviceLabel] = useState<string>('');
+  // Cloud connection state, shown beside the label. A tablet whose Wi-Fi has
+  // dropped keeps showing its apps and looks entirely healthy, so without this
+  // the only place the problem appears is a console nobody in the room is at.
+  const [cloudStatus, setCloudStatus] = useState<CloudStatus>('online');
   
   // Return to settings — same mechanism as WebView (tap_anywhere / button)
   const gridTapCountRef = useRef<number>(0);
@@ -226,6 +230,21 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
     return () => { cancelled = true; sub.remove(); };
   }, []);
 
+  // Follow the cloud connection. The event fires on transitions; the poll covers
+  // going *offline*, which by definition produces no event because nothing is
+  // arriving from the server to trigger one.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      const status = await CloudSyncService.getCloudStatus();
+      if (!cancelled) setCloudStatus(status);
+    };
+    refresh();
+    const sub = DeviceEventEmitter.addListener(CLOUD_STATUS_EVENT, refresh);
+    const timer = setInterval(refresh, 30000);
+    return () => { cancelled = true; sub.remove(); clearInterval(timer); };
+  }, []);
+
   const handleAppPress = (packageName: string) => {
     if (onLaunchApp) {
       onLaunchApp(packageName);
@@ -324,16 +343,22 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
 
         {/* Operator-set device label. Shifted clear of the floating return
             button when that button also sits in the bottom-right corner. */}
-        {!!deviceLabel && (
-          <Text
+        {(!!deviceLabel || cloudStatus !== 'online') && (
+          <View
             style={[
-              styles.deviceLabel,
+              styles.statusCorner,
               returnMode === 'button' && returnButtonPosition === 'bottom-right' && styles.deviceLabelShifted,
             ]}
-            numberOfLines={1}
           >
-            {deviceLabel}
-          </Text>
+            {cloudStatus !== 'online' && (
+              <Text style={[styles.cloudStatus, cloudStatus === 'offline' && styles.cloudStatusWarn]} numberOfLines={1}>
+                {cloudStatus === 'unmanaged' ? 'Unmanaged' : 'No connection — check Wi-Fi'}
+              </Text>
+            )}
+            {!!deviceLabel && (
+              <Text style={styles.deviceLabel} numberOfLines={1}>{deviceLabel}</Text>
+            )}
+          </View>
         )}
       </View>
     );
@@ -593,14 +618,27 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   // Multi-app home screen styles
-  deviceLabel: {
+  statusCorner: {
     position: 'absolute',
     bottom: 12,
     right: 20,
-    maxWidth: '50%',
+    maxWidth: '60%',
+    alignItems: 'flex-end',
+  },
+  deviceLabel: {
     fontSize: 12,
     fontWeight: '600',
     color: 'rgba(255, 255, 255, 0.6)',
+  },
+  cloudStatus: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.5)',
+  },
+  // Amber rather than red: the kiosk still works, and a red banner on a screen
+  // kids use invites more alarm than the situation warrants.
+  cloudStatusWarn: {
+    color: '#ffb74d',
   },
   // Clears the 50px floating return button (right: 20) when it shares the corner.
   deviceLabelShifted: {
