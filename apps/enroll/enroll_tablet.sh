@@ -17,8 +17,8 @@
 #   4. Accept the "Allow USB debugging?" prompt on the tablet
 #
 # This script:
-#   1. Installs the (debug) Ali MDM APK
-#   2. Writes the cloud enrollment prefs (token + cloud URL) into the app
+#   1. Installs the Ali MDM APK (release builds work; no debug build needed)
+#   2. Hands the cloud enrollment (token + cloud URL) over as intent extras
 #   3. Sets Ali MDM as Device Owner
 #   4. Launches it -> it auto-enrolls with the cloud + auto-installs the 3 apps
 # ============================================================
@@ -42,6 +42,9 @@ APK="${APK:?set APK in apps/enroll/enroll.env (path to the Ali MDM APK)}"
 CLOUD_URL="${CLOUD_URL:?set CLOUD_URL in apps/enroll/enroll.env}"
 ENROLL_TOKEN="${ENROLL_TOKEN:?set ENROLL_TOKEN in apps/enroll/enroll.env}"
 ORG_ID="${ORG_ID:-your-org}"
+# The app requires a settings PIN on first ADB configuration, and re-uses it to
+# authorise any later ADB config on an already-configured device.
+KIOSK_PIN="${KIOSK_PIN:?set KIOSK_PIN in apps/enroll/enroll.env (kiosk settings PIN)}"
 # Optional: ssh target for the cloud host, used only in the closing hint below.
 SERVER_SSH="${SERVER_SSH:-<user>@<your-cloud-host>}"
 PKG="com.alimdm"
@@ -53,32 +56,25 @@ echo "==> Target tablet: $SERIAL"
 $ADB wait-for-device
 echo "    device online"
 
-echo "==> 1. Install Ali MDM (debug) APK"
+echo "==> 1. Install the Ali MDM APK"
 $ADB install -r -d "$APK"
 
 echo "==> 2. Launch once so the app data dir exists"
-$ADB shell am start -n "$PKG/.MainActivity" 2>/dev/null || true
+$ADB shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1 || true
 sleep 3
 
-echo "==> 3. Write the cloud enrollment prefs (via run-as; needs debuggable APK)"
-# Build the SharedPreferences XML on the workstation
-PREFS_XML="/tmp/AliMdmCloudEnrollment.xml"
-cat > "$PREFS_XML" <<XML
-<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
-<map>
-    <boolean name="has_pending" value="true" />
-    <string name="enroll_token">${ENROLL_TOKEN}</string>
-    <string name="cloud_url">${CLOUD_URL}</string>
-    <string name="org_id">${ORG_ID}</string>
-    <string name="group_id">${GROUP_ID}</string>
-</map>
-XML
-
-# Push it into the app's shared_prefs dir (run-as gives us the app's uid)
-$ADB push "$PREFS_XML" "/data/local/tmp/AliMdmCloudEnrollment.xml"
-$ADB shell "run-as $PKG sh -c 'cp /data/local/tmp/AliMdmCloudEnrollment.xml \$PWD/shared_prefs/ && chown \$(id -u):\$(id -g) \$PWD/shared_prefs/AliMdmCloudEnrollment.xml'"
-$ADB shell rm -f /data/local/tmp/AliMdmCloudEnrollment.xml
-echo "    prefs written"
+echo "==> 3. Hand over the cloud enrolment as intent extras"
+# Passed as extras rather than written into the app's shared_prefs with `run-as`:
+# run-as only works on a debuggable build, so the old approach could not enrol a
+# signed release APK. MainActivity.applyAdbCloudEnrollment() stages these.
+$ADB shell am start -n "$PKG/.MainActivity" \
+  --es pin "$KIOSK_PIN" \
+  --es cloud_url "$CLOUD_URL" \
+  --es enroll_token "$ENROLL_TOKEN" \
+  --es org_id "$ORG_ID" \
+  ${GROUP_ID:+--es group_id "$GROUP_ID"} >/dev/null
+sleep 2
+echo "    enrolment staged"
 
 echo "==> 4. Set Ali MDM as Device Owner"
 $ADB shell dpm set-device-owner "$ADMIN"

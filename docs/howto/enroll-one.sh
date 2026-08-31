@@ -42,7 +42,7 @@ if [ -z "$APK" ]; then
   # search common spots relative to this script
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   for cand in \
-    "$SCRIPT_DIR/../../apk/alimdm-adb-debug.apk" \
+    "$SCRIPT_DIR/../../apk/alimdm-release.apk" \
     "$SCRIPT_DIR/../apk/"*.apk \
     "$HOME/ali-mdm/apk/"*.apk \
     "$PWD/"*.apk ; do

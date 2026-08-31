@@ -1351,7 +1351,9 @@ class MainActivity : ReactActivity() {
       "mqtt_enabled", "mqtt_broker_url", "mqtt_port", "mqtt_username", "mqtt_password",
       "mqtt_client_id", "mqtt_base_topic", "mqtt_discovery_prefix", "mqtt_status_interval",
       "mqtt_allow_control", "mqtt_device_name",
-      "external_app_mode", "managed_apps"
+      "external_app_mode", "managed_apps",
+      // Cloud enrolment over ADB (release-build friendly; see applyAdbCloudEnrollment)
+      "cloud_url", "enroll_token", "org_id", "group_id"
     )
     if (adbConfigKeys.none { intent.hasExtra(it) }) return false
     
@@ -1391,6 +1393,11 @@ class MainActivity : ReactActivity() {
       }
     }
     
+    // PIN verified. Stage any cloud enrolment first: it lives in its own prefs
+    // file and is independent of the pending-config block below, so an intent
+    // may carry just an enrolment, just config, or both.
+    applyAdbCloudEnrollment(intent)
+
     // PIN verified - Save configuration to SharedPreferences as "pending config"
     // React Native (KioskScreen) will read this on startup and apply to AsyncStorage
     // This avoids Room/AsyncStorage v2 database compatibility issues
@@ -1833,6 +1840,47 @@ class MainActivity : ReactActivity() {
     }
   }
   
+  /**
+   * Stage a cloud enrolment handed over as ADB intent extras:
+   *   adb shell am start -n com.alimdm/.MainActivity \
+   *     --es pin 1234 --es cloud_url https://mdm.example.com --es enroll_token <token>
+   *
+   * Enrolling over ADB used to require the debug build, because the script wrote
+   * this file with `run-as`, which release builds refuse. Intent extras need no
+   * such access, so a signed production APK can be provisioned the same way.
+   *
+   * Written to [DeviceAdminReceiver.PREFS] — where
+   * CloudSyncService.consumePendingProvisioningEnrollment() looks for it — and
+   * deliberately not into the pending-config file, whose full contents are
+   * dumped to logcat for debugging. An enrolment token has no business there.
+   *
+   * Returns true when an enrolment was staged.
+   */
+  private fun applyAdbCloudEnrollment(intent: Intent): Boolean {
+    val token = intent.getStringExtra("enroll_token")?.trim()
+    val cloudUrl = intent.getStringExtra("cloud_url")?.trim()
+    if (token.isNullOrEmpty() && cloudUrl.isNullOrEmpty()) return false
+    if (token.isNullOrEmpty() || cloudUrl.isNullOrEmpty()) {
+      // Half a pair enrols nothing; say so rather than failing silently later.
+      android.util.Log.w("AliMDM-ADB", "Ignoring enrolment: cloud_url and enroll_token must both be given")
+      showAdbToast("❌ ADB Config: cloud_url and enroll_token must both be given")
+      return false
+    }
+
+    getSharedPreferences(DeviceAdminReceiver.PREFS, Context.MODE_PRIVATE).edit()
+      .putBoolean(DeviceAdminReceiver.KEY_HAS_PENDING, true)
+      .putString(DeviceAdminReceiver.KEY_TOKEN, token)
+      .putString(DeviceAdminReceiver.KEY_CLOUD_URL, cloudUrl.trimEnd('/'))
+      .putString(DeviceAdminReceiver.KEY_ORG_ID, intent.getStringExtra("org_id")?.trim() ?: "")
+      .putString(DeviceAdminReceiver.KEY_GROUP_ID, intent.getStringExtra("group_id")?.trim() ?: "")
+      // Synchronous: the app restarts right after this returns.
+      .commit()
+
+    // Logs the destination, never the token.
+    android.util.Log.i("AliMDM-ADB", "Cloud enrolment staged for $cloudUrl")
+    return true
+  }
+
   /**
    * Check if a PIN is already configured
    */
