@@ -294,6 +294,14 @@ class KioskWatchdogService : Service() {
         if (now - lastCloudHeartbeatMs < CLOUD_HEARTBEAT_INTERVAL_MS) return
         lastCloudHeartbeatMs = now
 
+        // Re-check immediately before asking. The window between the check above and
+        // this call is where the app can come to the front — most likely right after a
+        // restart, when this ticker and a resuming activity land together. React Native
+        // then refuses the task by throwing on the main thread, which used to kill the
+        // app; CloudHeartbeatTaskService now survives that, and narrowing the window
+        // here means it mostly does not arise.
+        if (isMainActivityRunning()) return
+
         try {
             startService(Intent(this, CloudHeartbeatTaskService::class.java))
             // Keeps the CPU up for the hop between here and the task actually starting.
