@@ -98,6 +98,10 @@ const COMMAND_MAP: Record<string, CommandMapper> = {
   // native Device Owner lock-task API, which has no executeAction callback.
   lock: () => ({ command: 'lockKiosk', params: {} }),
   unlock: () => ({ command: 'unlockKiosk', params: {} }),
+  // Surrender Device Owner. One-way: nothing on the device can grant it back,
+  // so re-provisioning needs physical ADB access (or a factory reset). Handled
+  // below rather than through the map's native path, like lock/unlock.
+  release_device_owner: () => ({ command: 'releaseDeviceOwner', params: {} }),
   // NOTE: `screenshot` is handled separately (capture + upload), not via this map.
 };
 
@@ -254,6 +258,20 @@ class CloudCommandServiceClass {
           ? await KioskModule.startLockTask(null, true, true, true, true)
           : await KioskModule.stopLockTask();
         return ok ? { ok: true } : { ok: false, error: (command === 'lockKiosk' ? 'startLockTask' : 'stopLockTask') + ' failed' };
+      }
+
+      // Releasing Device Owner: leave lock task first, mirroring the on-device
+      // flow. Clearing Device Owner while still pinned would strand the tablet
+      // in a kiosk with no privileged app left that could release it.
+      if (command === 'releaseDeviceOwner') {
+        if (!KioskModule) return { ok: false, error: 'KioskModule unavailable' };
+        try {
+          await KioskModule.stopLockTask();
+        } catch {
+          // Not pinned, or already released — not a reason to abort.
+        }
+        const ok = await KioskModule.removeDeviceOwner();
+        return ok ? { ok: true } : { ok: false, error: 'removeDeviceOwner failed' };
       }
 
       // Prefer the native handler: it runs whatever the JS thread is doing, which is

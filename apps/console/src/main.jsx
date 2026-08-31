@@ -8,7 +8,7 @@ import {
   IconDevices, IconGroups, IconEnroll, IconPackage, IconSignOut, IconChevronLeft,
   IconRefresh, IconPlus, IconTrash, IconEdit, IconPower, IconLock, IconUnlock,
   IconEject, IconCopy, IconCheck, IconUpload, IconInfo, IconWarning,
-  IconUser, IconUsers, IconKey, IconSave,
+  IconUser, IconUsers, IconKey, IconSave, IconShield,
 } from "./icons.jsx";
 
 // Compact "time ago" so the Last seen column stays narrow; the cell keeps the
@@ -316,6 +316,31 @@ function Devices({ onErr }) {
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
+  // Releasing Device Owner needs the tablet to be reachable: only the app can
+  // surrender it, so this is queued as a command rather than done server-side.
+  // Unlike unenrolling, it cannot be done for a device that is gone.
+  async function releaseOwner(d) {
+    if (!d.online && !confirm(
+      `${d.name || d.id} is offline.\n\n` +
+      "Only the app itself can surrender Device Owner, so this command sits queued " +
+      "until the tablet checks in. If it never does, nothing happens.\n\nQueue it anyway?",
+    )) return;
+    if (!confirm(
+      `Release Device Owner on ${d.name || d.id}?\n\n` +
+      "The tablet leaves kiosk mode and loses lockdown: no app whitelist, no " +
+      "navigation blocking, no factory-reset protection.\n\n" +
+      "This is one-way. Nothing on the device can grant it back — restoring " +
+      "management needs physical ADB access to the tablet.",
+    )) return;
+    setBusy(true);
+    try {
+      await api.sendCommand(d.id, "release_device_owner");
+      toast(`Queued Device Owner release for ${d.name || d.id}`);
+      load();
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
   async function unenroll(id) {
     if (!confirm(
       `Unenroll ${id}?\n\n` +
@@ -449,6 +474,8 @@ function Devices({ onErr }) {
                       onClick={() => cmd(d.id, "lock")}><IconLock /></button>
                     <button className="btn outline sm icon" title="Unlock" disabled={busy}
                       onClick={() => cmd(d.id, "unlock")}><IconUnlock /></button>
+                    <button className="btn danger-outline sm icon" title="Release Device Owner (needs the tablet online)"
+                      disabled={busy} onClick={() => releaseOwner(d)}><IconShield /></button>
                     <button className="btn danger-outline sm icon" title="Unenroll" disabled={busy}
                       onClick={() => unenroll(d.id)}><IconEject /></button>
                   </div>
