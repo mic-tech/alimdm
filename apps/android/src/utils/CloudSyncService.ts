@@ -92,10 +92,28 @@ class CloudSyncServiceClass {
   // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
   async start(): Promise<void> {
-    if (this.isRunning) return;
+    // Treat "running" as running *and* actually ticking. If a previous attempt
+    // set the flag but never armed the timer, this guard would otherwise make
+    // every later start() a no-op and the device would stay silent for the life
+    // of the process — heartbeating is the only thing that keeps it managed, and
+    // nothing else would notice.
+    if (this.isRunning && this.heartbeatTimer) return;
     const creds = await getCloudCredentials();
     if (!creds) return;
     this.isRunning = true;
+    try {
+      await this.startInternal(creds);
+    } catch (error) {
+      // Every await between here and arming the timer can reject — storage,
+      // the first heartbeat, a native module that is not ready. Leaving the
+      // flag set on the way out is what turns a transient failure into a
+      // permanently silent device, so give the next caller a clean slate.
+      this.isRunning = false;
+      console.error('[CloudSync] start() failed; heartbeat not armed', error);
+    }
+  }
+
+  private async startInternal(creds: CloudCredentials): Promise<void> {
     // The interval below only runs while the activity is resumed: React Native stops
     // dispatching JS timers on host pause, so behind a launched external app this loop
     // stops and the device is reported offline after two minutes while running perfectly.
