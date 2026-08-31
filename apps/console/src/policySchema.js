@@ -33,16 +33,17 @@
 
 // ── Tabs (mirror the app's settings tabs, same order) ───────────────────────
 export const POLICY_TABS = [
+  // Section order mirrors the app's own General tab, so a setting sits in the
+  // same place whether an operator is looking at the console or a teacher is
+  // looking at the tablet.
   { id: "general",   label: "General",   icon: "home",
-    sections: ["Display Mode", "App Mode", "Application", "Managed Apps", "Media Playlist", "Playback", "Display Options", "URL to Display", "Website Authentication", "URL Rotation", "URL Planner", "Inactivity Return", "Auto Reload", "PDF Viewer", "Printing", "Web Navigation Button", "Background Apps"] },
+    sections: ["Display Mode", "Media Playlist", "Playback", "Display Options", "URL to Display", "Website Authentication", "URL Rotation", "URL Planner", "App Mode", "Application", "Applications", "Password", "Inactivity Return", "Auto Reload", "PDF Viewer", "Printing", "Web Navigation Button", "Background Apps"] },
   { id: "dashboard", label: "Dashboard", icon: "view-dashboard",
     sections: ["Dashboard Tiles"] },
   { id: "display",   label: "Display",   icon: "monitor",
     sections: ["Brightness Control", "Manual Brightness", "Auto-Brightness", "Screen Always On", "Screensaver", "Screen Sleep Schedule", "System Status Bar", "Web Page Zoom", "User Agent", "Web Media", "Keyboard Mode"] },
   { id: "security",  label: "Security",  icon: "shield-lock",
     sections: ["Lock Mode", "Auto Launch", "Return to Settings", "Touch Blocking", "URL Filtering", "External App Behavior", "Back Button Behavior", "Lock Screen Controls"] },
-  { id: "sensitive", label: "Secrets",   icon: "key",
-    sections: ["Kiosk PIN"] },
   { id: "advanced",  label: "Advanced",  icon: "cog",
     sections: ["Cloud Management", "Updates", "REST API", "MQTT"] },
 ];
@@ -64,8 +65,8 @@ export const POLICY_FIELDS = [
   // App Mode / Application / Managed Apps
   { path: "general.externalApp.package", label: "Primary app package", type: "text", tab: "general", section: "Application",
     placeholder: "com.example.app", help: "The app the kiosk launches (display mode = External app)." },
-  { path: "general.managedApps", label: "Apps in grid", type: "managedApps", tab: "general", section: "Managed Apps",
-    help: "Apps shown on the multi-app home screen grid. Toggle Kiosk to show/hide each app." },
+  { path: "general.managedApps", label: "Apps in grid", type: "managedApps", tab: "general", section: "Applications",
+    help: "Apps managed on the device. Those with Kiosk on appear in the home-screen grid; the rest are still installed and kept alive in the background — the app splits these into Applications and Additional Managed Apps." },
   { path: "general.externalApp.mode", label: "App layout", type: "select", tab: "general", section: "App Mode",
     options: [ { value: "single", label: "Single app" }, { value: "multi", label: "Multi-app grid" } ],
     help: "Single launches one app; multi shows a grid of the managed apps." },
@@ -99,11 +100,11 @@ export const POLICY_FIELDS = [
 
   // Kiosk PIN — a secret. Stored under sensitive.pin; the server ships it via
   // sensitive_config and the app writes it to secure (hashed) storage.
-  { path: "sensitive.pin", label: "Kiosk PIN", type: "text", tab: "sensitive", section: "Kiosk PIN",
+  { path: "sensitive.pin", label: "Kiosk PIN", type: "text", tab: "general", section: "Password",
     placeholder: "e.g. 1234", help: "PIN required to leave the kiosk / open settings. Stored hashed on the device. Leave blank for no PIN.", danger: true },
-  { path: "security.pinMode", label: "PIN type", type: "select", tab: "sensitive", section: "Kiosk PIN",
+  { path: "security.pinMode", label: "PIN type", type: "select", tab: "general", section: "Password",
     options: [ { value: "numeric", label: "Numeric" }, { value: "alphanumeric", label: "Alphanumeric" } ] },
-  { path: "security.pinMaxAttempts", label: "Max attempts before lockout", type: "number", tab: "sensitive", section: "Kiosk PIN", min: 1, max: 10, step: 1 },
+  { path: "security.pinMaxAttempts", label: "Max attempts before lockout", type: "number", tab: "general", section: "Password", min: 1, max: 10, step: 1 },
 
   // Inactivity Return
   { path: "general.inactivityReturn.enabled", label: "Enable inactivity return", type: "bool", tab: "general", section: "Inactivity Return",
