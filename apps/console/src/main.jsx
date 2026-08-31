@@ -317,7 +317,14 @@ function Devices({ onErr }) {
     setBusy(false);
   }
   async function unenroll(id) {
-    if (!confirm(`Unenroll ${id}? It will leave management.`)) return;
+    if (!confirm(
+      `Unenroll ${id}?\n\n` +
+      "This removes the device here and revokes its key. It does not need the " +
+      "tablet to be reachable, so it works for one that is lost or broken.\n\n" +
+      "If the tablet ever checks in again it will be rejected and will wipe its " +
+      "own cloud settings — but it stays locked down locally until Device Owner " +
+      "is removed on the device itself.",
+    )) return;
     setBusy(true);
     try { await api.unenroll(id); toast(`Unenrolled ${id}`); load(); }
     catch (e) { onErr(e.message); }

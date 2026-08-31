@@ -309,6 +309,35 @@ func (s *Store) SetDeviceGroup(deviceID, groupID string) error {
 	return err
 }
 
+// DeleteDevice removes a device and everything keyed to it.
+//
+// This is the server half of a forced unenrolment: it revokes the device's API
+// key by destroying the only record of it, so the tablet's next heartbeat gets
+// a 401 and the app wipes its own cloud credentials. That path needs no
+// cooperation from the device, which is the point — a tablet that is lost,
+// broken or permanently offline can still be retired from the console.
+//
+// Rows are deleted in dependency order so a partial failure cannot leave
+// orphans pointing at a device that no longer exists.
+func (s *Store) DeleteDevice(deviceID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM commands WHERE device_id=?`,
+		`DELETE FROM apk_updates WHERE device_id=?`,
+		`DELETE FROM agent_updates WHERE device_id=?`,
+		`DELETE FROM devices WHERE id=?`,
+	} {
+		if _, err := tx.Exec(q, deviceID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // SetDeviceName updates the operator-facing label for a device. Unlike
 // SetDeviceGroup this does not clear last_applied_hash: the label is per-device
 // and rides down on the heartbeat, so it needs no group config resync.

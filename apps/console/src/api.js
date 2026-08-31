@@ -28,7 +28,9 @@ export const api = {
   listDevices: () => req("GET", "/devices"),
   getDevice: (id) => req("GET", "/devices/" + id),
   sendCommand: (id, type, params = {}) => req("POST", "/devices/" + id + "/commands", { type, params }),
-  unenroll: (id) => req("POST", "/devices/" + id + "/unenroll"),
+  // Forced unenrolment: deletes the device server-side, revoking its API key.
+  // Works without the tablet — a dead or lost device never has to cooperate.
+  unenroll: (id) => req("DELETE", "/devices/" + encodeURIComponent(id)),
   listGroups: () => req("GET", "/groups"),
   getGroup: (id) => req("GET", "/groups/" + id),
   updateGroup: (id, body) => req("PUT", "/groups/" + id, body),

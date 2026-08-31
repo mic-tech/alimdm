@@ -138,6 +138,8 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/v1/groups/{id}", s.requireOperator(s.deleteGroup))
 	mux.HandleFunc("POST /api/v1/devices/{id}/group", s.requireOperator(s.moveDeviceGroup))
 	mux.HandleFunc("POST /api/v1/devices/{id}/name", s.requireOperator(s.renameDevice))
+	// Forced unenrolment, operator-side. Needs no cooperation from the tablet.
+	mux.HandleFunc("DELETE /api/v1/devices/{id}", s.requireOperator(s.forceUnenroll))
 	mux.HandleFunc("POST /api/v1/apks", s.requireOperator(s.uploadAPK))
 	mux.HandleFunc("GET /api/v1/apks", s.requireOperator(s.listAPKs))
 	// Queue a silent install of an uploaded APK to one or all devices.
@@ -549,6 +551,36 @@ func (s *Server) unenroll(w http.ResponseWriter, r *http.Request) {
 	// Mark the device for wipe by clearing its group + key. The client wipes itself.
 	_ = s.st.UpdateHeartbeat(dev.ID, "", 0, 0, "", "", "")
 	w.WriteHeader(http.StatusOK)
+}
+
+// forceUnenroll retires a device from the console, without needing the tablet.
+//
+// The previous operator-facing unenroll could not work: the console's path
+// redirected onto the device-authenticated route, which then found no device in
+// context and answered "unknown device". Even reached, it only blanked
+// telemetry — it left the API key valid and the device managed, and the
+// force_unenroll heartbeat flag it was supposed to pair with is never set.
+//
+// Deleting the row is what actually revokes access. The device's next heartbeat
+// authenticates against a key that no longer exists, gets a 401, and the app
+// wipes its own cloud credentials on that response. A tablet that is dead, lost
+// or permanently offline simply never comes back, and the console is correct
+// either way.
+//
+// Note this does not surrender Device Owner: a tablet that resurfaces stops
+// being cloud-managed but stays locked down locally, which has to be released
+// on the device itself.
+func (s *Server) forceUnenroll(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.st.GetDevice(id); err != nil {
+		http.Error(w, "unknown device", http.StatusNotFound)
+		return
+	}
+	if err := s.st.DeleteDevice(id); err != nil {
+		http.Error(w, "unenroll failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"id": id, "unenrolled": true})
 }
 
 // ── APK download (device-authenticated) ──────────────────────────────────────
