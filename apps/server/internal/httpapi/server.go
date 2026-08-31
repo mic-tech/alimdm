@@ -1,8 +1,9 @@
 package httpapi
 
 import (
-	"fmt"
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -204,7 +205,6 @@ type enrollRequest struct {
 	GroupID    string         `json:"group_id"`
 }
 
-
 // deviceDispatcher routes the /api/v1/devices/ subtree by method + path segment.
 // Ali MDM calls: POST /devices/enroll/, POST /devices/{id}/heartbeat/,
 // GET /devices/{id}/commands/, GET /devices/{id}/updates/,
@@ -320,10 +320,10 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	autoQueued := s.autoQueueInstalls(d.ID, d.GroupID, now)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"device_id":        id,
-		"api_key":          key,
+		"device_id":         id,
+		"api_key":           key,
 		"organization_name": "mic-tech",
-		"auto_queued":      autoQueued,
+		"auto_queued":       autoQueued,
 	})
 }
 
@@ -387,10 +387,10 @@ func (s *Server) autoQueueInstalls(deviceID, groupID, now string) int {
 }
 
 type heartbeatRequest struct {
-	Config         map[string]any `json:"config"`
-	ConfigVersion  int            `json:"config_version"`
+	Config          map[string]any `json:"config"`
+	ConfigVersion   int            `json:"config_version"`
 	ConfigUpdatedAt string         `json:"config_updated_at"`
-	Battery        struct {
+	Battery         struct {
 		Level    int  `json:"level"`
 		Charging bool `json:"charging"`
 	} `json:"battery"`
@@ -521,9 +521,9 @@ func (s *Server) deviceUpdates(w http.ResponseWriter, r *http.Request) {
 func (s *Server) commandResult(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
-		Status      string          `json:"status"`
-		Result      json.RawMessage `json:"result"`
-		ErrorMessage string         `json:"error_message"`
+		Status       string          `json:"status"`
+		Result       json.RawMessage `json:"result"`
+		ErrorMessage string          `json:"error_message"`
 	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil {
 		http.Error(w, "bad body", http.StatusBadRequest)
@@ -719,20 +719,47 @@ func (s *Server) getGroup(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(g)
 }
 
+// policyConfigBytes accepts `config` as either a JSON object — which is what a
+// browser client naturally sends, and what the console has always sent — or as
+// a JSON-encoded string, the shape this endpoint originally declared.
+//
+// The mismatch meant every policy save from the console failed: an object
+// cannot unmarshal into a Go string, so the request was rejected before
+// anything looked at it, and the only feedback was "bad body".
+func policyConfigBytes(raw json.RawMessage) ([]byte, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil, false
+	}
+	if trimmed[0] == '"' {
+		var asString string
+		if json.Unmarshal(trimmed, &asString) != nil || strings.TrimSpace(asString) == "" {
+			return nil, false
+		}
+		return []byte(asString), true
+	}
+	return trimmed, true
+}
+
 func (s *Server) updateGroup(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
-		Name   string `json:"name"`
-		Config string `json:"config"`
+		Name   string          `json:"name"`
+		Config json.RawMessage `json:"config"`
 	}
-	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Config == "" {
-		http.Error(w, "bad body", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "request body is not valid JSON: "+err.Error())
+		return
+	}
+	raw, ok := policyConfigBytes(req.Config)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "config is required: send the policy object, or its JSON encoded as a string")
 		return
 	}
 	// Validate it's parseable JSON, then canonicalize + hash.
-	canonical, err := config.Canonical([]byte(req.Config))
+	canonical, err := config.Canonical(raw)
 	if err != nil {
-		http.Error(w, "config not valid JSON", http.StatusBadRequest)
+		writeErr(w, http.StatusBadRequest, "config is not valid JSON: "+err.Error())
 		return
 	}
 	g, err := s.st.GetGroup(id)
@@ -766,10 +793,10 @@ func (s *Server) updateGroup(w http.ResponseWriter, r *http.Request) {
 // good policy). A group with no config starts empty.
 func (s *Server) createGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID        string `json:"id"`
-		Name      string `json:"name"`
-		Config    string `json:"config"`
-		CopyFrom  string `json:"copy_from"`
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		Config   string `json:"config"`
+		CopyFrom string `json:"copy_from"`
 	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil {
 		http.Error(w, "bad body", http.StatusBadRequest)
@@ -966,7 +993,8 @@ func (s *Server) deleteAPK(w http.ResponseWriter, r *http.Request) {
 }
 
 // installAPK queues a silent install of an uploaded APK. Body:
-//   {"package_name": "com.x.y", "devices": ["dev1","dev2"]}  // devices optional = all
+//
+//	{"package_name": "com.x.y", "devices": ["dev1","dev2"]}  // devices optional = all
 func (s *Server) installAPK(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if _, err := s.apks.Open(baseName(name)); err != nil {
