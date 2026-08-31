@@ -18,9 +18,13 @@ import (
 )
 
 type Server struct {
-	st           *store.Store
-	signer       *auth.Signer
-	apks         *apk.Store
+	st     *store.Store
+	signer *auth.Signer
+	apks   *apk.Store
+	// agentAPKs holds Ali MDM's own builds, deliberately in a separate root from
+	// the managed-app catalogue so an agent build can never be auto-queued as a
+	// managed app (or deleted from the Packages page) by accident.
+	agentAPKs    *apk.Store
 	pokes        *PokeQueue
 	enrollToken  string
 	baseURL      string
@@ -28,8 +32,8 @@ type Server struct {
 	provisionAPK string // path to the Ali MDM APK served for zero-touch QR provisioning
 }
 
-func New(st *store.Store, signer *auth.Signer, apks *apk.Store, pokes *PokeQueue, enrollToken, baseURL, consoleDir, provisionAPK string) *Server {
-	return &Server{st: st, signer: signer, apks: apks, pokes: pokes, enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir, provisionAPK: provisionAPK}
+func New(st *store.Store, signer *auth.Signer, apks, agentAPKs *apk.Store, pokes *PokeQueue, enrollToken, baseURL, consoleDir, provisionAPK string) *Server {
+	return &Server{st: st, signer: signer, apks: apks, agentAPKs: agentAPKs, pokes: pokes, enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir, provisionAPK: provisionAPK}
 }
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -140,6 +144,13 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/apks/{name}/install", s.requireOperator(s.installAPK))
 	mux.HandleFunc("DELETE /api/v1/apks/{name}", s.requireOperator(s.deleteAPK))
 
+	// Agent (self) OTA — see agent.go. Kept off the /apks routes on purpose.
+	mux.HandleFunc("POST /api/v1/agent/release", s.requireOperator(s.uploadAgentRelease))
+	mux.HandleFunc("GET /api/v1/agent/release", s.requireOperator(s.getAgentRelease))
+	mux.HandleFunc("POST /api/v1/agent/rollout", s.requireOperator(s.rolloutAgentUpdate))
+	mux.HandleFunc("GET /api/v1/agent/updates", s.requireOperator(s.listAgentUpdates))
+	mux.HandleFunc("GET /api/v1/agent/apk", s.downloadAgentAPK)
+
 	// Own profile (any signed-in operator)
 	mux.HandleFunc("GET /api/v1/me", s.requireOperator(s.getMe))
 	mux.HandleFunc("PUT /api/v1/me", s.requireOperator(s.updateMe))
@@ -237,6 +248,8 @@ func (s *Server) deviceDispatcher(w http.ResponseWriter, r *http.Request) {
 		s.screenshot(w, r)
 	case r.Method == http.MethodPost && parts[1] == "unenroll":
 		s.unenroll(w, r)
+	case r.Method == http.MethodPost && parts[1] == "agent-update":
+		s.agentUpdateResult(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -414,6 +427,8 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		// Per-device label shown in the corner of the tablet's kiosk screen. It
 		// rides on every heartbeat rather than in config, which is group-wide.
 		"device_label": dev.Name,
+		// Non-nil only while an operator-triggered self-update is outstanding.
+		"agent_update": s.agentUpdateFor(dev.ID),
 	}
 	if needSync {
 		resp["sync_action"] = "apply"

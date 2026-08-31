@@ -4,6 +4,7 @@ import { DeviceEventEmitter, NativeModules } from 'react-native';
 import { StorageService, KEYS } from './storage';
 import DeviceControlService from '../services/DeviceControlService';
 import { CloudCommandService } from './CloudCommandService';
+import AgentUpdateService, { AgentUpdateOffer } from './AgentUpdateService';
 import { getCapabilities } from './capabilities';
 import KioskModule from './KioskModule';
 import {
@@ -45,6 +46,8 @@ interface HeartbeatResponse {
   force_unenroll: boolean;
   /** Operator-set label for this tablet. Absent on servers older than this field. */
   device_label?: string;
+  /** Non-null only while an operator-triggered self-update is outstanding. */
+  agent_update?: AgentUpdateOffer | null;
 }
 
 async function simpleHash(str: string): Promise<string> {
@@ -248,6 +251,11 @@ class CloudSyncServiceClass {
         }
       }
 
+      // Agent (self) OTA. Reconcile unconditionally — an attempt that was in
+      // flight when the process was killed can only be resolved here, and it
+      // must be reported even on a heartbeat where no new update is offered.
+      await this._handleAgentUpdate(c, data.agent_update ?? null);
+
       // Pull + execute any pending commands / APK updates. Fire-and-forget so
       // the heartbeat loop is never blocked by a long install; the service
       // guards against overlapping polls internally.
@@ -256,6 +264,71 @@ class CloudSyncServiceClass {
       }
     } catch (error) {
       console.error('[CloudSync] Heartbeat error:', error);
+    }
+  }
+
+  /**
+   * Drive the agent (self) OTA for one heartbeat.
+   *
+   * Order matters. Reconciliation runs first and unconditionally: if the last
+   * attempt succeeded, this process is a *new build* that has no memory of the
+   * attempt beyond what the native module persisted, and the server is still
+   * waiting to hear how it went. Only once that is settled do we consider
+   * starting a new attempt.
+   *
+   * A committed install kills us before `apply()` returns, so there is
+   * deliberately no success path here — the next launch reports it.
+   */
+  private async _handleAgentUpdate(
+    c: CloudCredentials,
+    offer: AgentUpdateOffer | null,
+  ): Promise<void> {
+    if (!AgentUpdateService.isAvailable()) return;
+    try {
+      const settled = await AgentUpdateService.reconcile();
+      if (settled) {
+        await this._reportAgentUpdate(c, settled.status, settled.error ?? '');
+      }
+      if (!offer) return;
+
+      // Deferrals (flat battery, module unavailable) must not consume an
+      // attempt: skip quietly and let the next heartbeat re-offer the update.
+      const ready = await AgentUpdateService.canInstallNow();
+      if (!ready.ok) {
+        console.log('[CloudSync] Deferring agent update:', ready.reason);
+        return;
+      }
+
+      // Tell the server an attempt is starting *before* starting it. This is
+      // what makes the attempt counter trustworthy: if the download or install
+      // wedges the device hard enough that it never reports again, the attempt
+      // is still on record and the server's cap will retire the rollout.
+      await this._reportAgentUpdate(c, 'installing', '');
+      await AgentUpdateService.apply(offer, async (msg) => {
+        await this._reportAgentUpdate(c, 'failed', msg);
+      });
+    } catch (error) {
+      console.error('[CloudSync] Agent update error:', error);
+    }
+  }
+
+  private async _reportAgentUpdate(
+    c: CloudCredentials,
+    status: 'installing' | 'success' | 'failed',
+    error: string,
+  ): Promise<void> {
+    try {
+      await fetch(`${c.cloudUrl}/api/v1/devices/${c.deviceId}/agent-update/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${c.apiKey}`,
+        },
+        body: JSON.stringify({ status, error }),
+      });
+    } catch {
+      // Best-effort: the server re-offers the update on the next heartbeat, and
+      // reconcile() is idempotent, so a dropped report costs one extra cycle.
     }
   }
 

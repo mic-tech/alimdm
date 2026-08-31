@@ -144,6 +144,27 @@ func migrate(db *sql.DB) error {
 		size INTEGER NOT NULL,
 		path TEXT NOT NULL
 	);
+	-- The agent (Ali MDM itself) is kept apart from the managed-app catalogue.
+	-- Replacing the agent kills the process mid-install, so its rollout needs
+	-- durable per-device state that survives that, which apk_updates does not
+	-- model. Exactly one release is current, hence the single-row constraint.
+	CREATE TABLE IF NOT EXISTS agent_release(
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		version_code INTEGER NOT NULL,
+		version_name TEXT NOT NULL DEFAULT '',
+		file_name TEXT NOT NULL,
+		sha256 TEXT NOT NULL,
+		size INTEGER NOT NULL,
+		created_at TEXT NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS agent_updates(
+		device_id TEXT PRIMARY KEY,
+		target_version_code INTEGER NOT NULL,
+		status TEXT NOT NULL DEFAULT 'queued',
+		attempts INTEGER NOT NULL DEFAULT 0,
+		last_error TEXT NOT NULL DEFAULT '',
+		updated_at TEXT NOT NULL
+	);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return err
@@ -504,6 +525,118 @@ func (s *Store) ListAPKs() ([]APK, error) {
 			return nil, err
 		}
 		out = append(out, a)
+	}
+	return out, nil
+}
+
+// ── Agent (self) updates ─────────────────────────────────────────────────────
+
+// Agent rollout states. A device moves queued -> installing -> success|failed.
+// "installing" is written by the device immediately before it commits the
+// install, so if the process is killed mid-replace the row still records that
+// an attempt was in flight and the device can reconcile on next launch.
+const (
+	AgentQueued     = "queued"
+	AgentInstalling = "installing"
+	AgentSuccess    = "success"
+	AgentFailed     = "failed"
+)
+
+// AgentRelease is the current Ali MDM build available to devices.
+type AgentRelease struct {
+	VersionCode int    `json:"version_code"`
+	VersionName string `json:"version_name"`
+	FileName    string `json:"file_name"`
+	SHA256      string `json:"sha256"`
+	Size        int64  `json:"size"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// AgentUpdate is one device's rollout state for the current release.
+type AgentUpdate struct {
+	DeviceID          string `json:"device_id"`
+	TargetVersionCode int    `json:"target_version_code"`
+	Status            string `json:"status"`
+	Attempts          int    `json:"attempts"`
+	LastError         string `json:"last_error"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
+// SaveAgentRelease replaces the current release. Rolling out a new build always
+// supersedes the previous one, so this is an upsert on the single row.
+func (s *Store) SaveAgentRelease(a *AgentRelease) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO agent_release(id,version_code,version_name,file_name,sha256,size,created_at)
+		 VALUES(1,?,?,?,?,?,?)`,
+		a.VersionCode, a.VersionName, a.FileName, a.SHA256, a.Size, nowISO())
+	return err
+}
+
+func (s *Store) GetAgentRelease() (*AgentRelease, error) {
+	var a AgentRelease
+	err := s.db.QueryRow(
+		`SELECT version_code,version_name,file_name,sha256,size,created_at FROM agent_release WHERE id=1`).
+		Scan(&a.VersionCode, &a.VersionName, &a.FileName, &a.SHA256, &a.Size, &a.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// QueueAgentUpdate (re)arms a rollout for one device, resetting attempts so an
+// operator retry after a failure starts from a clean slate.
+func (s *Store) QueueAgentUpdate(deviceID string, versionCode int) error {
+	_, err := s.db.Exec(
+		`INSERT INTO agent_updates(device_id,target_version_code,status,attempts,last_error,updated_at)
+		 VALUES(?,?,?,0,'',?)
+		 ON CONFLICT(device_id) DO UPDATE SET
+		   target_version_code=excluded.target_version_code,
+		   status=excluded.status, attempts=0, last_error='', updated_at=excluded.updated_at`,
+		deviceID, versionCode, AgentQueued, nowISO())
+	return err
+}
+
+func (s *Store) GetAgentUpdate(deviceID string) (*AgentUpdate, error) {
+	var u AgentUpdate
+	err := s.db.QueryRow(
+		`SELECT device_id,target_version_code,status,attempts,last_error,updated_at
+		 FROM agent_updates WHERE device_id=?`, deviceID).
+		Scan(&u.DeviceID, &u.TargetVersionCode, &u.Status, &u.Attempts, &u.LastError, &u.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// SetAgentUpdateStatus records progress reported by the device. Attempts are
+// incremented server-side on each "installing" report rather than trusted from
+// the device, so a tablet stuck in a reboot loop cannot hide its retry count.
+func (s *Store) SetAgentUpdateStatus(deviceID, status, lastErr string) error {
+	inc := 0
+	if status == AgentInstalling {
+		inc = 1
+	}
+	_, err := s.db.Exec(
+		`UPDATE agent_updates SET status=?, last_error=?, attempts=attempts+?, updated_at=?
+		 WHERE device_id=?`, status, lastErr, inc, nowISO(), deviceID)
+	return err
+}
+
+func (s *Store) ListAgentUpdates() ([]AgentUpdate, error) {
+	rows, err := s.db.Query(
+		`SELECT device_id,target_version_code,status,attempts,last_error,updated_at
+		 FROM agent_updates ORDER BY device_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AgentUpdate
+	for rows.Next() {
+		var u AgentUpdate
+		if err := rows.Scan(&u.DeviceID, &u.TargetVersionCode, &u.Status, &u.Attempts, &u.LastError, &u.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
 	}
 	return out, nil
 }

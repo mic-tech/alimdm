@@ -465,6 +465,189 @@ function Devices({ onErr }) {
   );
 }
 
+/* ── App update (agent OTA) ─────────────────────────────────────────────── */
+
+const AGENT_STATUS_BADGE = {
+  queued: "off",
+  installing: "off",
+  success: "on",
+  failed: "off",
+};
+
+function AppUpdate({ onErr }) {
+  const [release, setRelease] = useState(null);
+  const [updates, setUpdates] = useState([]);
+  const [devices, setDevices] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [versionCode, setVersionCode] = useState("");
+  const [versionName, setVersionName] = useState("");
+  const [file, setFile] = useState(null);
+  const [selected, setSelected] = useState({});
+
+  const load = useCallback(async () => {
+    try {
+      const [u, d] = await Promise.all([api.listAgentUpdates(), api.listDevices()]);
+      setUpdates(u); setDevices(d);
+    } catch (e) { onErr(e.message); }
+    // A missing release is the normal empty state, not an error worth surfacing.
+    try { setRelease(await api.getAgentRelease()); } catch { setRelease(null); }
+  }, [onErr]);
+  // Poll while a rollout is in flight: a device that is mid-install reports
+  // only on its next heartbeat, so the table would otherwise look frozen.
+  useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [load]);
+
+  async function upload() {
+    if (!file) { onErr("Choose an APK first"); return; }
+    if (!/^\d+$/.test(versionCode.trim())) { onErr("Version code must be a whole number"); return; }
+    setBusy(true);
+    try {
+      await api.uploadAgentRelease(file, versionCode.trim(), versionName.trim());
+      toast("Agent build uploaded");
+      setFile(null); setVersionCode(""); setVersionName("");
+      load();
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  async function rollout(ids) {
+    const label = ids.length ? `${ids.length} device(s)` : "all devices";
+    if (!confirm(
+      `Push Ali MDM ${release.version_name || ""} (versionCode ${release.version_code}) to ${label}?\n\n` +
+      "Each tablet downloads the build, verifies it, then restarts into the new version. " +
+      "The app is briefly unavailable while it installs.",
+    )) return;
+    setBusy(true);
+    try {
+      const r = await api.rolloutAgent(ids);
+      toast(`Queued ${r.queued}/${r.targets} device(s) for versionCode ${r.version_code}`);
+      setSelected({});
+      load();
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  const byDevice = useMemo(
+    () => Object.fromEntries(updates.map((u) => [u.device_id, u])), [updates]);
+  const selectedIds = Object.keys(selected);
+
+  return (
+    <div className="stack">
+      <CardTable
+        title="Current build"
+        actions={<button className="btn outline sm" onClick={load}><IconRefresh />Refresh</button>}
+      >
+        <div style={{ padding: 16 }}>
+          {release ? (
+            <div className="flex" style={{ gap: 24, flexWrap: "wrap", marginBottom: 16 }}>
+              <div><div className="small subtle">Version</div>
+                <div className="mono strong">{release.version_name || "—"} ({release.version_code})</div></div>
+              <div><div className="small subtle">File</div>
+                <div className="mono small">{release.file_name}</div></div>
+              <div><div className="small subtle">Size</div>
+                <div>{(release.size / 1024 / 1024).toFixed(1)} MB</div></div>
+              <div><div className="small subtle">SHA-256</div>
+                <div className="mono small muted">{release.sha256.slice(0, 16)}…</div></div>
+            </div>
+          ) : (
+            <p className="small subtle" style={{ marginTop: 0 }}>
+              No agent build uploaded yet. Upload one below to enable over-the-air updates.
+            </p>
+          )}
+
+          <div className="flex" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div>
+              <label className="small subtle" htmlFor="agent-file">APK</label>
+              <input id="agent-file" type="file" accept=".apk" disabled={busy}
+                onChange={(e) => setFile(e.target.files[0] || null)} style={{ display: "block", width: 240 }} />
+            </div>
+            <div>
+              <label className="small subtle" htmlFor="agent-vc">Version code</label>
+              <input id="agent-vc" value={versionCode} placeholder="46" disabled={busy}
+                onChange={(e) => setVersionCode(e.target.value)}
+                style={{ display: "block", width: 110, height: 34 }} />
+            </div>
+            <div>
+              <label className="small subtle" htmlFor="agent-vn">Version name</label>
+              <input id="agent-vn" value={versionName} placeholder="1.2.21" disabled={busy}
+                onChange={(e) => setVersionName(e.target.value)}
+                style={{ display: "block", width: 130, height: 34 }} />
+            </div>
+            <button className="btn" onClick={upload} disabled={busy}>
+              <IconUpload />{busy ? "Uploading…" : "Upload build"}
+            </button>
+          </div>
+          <p className="small subtle">
+            Version code must match the <span className="mono">versionCode</span> inside the APK — tablets
+            refuse a build whose version does not match what the rollout promised.
+          </p>
+        </div>
+      </CardTable>
+
+      {release && (
+        <CardTable
+          title="Rollout"
+          actions={<>
+            <button className="btn outline sm" disabled={busy || selectedIds.length === 0}
+              onClick={() => rollout(selectedIds)}>Update selected ({selectedIds.length})</button>
+            <button className="btn sm" disabled={busy} onClick={() => rollout([])}>Update all</button>
+          </>}
+        >
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 32 }} />
+                <th>Device</th><th>Status</th><th>Attempts</th><th>Target</th><th>Last result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {devices.map((d) => {
+                const u = byDevice[d.id];
+                const upToDate = u && u.status === "success";
+                return (
+                  <tr key={d.id}>
+                    <td>
+                      <input type="checkbox" checked={!!selected[d.id]}
+                        onChange={() => setSelected((p) => {
+                          const n = { ...p }; n[d.id] ? delete n[d.id] : (n[d.id] = true); return n;
+                        })} />
+                    </td>
+                    <td className="nowrap">
+                      <div className="strong">{d.name || d.id}</div>
+                      {d.name && <div className="mono small subtle">{d.id}</div>}
+                    </td>
+                    <td>
+                      {u ? (
+                        <span className={"badge " + (AGENT_STATUS_BADGE[u.status] || "off")}>
+                          <span className="dot" />{u.status}
+                        </span>
+                      ) : <span className="muted small">never updated</span>}
+                    </td>
+                    <td className="nowrap">{u ? u.attempts : <span className="muted">—</span>}</td>
+                    <td className="nowrap mono small">
+                      {u ? u.target_version_code : <span className="muted">—</span>}
+                      {upToDate && release.version_code === u.target_version_code &&
+                        <span className="small subtle"> (current)</span>}
+                    </td>
+                    <td className="small muted" title={u ? u.last_error : ""}>
+                      {u && u.last_error ? u.last_error.slice(0, 60) : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+              {devices.length === 0 && (
+                <tr><td colSpan="6" style={{ padding: 0 }}>
+                  <Empty icon={IconDevices} title="No devices enrolled"
+                    desc="Enroll a tablet before pushing an app update." />
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </CardTable>
+      )}
+    </div>
+  );
+}
+
 /* ── APKs ───────────────────────────────────────────────────────────────── */
 
 function APKs({ onErr }) {
@@ -1166,6 +1349,8 @@ const NAV = [
     desc: "Bring a new device under management over ADB" },
   { id: "apks", icon: IconPackage, txt: "Packages", title: "App packages", group: "Manage",
     desc: "Upload APKs and push silent installs to your fleet" },
+  { id: "appupdate", icon: IconUpload, txt: "App update", title: "Ali MDM app update", group: "Manage",
+    desc: "Push a new build of Ali MDM itself to your tablets over the air" },
   { id: "profile", icon: IconUser, txt: "Profile", title: "Your profile", group: "Account",
     desc: "Update your details and change your password" },
   { id: "users", icon: IconUsers, txt: "Users", title: "User accounts", group: "Account",
@@ -1285,6 +1470,7 @@ function Shell({ onSignOut }) {
             {view === "groups" && <Groups onErr={onErr} />}
             {view === "enroll" && <Enroll onErr={onErr} />}
             {view === "apks" && <APKs onErr={onErr} />}
+            {view === "appupdate" && <AppUpdate onErr={onErr} />}
             {view === "profile" && <Profile me={me} onErr={onErr} onMeChange={setMe} />}
             {view === "users" && me.role === "admin" && <Users me={me} onErr={onErr} onMeChange={setMe} />}
           </div>

@@ -27,6 +27,7 @@ class MainApplication : Application(), ReactApplication {
           add(SystemInfoPackage())
           add(UpdatePackage())
           add(ManagedAppInstallerPackage())
+          add(AgentUpdatePackage())
           add(SoundPlayerPackage())
           add(HttpServerPackage())
           add(MqttPackage())

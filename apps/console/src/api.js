@@ -53,6 +53,30 @@ export const api = {
     req("POST", "/users/" + encodeURIComponent(email) + "/password", { new_password }),
   installAPK: (name, body) => req("POST", `/apks/${encodeURIComponent(name)}/install`, body),
   deleteAPK: (name) => req("DELETE", `/apks/${encodeURIComponent(name)}`),
+
+  // ── Agent (Ali MDM itself) OTA — separate from the managed-app catalogue ──
+  getAgentRelease: () => req("GET", "/agent/release"),
+  listAgentUpdates: () => req("GET", "/agent/updates"),
+  rolloutAgent: (devices) => req("POST", "/agent/rollout", { devices }),
+  // Multipart, so it bypasses req() (which JSON-encodes and would set the
+  // wrong Content-Type) exactly like uploadAPK above.
+  uploadAgentRelease: (file, versionCode, versionName) => {
+    const tok = getToken();
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("version_code", String(versionCode));
+    fd.append("version_name", versionName || "");
+    return fetch("/api/v1/agent/release", {
+      method: "POST",
+      headers: tok ? { Authorization: "Bearer " + tok } : {},
+      body: fd,
+    }).then(async (r) => {
+      const t = await r.text();
+      let d = null; try { d = JSON.parse(t); } catch { d = t; }
+      if (!r.ok) throw new Error(d && d.error ? d.error : (typeof d === "string" && d ? d : r.status));
+      return d;
+    });
+  },
   uploadAPK: (file, name) => {
     const tok = getToken();
     const fd = new FormData();

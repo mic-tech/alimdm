@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"ali-mdm/server/internal/apk"
 	"ali-mdm/server/internal/auth"
@@ -47,6 +48,9 @@ func main() {
 
 	signer := auth.NewSigner(secret)
 	apks := apk.NewStore(apkRoot)
+	// Agent builds live beside the managed catalogue, never inside it.
+	agentRoot := envOr("AGENT_APK_ROOT", filepath.Join(filepath.Dir(apkRoot), "agent"))
+	agentAPKs := apk.NewStore(agentRoot)
 	pokes := httpapi.NewPokeQueue()
 
 	if mqttURL != "" {
@@ -55,7 +59,7 @@ func main() {
 		}
 	}
 
-	srv := httpapi.New(st, signer, apks, pokes, enrollToken, baseURL, consoleDir, provisionAPK)
+	srv := httpapi.New(st, signer, apks, agentAPKs, pokes, enrollToken, baseURL, consoleDir, provisionAPK)
 	if provisionAPK != "" {
 		log.Printf("zero-touch provisioning APK: %s", provisionAPK)
 	}
