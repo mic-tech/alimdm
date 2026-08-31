@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"ali-mdm/server/internal/apk"
@@ -26,15 +25,6 @@ func env(name string) string {
 
 func envOr(name, def string) string {
 	if v := env(name); v != "" {
-		return v
-	}
-	return def
-}
-
-// atoiOr parses n, falling back to def for empty or malformed values so a typo
-// in configuration degrades to the default rather than disabling alerting.
-func atoiOr(s string, def int) int {
-	if v, err := strconv.Atoi(strings.TrimSpace(s)); err == nil && v > 0 {
 		return v
 	}
 	return def
@@ -71,11 +61,17 @@ func main() {
 	}
 
 	// Offline alerting: a silent tablet still looks fine in the room, so the
-	// only way anyone learns is if something tells them. No webhook = no watcher.
-	if w := httpapi.NewAlertWatcher(st, env("ALERT_WEBHOOK_URL"), baseURL,
-		atoiOr(env("ALERT_OFFLINE_MINUTES"), 15)); w != nil {
-		w.Start(context.Background())
+	// only way anyone learns is if something tells them. Configured from the
+	// console and read per tick, so changing it needs no redeploy. The env vars
+	// seed the settings once, so a deployment that already used them keeps
+	// working after the upgrade.
+	if v := env("ALERT_WEBHOOK_URL"); v != "" {
+		_ = st.SetSettingIfAbsent(store.SettingAlertWebhookURL, v)
 	}
+	if v := env("ALERT_OFFLINE_MINUTES"); v != "" {
+		_ = st.SetSettingIfAbsent(store.SettingAlertOfflineMinutes, v)
+	}
+	httpapi.NewAlertWatcher(st, baseURL).Start(context.Background())
 
 	srv := httpapi.New(st, signer, apks, agentAPKs, pokes, enrollToken, baseURL, consoleDir, provisionAPK)
 	if provisionAPK != "" {

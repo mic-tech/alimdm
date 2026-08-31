@@ -32,32 +32,24 @@ import (
 	"ali-mdm/server/internal/store"
 )
 
+const defaultOfflineMinutes = 15
+
 type AlertWatcher struct {
-	st         *store.Store
-	webhookURL string
-	threshold  time.Duration
-	interval   time.Duration
-	grace      time.Duration
-	baseURL    string
-	client     *http.Client
+	st       *store.Store
+	interval time.Duration
+	grace    time.Duration
+	baseURL  string
+	client   *http.Client
 }
 
-// NewAlertWatcher returns nil when no webhook is configured, so callers can
-// simply not start it.
-func NewAlertWatcher(st *store.Store, webhookURL, baseURL string, thresholdMinutes int) *AlertWatcher {
-	webhookURL = strings.TrimSpace(webhookURL)
-	if webhookURL == "" {
-		return nil
-	}
-	if thresholdMinutes <= 0 {
-		thresholdMinutes = 15
-	}
+// NewAlertWatcher always returns a watcher. Whether it does anything is decided
+// per tick from the settings the operator holds in the console, so turning
+// alerting on or changing where it points needs no redeploy.
+func NewAlertWatcher(st *store.Store, baseURL string) *AlertWatcher {
 	return &AlertWatcher{
-		st:         st,
-		webhookURL: webhookURL,
-		baseURL:    baseURL,
-		threshold:  time.Duration(thresholdMinutes) * time.Minute,
-		interval:   time.Minute,
+		st:       st,
+		baseURL:  baseURL,
+		interval: time.Minute,
 		// Long enough for a device on a 30s heartbeat to check in a few times
 		// after a deploy before anything is called offline.
 		grace:  3 * time.Minute,
@@ -65,8 +57,20 @@ func NewAlertWatcher(st *store.Store, webhookURL, baseURL string, thresholdMinut
 	}
 }
 
+// config reads the current webhook settings. An empty URL means alerting is off.
+func (a *AlertWatcher) config() (string, time.Duration) {
+	url, _ := a.st.GetSetting(store.SettingAlertWebhookURL)
+	url = strings.TrimSpace(url)
+	minutes := defaultOfflineMinutes
+	if raw, _ := a.st.GetSetting(store.SettingAlertOfflineMinutes); raw != "" {
+		if v, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && v > 0 {
+			minutes = v
+		}
+	}
+	return url, time.Duration(minutes) * time.Minute
+}
+
 func (a *AlertWatcher) Start(ctx context.Context) {
-	log.Printf("offline alerts: webhook configured, threshold %s", a.threshold)
 	go func() {
 		startedAt := time.Now()
 		t := time.NewTicker(a.interval)
@@ -86,6 +90,10 @@ func (a *AlertWatcher) Start(ctx context.Context) {
 }
 
 func (a *AlertWatcher) check() {
+	webhookURL, threshold := a.config()
+	if webhookURL == "" {
+		return // alerting not configured
+	}
 	devices, err := a.st.ListDevices()
 	if err != nil {
 		return
@@ -112,12 +120,12 @@ func (a *AlertWatcher) check() {
 		}
 
 		switch {
-		case silent > a.threshold && was != store.AlertOffline:
-			if a.notify("device_offline", d, silent) {
+		case silent > threshold && was != store.AlertOffline:
+			if a.notify(webhookURL, "device_offline", d, silent) {
 				_ = a.st.SetAlertState(d.ID, store.AlertOffline)
 			}
-		case silent <= a.threshold && was == store.AlertOffline:
-			if a.notify("device_recovered", d, silent) {
+		case silent <= threshold && was == store.AlertOffline:
+			if a.notify(webhookURL, "device_recovered", d, silent) {
 				_ = a.st.SetAlertState(d.ID, store.AlertOK)
 			}
 		}
@@ -127,15 +135,18 @@ func (a *AlertWatcher) check() {
 // notify posts one event. The state is only advanced when this succeeds, so a
 // webhook that is briefly unreachable retries on the next tick instead of
 // silently swallowing the alert.
-func (a *AlertWatcher) notify(event string, d store.Device, silent time.Duration) bool {
+func (a *AlertWatcher) notify(webhookURL, event string, d store.Device, silent time.Duration) bool {
 	name := d.Name
 	if name == "" {
 		name = d.ID
 	}
 	minutes := int(silent.Minutes())
 	text := "Ali MDM: " + name + " has not checked in for " + strconv.Itoa(minutes) + " minutes."
-	if event == "device_recovered" {
+	switch event {
+	case "device_recovered":
 		text = "Ali MDM: " + name + " is checking in again."
+	case "test":
+		text = "Ali MDM: test alert — offline notifications are working."
 	}
 	body, err := json.Marshal(map[string]any{
 		"event":          event,
@@ -152,7 +163,7 @@ func (a *AlertWatcher) notify(event string, d store.Device, silent time.Duration
 	if err != nil {
 		return false
 	}
-	req, err := http.NewRequest(http.MethodPost, a.webhookURL, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(body))
 	if err != nil {
 		return false
 	}
@@ -169,4 +180,80 @@ func (a *AlertWatcher) notify(event string, d store.Device, silent time.Duration
 	}
 	log.Printf("offline alerts: sent %s for %s", event, d.ID)
 	return true
+}
+
+// ── Console-managed settings ─────────────────────────────────────────────────
+
+// getAlertSettings returns the current alerting configuration.
+func (s *Server) getAlertSettings(w http.ResponseWriter, r *http.Request) {
+	url, _ := s.st.GetSetting(store.SettingAlertWebhookURL)
+	mins, _ := s.st.GetSetting(store.SettingAlertOfflineMinutes)
+	if strings.TrimSpace(mins) == "" {
+		mins = strconv.Itoa(defaultOfflineMinutes)
+	}
+	writeJSON(w, map[string]any{
+		"webhook_url":     url,
+		"offline_minutes": mins,
+		"enabled":         strings.TrimSpace(url) != "",
+	})
+}
+
+// updateAlertSettings stores the configuration. An empty URL turns alerting off,
+// which is the only way to disable it and so must be allowed through.
+func (s *Server) updateAlertSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		WebhookURL     string `json:"webhook_url"`
+		OfflineMinutes string `json:"offline_minutes"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		writeErr(w, http.StatusBadRequest, "request body is not valid JSON")
+		return
+	}
+	url := strings.TrimSpace(req.WebhookURL)
+	if url != "" && !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		writeErr(w, http.StatusBadRequest, "webhook URL must start with http:// or https://")
+		return
+	}
+	mins := strings.TrimSpace(req.OfflineMinutes)
+	if mins != "" {
+		v, err := strconv.Atoi(mins)
+		if err != nil || v <= 0 {
+			writeErr(w, http.StatusBadRequest, "offline minutes must be a positive whole number")
+			return
+		}
+		// Below the heartbeat interval every device looks offline between beats.
+		if v < 2 {
+			writeErr(w, http.StatusBadRequest, "offline minutes must be at least 2, or every device alerts between heartbeats")
+			return
+		}
+	}
+	if err := s.st.SetSetting(store.SettingAlertWebhookURL, url); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not save settings")
+		return
+	}
+	if mins != "" {
+		if err := s.st.SetSetting(store.SettingAlertOfflineMinutes, mins); err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not save settings")
+			return
+		}
+	}
+	s.getAlertSettings(w, r)
+}
+
+// testAlertWebhook posts a sample payload so an operator can confirm the
+// endpoint works without waiting for a device to actually go silent.
+func (s *Server) testAlertWebhook(w http.ResponseWriter, r *http.Request) {
+	url, _ := s.st.GetSetting(store.SettingAlertWebhookURL)
+	if strings.TrimSpace(url) == "" {
+		writeErr(w, http.StatusBadRequest, "save a webhook URL first")
+		return
+	}
+	watcher := NewAlertWatcher(s.st, s.baseURL)
+	sample := store.Device{ID: "test", Name: "Webhook test", Model: "—",
+		LastSeen: time.Now().UTC().Format(time.RFC3339)}
+	if !watcher.notify(strings.TrimSpace(url), "test", sample, 0) {
+		writeErr(w, http.StatusBadGateway, "the webhook did not accept the message — check the URL and the server log")
+		return
+	}
+	writeJSON(w, map[string]any{"sent": true})
 }

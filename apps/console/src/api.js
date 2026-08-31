@@ -48,6 +48,11 @@ export const api = {
   changePassword: (current_password, new_password) =>
     req("POST", "/me/password", { current_password, new_password }),
 
+  // ── Server-wide alerting (admin role only) ──
+  getAlertSettings: () => req("GET", "/settings/alerts"),
+  updateAlertSettings: (body) => req("PUT", "/settings/alerts", body),
+  testAlertWebhook: () => req("POST", "/settings/alerts/test"),
+
   // ── User administration (admin role only) ──
   listUsers: () => req("GET", "/users"),
   createUser: (body) => req("POST", "/users", body),

@@ -1076,6 +1076,97 @@ function Enroll({ onErr }) {
   );
 }
 
+/* ── Alerts (server-wide) ───────────────────────────────────────────────── */
+
+function Alerts({ onErr }) {
+  const [settings, setSettings] = useState(null);
+  const [url, setUrl] = useState("");
+  const [minutes, setMinutes] = useState("15");
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const s = await api.getAlertSettings();
+      setSettings(s);
+      setUrl(s.webhook_url || "");
+      setMinutes(String(s.offline_minutes || "15"));
+    } catch (e) { onErr(e.message); }
+  }, [onErr]);
+  useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    setBusy(true);
+    try {
+      const s = await api.updateAlertSettings({ webhook_url: url.trim(), offline_minutes: minutes.trim() });
+      setSettings(s);
+      toast(s.enabled ? "Alerting on" : "Alerting off — no webhook set");
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  // Sends a real request to the configured endpoint, so a wrong URL or a
+  // rejecting receiver shows up now rather than the first time a tablet
+  // actually goes quiet.
+  async function sendTest() {
+    setTesting(true);
+    try { await api.testAlertWebhook(); toast("Test alert sent"); }
+    catch (e) { onErr(e.message); }
+    setTesting(false);
+  }
+
+  if (!settings) return <Loading label="Loading alert settings…" />;
+
+  return (
+    <div className="stack">
+      <Card title="Offline alerts">
+        <div className="stack">
+          <Alert>
+            A tablet that stops checking in keeps showing its kiosk, so nobody in the room can
+            tell. This posts to a webhook when a device goes quiet, and again when it comes back.
+            Leave the URL empty to turn alerting off.
+          </Alert>
+
+          <div className="field">
+            <label className="form-label" htmlFor="hook-url">Webhook URL</label>
+            <input id="hook-url" value={url} onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://hooks.slack.com/services/…" />
+            <div className="small subtle" style={{ marginTop: 4 }}>
+              The payload includes a plain <span className="mono">text</span> field, so Slack,
+              Discord and Mattermost render it without any extra setup.
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="form-label" htmlFor="hook-mins">Alert after (minutes of silence)</label>
+            <input id="hook-mins" value={minutes} onChange={(e) => setMinutes(e.target.value)}
+              style={{ width: 120 }} />
+            <div className="small subtle" style={{ marginTop: 4 }}>
+              Deliberately longer than the Online badge, which flips after 3 minutes: a reboot or
+              a brief Wi-Fi drop should not page anyone. 15 is a reasonable default.
+            </div>
+          </div>
+
+          <div className="flex" style={{ gap: 8 }}>
+            <button className="btn" onClick={save} disabled={busy}>
+              <IconSave />{busy ? "Saving…" : "Save"}
+            </button>
+            <button className="btn outline" onClick={sendTest} disabled={testing || !settings.enabled}
+              title={settings.enabled ? "Post a sample alert now" : "Save a webhook URL first"}>
+              {testing ? "Sending…" : "Send test alert"}
+            </button>
+            <span className={"badge " + (settings.enabled ? "on" : "off")} style={{ alignSelf: "center" }}>
+              <span className="dot" />{settings.enabled ? "Alerting on" : "Alerting off"}
+            </span>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ── Alerts (server-wide) end ───────────────────────────────────────────── */
+
 /* ── Profile (own account) ──────────────────────────────────────────────── */
 
 function RoleBadge({ role }) {
@@ -1517,6 +1608,8 @@ const NAV = [
     desc: "Push a new build of Ali MDM itself to your tablets over the air" },
   { id: "profile", icon: IconUser, txt: "Profile", title: "Your profile", group: "Account",
     desc: "Update your details and change your password" },
+  { id: "alerts", icon: IconWarning, txt: "Alerts", title: "Offline alerts", group: "Account",
+    adminOnly: true, desc: "Get told when a tablet stops checking in" },
   { id: "users", icon: IconUsers, txt: "Users", title: "User accounts", group: "Account",
     adminOnly: true, desc: "Who can sign in to this console, and what they may do" },
 ];
@@ -1657,6 +1750,7 @@ function Shell({ onSignOut }) {
             {view === "apks" && <APKs onErr={onErr} />}
             {view === "appupdate" && <AppUpdate onErr={onErr} />}
             {view === "profile" && <Profile me={me} onErr={onErr} onMeChange={setMe} />}
+            {view === "alerts" && me.role === "admin" && <Alerts onErr={onErr} />}
             {view === "users" && me.role === "admin" && <Users me={me} onErr={onErr} onMeChange={setMe} />}
           </div>
         </main>

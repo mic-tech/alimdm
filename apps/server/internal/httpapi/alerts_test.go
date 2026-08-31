@@ -58,7 +58,14 @@ func newAlertEnv(t *testing.T, silentFor time.Duration, status int) (*AlertWatch
 	}))
 	t.Cleanup(srv.Close)
 
-	return NewAlertWatcher(st, srv.URL, "https://mdm.example.com", 15), st, got
+	// Settings now live in the database, which is also what the console edits.
+	if err := st.SetSetting(store.SettingAlertWebhookURL, srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(store.SettingAlertOfflineMinutes, "15"); err != nil {
+		t.Fatal(err)
+	}
+	return NewAlertWatcher(st, "https://mdm.example.com"), st, got
 }
 
 func TestAlertFiresOnceWhileDeviceStaysSilent(t *testing.T) {

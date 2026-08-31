@@ -162,6 +162,11 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("PUT /api/v1/me", s.requireOperator(s.updateMe))
 	mux.HandleFunc("POST /api/v1/me/password", s.requireOperator(s.changeMyPassword))
 
+	// Server-wide alerting settings (admins only: the webhook is infrastructure).
+	mux.HandleFunc("GET /api/v1/settings/alerts", s.requireAdmin(s.getAlertSettings))
+	mux.HandleFunc("PUT /api/v1/settings/alerts", s.requireAdmin(s.updateAlertSettings))
+	mux.HandleFunc("POST /api/v1/settings/alerts/test", s.requireAdmin(s.testAlertWebhook))
+
 	// Account administration (admins only)
 	mux.HandleFunc("GET /api/v1/users", s.requireAdmin(s.listUsers))
 	mux.HandleFunc("POST /api/v1/users", s.requireAdmin(s.createUser))

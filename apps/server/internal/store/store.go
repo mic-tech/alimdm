@@ -160,6 +160,12 @@ func migrate(db *sql.DB) error {
 	-- Whether a device is currently the subject of an unresolved offline alert.
 	-- Persisted so a server restart does not re-alert a fleet that was already
 	-- reported, and so recovery can be reported exactly once.
+	-- Server-wide settings an operator can change from the console, so that
+	-- reconfiguring alerting does not mean editing an env file and redeploying.
+	CREATE TABLE IF NOT EXISTS settings(
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL DEFAULT ''
+	);
 	CREATE TABLE IF NOT EXISTS device_alerts(
 		device_id TEXT PRIMARY KEY,
 		state TEXT NOT NULL DEFAULT 'ok',
@@ -681,6 +687,39 @@ func (s *Store) ListAgentUpdates() ([]AgentUpdate, error) {
 		out = append(out, u)
 	}
 	return out, nil
+}
+
+// ── Settings ─────────────────────────────────────────────────────────────────
+
+// Keys for server-wide settings. Kept as constants so a typo cannot silently
+// read a setting that is never written.
+const (
+	SettingAlertWebhookURL     = "alert_webhook_url"
+	SettingAlertOfflineMinutes = "alert_offline_minutes"
+)
+
+func (s *Store) GetSetting(key string) (string, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM settings WHERE key=?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+func (s *Store) SetSetting(key, value string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO settings(key,value) VALUES(?,?)
+		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	return err
+}
+
+// SetSettingIfAbsent seeds a value without overwriting an operator's choice.
+// Used to carry an existing env-var configuration into the database once, so
+// upgrading does not silently turn alerting off.
+func (s *Store) SetSettingIfAbsent(key, value string) error {
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)`, key, value)
+	return err
 }
 
 // ── Offline alerting ─────────────────────────────────────────────────────────
