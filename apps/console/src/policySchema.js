@@ -241,4 +241,85 @@ export const POLICY_FIELDS = [
   { path: "advanced.mqtt.username", label: "Username", type: "text", tab: "advanced", section: "MQTT" },
   { path: "advanced.mqtt.clientId", label: "Client ID", type: "text", tab: "advanced", section: "MQTT" },
   { path: "advanced.mqtt.baseTopic", label: "Base topic", type: "text", tab: "advanced", section: "MQTT" },
+  // ── Settings the app accepts that were previously unreachable from here ────
+  // Audited against StorageService.importConfig: anything the device applies
+  // should be configurable centrally, or a fleet cannot be managed from one
+  // place. Types and defaults mirror exportConfig so a round-trip is lossless.
+
+  // General
+  { path: "general.externalApp.testMode", label: "Test mode", type: "bool", tab: "general", section: "App Mode",
+    help: "Back button returns to settings instead of being swallowed. For setup only." },
+  { path: "general.inactivityReturn.scrollTop", label: "Scroll to top on return", type: "bool", tab: "general", section: "Inactivity Return" },
+  { path: "general.intercomMode", label: "Intercom mode", type: "bool", tab: "general", section: "Display Options" },
+  { path: "general.mediaPlayer.transition", label: "Transition", type: "select", tab: "general", section: "Playback",
+    options: [
+      { value: "none", label: "None" },
+      { value: "fade", label: "Fade" },
+      { value: "slide", label: "Slide" },
+    ] },
+  { path: "general.mediaPlayer.transitionDuration", label: "Transition duration (ms)", type: "number", tab: "general", section: "Playback", min: 0, max: 5000, step: 100 },
+  { path: "general.urlPlanner.events", label: "Planner events", type: "textarea", tab: "general", section: "URL Planner",
+    help: "JSON array of scheduled URL changes, as the app stores them." },
+
+  // Display
+  { path: "display.zoom.mode", label: "Zoom mode", type: "select", tab: "display", section: "Web Page Zoom",
+    options: [
+      { value: "auto", label: "Auto" },
+      { value: "manual", label: "Manual" },
+    ] },
+  { path: "display.autoBrightness.updateInterval", label: "Update interval (ms)", type: "number", tab: "display", section: "Auto-Brightness", min: 1000, max: 600000, step: 1000 },
+  { path: "display.screensaver.delay", label: "Screensaver delay (ms)", type: "number", tab: "display", section: "Screensaver", min: 1000, max: 3600000, step: 1000 },
+  { path: "display.screensaver.videoItems", label: "Screensaver videos", type: "list", tab: "display", section: "Screensaver",
+    help: "Media URLs shown when the screensaver type is video." },
+  { path: "display.screensaver.videoLoop", label: "Loop screensaver video", type: "bool", tab: "display", section: "Screensaver" },
+  { path: "display.screenScheduler.rules", label: "Schedule rules", type: "textarea", tab: "display", section: "Screen Sleep Schedule",
+    help: "JSON array of on/off windows, as the app stores them." },
+  { path: "display.statusBar.onOverlay", label: "Show over external apps", type: "bool", tab: "display", section: "System Status Bar" },
+  { path: "display.statusBar.onReturn", label: "Show on return to kiosk", type: "bool", tab: "display", section: "System Status Bar" },
+  { path: "display.statusBar.showBluetooth", label: "Show Bluetooth", type: "bool", tab: "display", section: "System Status Bar" },
+  { path: "display.statusBar.showVolume", label: "Show volume", type: "bool", tab: "display", section: "System Status Bar" },
+  { path: "display.motionDetection.enabled", label: "Wake on motion", type: "bool", tab: "display", section: "Screensaver",
+    help: "Uses the camera to wake the screen when someone approaches." },
+  { path: "display.motionDetection.sensitivity", label: "Motion sensitivity", type: "select", tab: "display", section: "Screensaver",
+    options: [
+      { value: "low", label: "Low" },
+      { value: "medium", label: "Medium" },
+      { value: "high", label: "High" },
+    ] },
+  { path: "display.motionDetection.cameraPosition", label: "Camera", type: "select", tab: "display", section: "Screensaver",
+    options: [
+      { value: "front", label: "Front" },
+      { value: "back", label: "Back" },
+    ] },
+  { path: "display.motionDetection.delay", label: "Motion delay (ms)", type: "number", tab: "display", section: "Screensaver", min: 0, max: 600000, step: 1000 },
+  { path: "display.motionDetection.proximityEnabled", label: "Use proximity sensor", type: "bool", tab: "display", section: "Screensaver" },
+
+  // Security
+  { path: "security.backButtonTimerDelay", label: "Back button timer (ms)", type: "number", tab: "security", section: "Back Button Behavior", min: 0, max: 60000, step: 500 },
+  { path: "security.blockingOverlays.regions", label: "Blocked regions", type: "textarea", tab: "security", section: "Touch Blocking",
+    help: "JSON array of screen regions to swallow touches in, as the app stores them." },
+  { path: "security.overlayButtonPosition", label: "Overlay button position", type: "select", tab: "security", section: "Return to Settings",
+    options: [
+      { value: "top-left", label: "Top left" },
+      { value: "top-right", label: "Top right" },
+      { value: "bottom-left", label: "Bottom left" },
+      { value: "bottom-right", label: "Bottom right" },
+    ] },
+  { path: "security.screenLockCompat", label: "Screen-lock compatibility mode", type: "bool", tab: "security", section: "Lock Mode",
+    help: "Workaround for devices that fight lock task on screen off." },
+  { path: "security.volumeUp5Tap", label: "Volume-up 5-tap escape", type: "bool", tab: "security", section: "Return to Settings",
+    help: "Five presses of volume-up returns to settings. A fallback when the screen gesture is unusable.", danger: true },
+  { path: "security.urlFilter.showFeedback", label: "Show blocked-URL message", type: "bool", tab: "security", section: "URL Filtering" },
+  { path: "security.lockscreen.audio", label: "Audio controls", type: "bool", tab: "security", section: "Lock Screen Controls" },
+  { path: "security.lockscreen.bluetooth", label: "Bluetooth toggle", type: "bool", tab: "security", section: "Lock Screen Controls" },
+  { path: "security.lockscreen.flashlight", label: "Flashlight", type: "bool", tab: "security", section: "Lock Screen Controls" },
+  { path: "security.lockscreen.rotationLock", label: "Rotation lock", type: "bool", tab: "security", section: "Lock Screen Controls" },
+
+  // Advanced
+  { path: "advanced.mqtt.discoveryPrefix", label: "Discovery prefix", type: "text", tab: "advanced", section: "MQTT",
+    placeholder: "homeassistant" },
+  { path: "advanced.mqtt.statusInterval", label: "Status interval (s)", type: "number", tab: "advanced", section: "MQTT", min: 5, max: 3600, step: 5 },
+  { path: "advanced.mqtt.deviceName", label: "Device name", type: "text", tab: "advanced", section: "MQTT" },
+  { path: "advanced.mqtt.allowControl", label: "Allow control over MQTT", type: "bool", tab: "advanced", section: "MQTT", danger: true },
+  { path: "advanced.mqtt.motionAlwaysOn", label: "Publish motion always", type: "bool", tab: "advanced", section: "MQTT" },
 ];

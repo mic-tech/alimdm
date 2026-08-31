@@ -278,20 +278,20 @@ const SHOW_IF = {
   "general.url":                        { path: "general.displayMode", value: "webview" },
   "general.httpBasicAuth.username":     { path: "general.displayMode", value: "webview" },
   "general.urlRotation.enabled":        { path: "general.displayMode", value: "webview" },
-  "general.urlRotation.list":           { path: "general.displayMode", value: "webview" },
-  "general.urlRotation.interval":       { path: "general.displayMode", value: "webview" },
+  "general.urlRotation.list":            [{ path: "general.displayMode", value: "webview" }, { path: "general.urlRotation.enabled", value: true }],
+  "general.urlRotation.interval":        [{ path: "general.displayMode", value: "webview" }, { path: "general.urlRotation.enabled", value: true }],
   "general.urlPlanner.enabled":         { path: "general.displayMode", value: "webview" },
   "general.inactivityReturn.enabled":   { path: "general.displayMode", value: "webview" },
-  "general.inactivityReturn.delay":     { path: "general.displayMode", value: "webview" },
-  "general.inactivityReturn.resetOnNav":{ path: "general.displayMode", value: "webview" },
-  "general.inactivityReturn.clearCache":{ path: "general.displayMode", value: "webview" },
+  "general.inactivityReturn.delay":      [{ path: "general.displayMode", value: "webview" }, { path: "general.inactivityReturn.enabled", value: true }],
+  "general.inactivityReturn.resetOnNav": [{ path: "general.displayMode", value: "webview" }, { path: "general.inactivityReturn.enabled", value: true }],
+  "general.inactivityReturn.clearCache": [{ path: "general.displayMode", value: "webview" }, { path: "general.inactivityReturn.enabled", value: true }],
   "general.autoReload":                 { path: "general.displayMode", value: "webview" },
   "general.pdfViewerEnabled":           { path: "general.displayMode", value: "webview" },
   "general.printEnabled":               { path: "general.displayMode", value: "webview" },
   "general.printPaperSize":             { path: "general.displayMode", value: "webview" },
   "general.webviewBackButton.enabled":  { path: "general.displayMode", value: "webview" },
-  "general.webviewBackButton.xPercent": { path: "general.displayMode", value: "webview" },
-  "general.webviewBackButton.yPercent": { path: "general.displayMode", value: "webview" },
+  "general.webviewBackButton.xPercent":  [{ path: "general.displayMode", value: "webview" }, { path: "general.webviewBackButton.enabled", value: true }],
+  "general.webviewBackButton.yPercent":  [{ path: "general.displayMode", value: "webview" }, { path: "general.webviewBackButton.enabled", value: true }],
   // General tab — external app fields
   "general.externalApp.mode":           { path: "general.displayMode", value: "external_app" },
   "general.externalApp.package":        { path: "general.externalApp.mode", value: "single" },
@@ -303,14 +303,109 @@ const SHOW_IF = {
   "display.keyboardMode":               { path: "general.displayMode", value: "webview" },
   // Security tab — webview fields
   "security.urlFilter.enabled":         { path: "general.displayMode", value: "webview" },
-  "security.urlFilter.mode":            { path: "general.displayMode", value: "webview" },
+  "security.urlFilter.mode":             [{ path: "general.displayMode", value: "webview" }, { path: "security.urlFilter.enabled", value: true }],
   // Security tab — external app fields
   "security.autoRelaunchApp":           { path: "general.displayMode", value: "external_app" },
   "security.backButtonMode":            { path: "general.displayMode", value: "external_app" },
-  "security.backButtonTimerDelay":      { path: "general.displayMode", value: "external_app" },
   // Security tab — button position (already has showIf in schema)
+  "display.autoBrightness.min":          [{ path: "display.autoBrightness.enabled", value: true }],
+  "display.autoBrightness.max":          [{ path: "display.autoBrightness.enabled", value: true }],
+  "display.autoBrightness.offset":       [{ path: "display.autoBrightness.enabled", value: true }],
+  "display.screensaver.type":            [{ path: "display.screensaver.enabled", value: true }],
+  "display.screensaver.url":             [{ path: "display.screensaver.enabled", value: true }],
+  "display.screensaver.inactivityEnabled": [{ path: "display.screensaver.enabled", value: true }],
+  "display.screensaver.brightness":      [{ path: "display.screensaver.enabled", value: true }],
+  "display.screenScheduler.wakeOnTouch": [{ path: "display.screenScheduler.enabled", value: true }],
+  "display.statusBar.showBattery":       [{ path: "display.statusBar.enabled", value: true }],
+  "display.statusBar.showWifi":          [{ path: "display.statusBar.enabled", value: true }],
+  "display.statusBar.showTime":          [{ path: "display.statusBar.enabled", value: true }],
+  "display.statusBar.theme":             [{ path: "display.statusBar.enabled", value: true }],
+  "security.urlFilter.list":             [{ path: "security.urlFilter.enabled", value: true }],
+  "security.lockscreen.wifi":            [{ path: "security.lockscreen.enabled", value: true }],
+  "security.lockscreen.brightness":      [{ path: "security.lockscreen.enabled", value: true }],
+  "security.lockscreen.emergencyCall":   [{ path: "security.lockscreen.enabled", value: true }],
+  "advanced.restApi.port":               [{ path: "advanced.restApi.enabled", value: true }],
+  "advanced.restApi.allowControl":       [{ path: "advanced.restApi.enabled", value: true }],
+  "advanced.mqtt.brokerUrl":             [{ path: "advanced.mqtt.enabled", value: true }],
+  "advanced.mqtt.port":                  [{ path: "advanced.mqtt.enabled", value: true }],
+  "advanced.mqtt.username":              [{ path: "advanced.mqtt.enabled", value: true }],
+  "advanced.mqtt.clientId":              [{ path: "advanced.mqtt.enabled", value: true }],
+  "advanced.mqtt.baseTopic":             [{ path: "advanced.mqtt.enabled", value: true }],
+  // Newly exposed settings, gated on what they depend on.
+  "general.externalApp.testMode":        { path: "general.displayMode", value: "external_app" },
+  "general.inactivityReturn.scrollTop":  [{ path: "general.displayMode", value: "webview" }, { path: "general.inactivityReturn.enabled", value: true }],
+  "general.mediaPlayer.transition":         { path: "general.displayMode", value: "media_player" },
+  "general.mediaPlayer.transitionDuration": [{ path: "general.displayMode", value: "media_player" }, { path: "general.mediaPlayer.transition", value: ["fade", "slide"] }],
+  "general.urlPlanner.events":           [{ path: "general.displayMode", value: "webview" }, { path: "general.urlPlanner.enabled", value: true }],
+  "display.zoom.mode":                   { path: "general.displayMode", value: "webview" },
+  "display.autoBrightness.updateInterval": { path: "display.autoBrightness.enabled", value: true },
+  "display.screensaver.delay":           { path: "display.screensaver.enabled", value: true },
+  "display.screensaver.videoItems":      [{ path: "display.screensaver.enabled", value: true }, { path: "display.screensaver.type", value: "video" }],
+  "display.screensaver.videoLoop":       [{ path: "display.screensaver.enabled", value: true }, { path: "display.screensaver.type", value: "video" }],
+  "display.screensaver.url":             [{ path: "display.screensaver.enabled", value: true }, { path: "display.screensaver.type", value: "url" }],
+  "display.screensaver.inactivityDelay": [{ path: "display.screensaver.enabled", value: true }, { path: "display.screensaver.inactivityEnabled", value: true }],
+  "display.screenScheduler.rules":       { path: "display.screenScheduler.enabled", value: true },
+  "display.statusBar.onOverlay":         { path: "display.statusBar.enabled", value: true },
+  "display.statusBar.onReturn":          { path: "display.statusBar.enabled", value: true },
+  "display.statusBar.showBluetooth":     { path: "display.statusBar.enabled", value: true },
+  "display.statusBar.showVolume":        { path: "display.statusBar.enabled", value: true },
+  "display.motionDetection.sensitivity":      { path: "display.motionDetection.enabled", value: true },
+  "display.motionDetection.cameraPosition":   { path: "display.motionDetection.enabled", value: true },
+  "display.motionDetection.delay":            { path: "display.motionDetection.enabled", value: true },
+  "display.motionDetection.proximityEnabled": { path: "display.motionDetection.enabled", value: true },
+  "security.backButtonTimerDelay":       [{ path: "general.displayMode", value: "external_app" }, { path: "security.backButtonMode", value: "timer" }],
+  "security.blockingOverlays.regions":   { path: "security.blockingOverlays.enabled", value: true },
+  "security.overlayButtonPosition":      { path: "security.returnMode", value: "button" },
+  "security.urlFilter.showFeedback":     [{ path: "general.displayMode", value: "webview" }, { path: "security.urlFilter.enabled", value: true }],
+  "security.lockscreen.audio":           { path: "security.lockscreen.enabled", value: true },
+  "security.lockscreen.bluetooth":       { path: "security.lockscreen.enabled", value: true },
+  "security.lockscreen.flashlight":      { path: "security.lockscreen.enabled", value: true },
+  "security.lockscreen.rotationLock":    { path: "security.lockscreen.enabled", value: true },
+  "advanced.mqtt.discoveryPrefix":       { path: "advanced.mqtt.enabled", value: true },
+  "advanced.mqtt.statusInterval":        { path: "advanced.mqtt.enabled", value: true },
+  "advanced.mqtt.deviceName":            { path: "advanced.mqtt.enabled", value: true },
+  "advanced.mqtt.allowControl":          { path: "advanced.mqtt.enabled", value: true },
+  "advanced.mqtt.motionAlwaysOn":        { path: "advanced.mqtt.enabled", value: true },
   "security.returnButtonPosition":      { path: "security.returnMode", value: "button" },
 };
+
+// Index every field by path so a condition can ask whether the field it depends
+// on is itself visible.
+const FIELDS_BY_PATH = new Map(POLICY_FIELDS.map((f) => [f.path, f]));
+
+function conditionsFor(field) {
+  const raw = field.showIf ?? SHOW_IF[field.path];
+  if (!raw) return [];
+  return Array.isArray(raw) ? raw : [raw];
+}
+
+/**
+ * Whether a field should be shown.
+ *
+ * Conditions are ANDed, a condition's `value` may be an array meaning "any of",
+ * and visibility is **transitive**: a field is hidden when the field it depends
+ * on is itself hidden. Without that, a setting could surface under a mode it
+ * has nothing to do with — the package picker, for instance, was gated only on
+ * externalApp.mode, so a leftover value from a previous mode kept it on screen
+ * in Web view.
+ *
+ * `seen` guards against a mis-specified cycle in the schema turning into
+ * infinite recursion.
+ */
+function isFieldVisible(field, config, seen = new Set()) {
+  if (seen.has(field.path)) return true;
+  seen.add(field.path);
+
+  for (const cond of conditionsFor(field)) {
+    const actual = getPath(config, cond.path);
+    const want = Array.isArray(cond.value) ? cond.value : [cond.value];
+    if (!want.includes(actual)) return false;
+
+    const parent = FIELDS_BY_PATH.get(cond.path);
+    if (parent && !isFieldVisible(parent, config, seen)) return false;
+  }
+  return true;
+}
 
 // The schema-driven policy editor. Mirrors the app's own settings tabs/sections.
 export default function PolicyEditor({ groupId, onErr, onClose }) {
@@ -405,11 +500,7 @@ export default function PolicyEditor({ groupId, onErr, onClose }) {
           const sectionFields = fieldsInTab.filter((f) => f.section === sectionTitle);
           if (sectionFields.length === 0) return null;
 
-          const visibleFields = sectionFields.filter((f) => {
-            const cond = f.showIf || SHOW_IF[f.path];
-            if (cond) return getPath(config, cond.path) === cond.value;
-            return true;
-          });
+          const visibleFields = sectionFields.filter((f) => isFieldVisible(f, config));
           if (visibleFields.length === 0) return null;
 
           return (
