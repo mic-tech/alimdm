@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import { api, getToken, setToken } from "./api.js";
 import PolicyEditor from "./PolicyEditor";
+import QRCode from "qrcode";
 import logoLockup from "./assets/ali-mdm-lockup-h.svg";
 import logoMark from "./assets/ali-mdm-logo.svg";
 import {
@@ -859,6 +860,113 @@ function APKs({ onErr }) {
 
 /* ── Enroll ─────────────────────────────────────────────────────────────── */
 
+/**
+ * Setup-wizard QR provisioning.
+ *
+ * The QR embeds the enrolment token, so it is generated on demand rather than
+ * whenever this page is opened, and is hidden again as soon as the inputs
+ * change — a stale QR on a shared screen is a live credential.
+ */
+function QrEnrollCard({ onErr }) {
+  const [groups, setGroups] = useState([]);
+  const [group, setGroup] = useState("");
+  const [ssid, setSsid] = useState("");
+  const [wifiPassword, setWifiPassword] = useState("");
+  const [info, setInfo] = useState(null);
+  const [png, setPng] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { api.listGroups().then(setGroups).catch(() => {/* optional */}); }, []);
+  // Any change to what the QR would encode invalidates the one on screen.
+  useEffect(() => { setInfo(null); setPng(""); }, [group, ssid, wifiPassword]);
+
+  async function generate() {
+    setBusy(true);
+    try {
+      const q = new URLSearchParams();
+      if (group) q.set("group", group);
+      if (ssid) {
+        q.set("ssid", ssid);
+        if (wifiPassword) q.set("wifi_password", wifiPassword);
+      }
+      const d = await api.provisionQR(q.toString());
+      setInfo(d);
+      // Only render a scannable code when the payload would actually work;
+      // a QR missing its checksum fails after the tablet has downloaded the
+      // APK, which looks like a network fault and wastes a factory reset.
+      setPng(d.ready
+        ? await QRCode.toDataURL(d.payload, { errorCorrectionLevel: "M", margin: 2, width: 320 })
+        : "");
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  return (
+    <Card title="Enroll by QR (no cable)">
+      <div className="stack">
+        <Alert>
+          On a <b>factory-fresh</b> tablet, tap the first setup screen six times to open the QR
+          scanner, then scan this. The wizard downloads Ali MDM from this server, verifies its
+          signature, makes it Device Owner and enrolls it — no cable, no ADB. The same QR works
+          for every tablet.
+        </Alert>
+
+        <div className="flex" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <label className="small subtle" htmlFor="qr-group">Enroll into group</label>
+            <select id="qr-group" value={group} onChange={(e) => setGroup(e.target.value)}
+              style={{ display: "block", minWidth: 160, height: 34 }}>
+              <option value="">(server default)</option>
+              {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="small subtle" htmlFor="qr-ssid">Wi-Fi SSID (optional)</label>
+            <input id="qr-ssid" value={ssid} onChange={(e) => setSsid(e.target.value)}
+              placeholder="School-WiFi" style={{ display: "block", width: 170, height: 34 }} />
+          </div>
+          <div>
+            <label className="small subtle" htmlFor="qr-wifi-pw">Wi-Fi password</label>
+            <input id="qr-wifi-pw" type="password" value={wifiPassword}
+              onChange={(e) => setWifiPassword(e.target.value)} placeholder="(WPA)"
+              style={{ display: "block", width: 150, height: 34 }} />
+          </div>
+          <button className="btn" onClick={generate} disabled={busy}>
+            {busy ? "Generating…" : "Generate QR"}
+          </button>
+        </div>
+        <p className="small subtle" style={{ marginTop: 0 }}>
+          Supplying Wi-Fi lets the tablet reach this server before anyone has typed a password
+          into it. Both the SSID and password are embedded in the QR.
+        </p>
+
+        {info && !info.ready && (
+          <Alert tone="warning" icon={IconWarning} title="Not ready yet — fix these first">
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {info.problems.map((p) => <li key={p} className="small">{p}</li>)}
+            </ul>
+          </Alert>
+        )}
+
+        {png && (
+          <div className="stack tight" style={{ alignItems: "flex-start" }}>
+            <Alert tone="warning" icon={IconWarning} title="This QR contains your enrollment token">
+              Anyone who photographs it can enroll a device into your fleet. Show it only while
+              provisioning, and rotate the token if it leaks.
+            </Alert>
+            <img src={png} width="320" height="320" alt="Provisioning QR code"
+              style={{ background: "#fff", padding: 8, borderRadius: 8 }} />
+            <div className="small subtle">
+              APK: <span className="mono">{info.apk_url}</span><br />
+              Signing checksum: <span className="mono">{info.checksum}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 function Enroll({ onErr }) {
   const cloud = window.location.origin;
   const [copied, setCopied] = useState("");
@@ -903,12 +1011,13 @@ function Enroll({ onErr }) {
         </div>
       </Card>
 
+      <QrEnrollCard onErr={onErr} />
+
       <Card title="Enroll a tablet over ADB">
         <div className="stack">
-          <Alert tone="warning" icon={IconWarning} title="QR enrollment is unavailable on Android 14+">
-            Google Play Protect blocks sideloading a Device Owner app during the setup wizard. Enroll each
-            tablet over ADB instead — a one-time, ~3-minute ritual per device. After that the cloud manages
-            it fully: config, app installs, and remote commands.
+          <Alert>
+            Use this when a tablet is already past its setup wizard, or when the QR path is not
+            an option. Both routes end in the same place; QR avoids the cable and the reset.
           </Alert>
 
           <div className="stack tight">

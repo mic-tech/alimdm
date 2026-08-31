@@ -1,4 +1,12 @@
-# Zero-Touch QR Enrollment (no cable, no ADB)
+# QR Enrollment (no cable, no ADB)
+
+> **This is not Google "zero-touch enrollment".** Zero-touch is a separate
+> programme where devices are registered to your organisation by an authorised
+> reseller at purchase, and it does require a relationship with Google. The flow
+> below is plain AOSP setup-wizard provisioning: it works with your own
+> self-signed APK served from your own host, with no Google approval at all.
+> The two are easy to confuse, and the confusion tends to end in "QR doesn't
+> work for us" when in fact it was never tried.
 
 The "scan a QR and it just works" flow. During the tablet's **first setup**,
 Android's setup wizard reads a special QR code, **downloads + installs
@@ -33,8 +41,16 @@ When the setup wizard scans it:
    - Local test: `http://192.168.1.100:8090` (tablet on the same Wi-Fi/LAN)
    - Production: `https://cloud.yourdomain.com` (HTTPS required — see note below)
 2. **The Ali MDM APK hosted on the server** via the `FK_PROVISION_APK` env var.
-3. **The signing-cert checksum** matching that APK (pre-filled in the console for
-   the official Rushb-signed Ali MDM).
+3. **The signing-cert checksum** matching that exact APK. Derive it from the
+   build you actually serve — never copy one from documentation:
+   ```bash
+   apksigner verify --print-certs apk/alimdm-release.apk   # take the SHA-256 digest
+   python3 -c "import base64,sys; print(base64.urlsafe_b64encode(bytes.fromhex(sys.argv[1])).decode().rstrip('='))" <digest>
+   ```
+   Set it on the server as `ALIMDM_PROVISION_CHECKSUM`; the console reads it.
+   Note this is the digest of the *signing certificate*, not of the APK file —
+   confusing the two fails only after the tablet has downloaded everything,
+   which looks like a network problem.
 4. A **factory-fresh** tablet (no Google account, no SIM) on the network.
 
 > **HTTPS note:** Android's setup wizard is strict about the download URL.

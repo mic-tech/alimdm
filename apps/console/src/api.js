@@ -39,6 +39,8 @@ export const api = {
   moveDeviceGroup: (id, group_id) => req("POST", "/devices/" + id + "/group", { group_id }),
   renameDevice: (id, name) => req("POST", "/devices/" + id + "/name", { name }),
   listAPKs: () => req("GET", "/apks"),
+  // Setup-wizard provisioning payload. Operator-only: it carries the enrolment token.
+  provisionQR: (query) => req("GET", "/provision/qr" + (query ? "?" + query : "")),
 
   // ── Own profile ──
   me: () => req("GET", "/me"),

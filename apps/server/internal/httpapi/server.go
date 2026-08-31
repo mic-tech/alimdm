@@ -126,6 +126,9 @@ func (s *Server) Routes() *http.ServeMux {
 	// APK from here while scanning the QR. Open (no auth) — it runs before the
 	// device has an API key. Serves nothing if FK_PROVISION_APK is unset.
 	mux.HandleFunc("GET /api/v1/provision/apk", s.provisionAPKHandler)
+	// QR payload for setup-wizard provisioning (operator-only: it carries the
+	// enrolment token).
+	mux.HandleFunc("GET /api/v1/provision/qr", s.requireOperator(s.provisionQR))
 	// Operator console
 	mux.HandleFunc("POST /api/v1/operator/login", s.operatorLogin)
 	mux.HandleFunc("GET /api/v1/devices", s.requireOperator(s.listDevices))

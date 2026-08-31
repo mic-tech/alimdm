@@ -49,32 +49,69 @@ def adb_shell(serial, cmd, check=True, quiet=False):
     return adb(serial, "shell", cmd, check=check, quiet=quiet)
 
 
-# ── QR generation (zero-touch setup-wizard provisioning) ─────────────────────
-def build_provisioning_url(cloud_url, token, org_id):
+# ── QR generation (setup-wizard provisioning) ────────────────────────────────
+def apk_signature_checksum(apk_path):
     """
-    Build the Android setup-wizard provisioning URL. The device, when it scans
-    this QR during initial setup, becomes a Device Owner with our admin receiver
-    and receives the enroll token via the admin-extras bundle. Ali MDM's
-    DeviceAdminReceiver persists it and the app auto-enrolls on first launch.
+    PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM: url-safe base64, unpadded, of
+    the SHA-256 of the APK's *signing certificate*.
 
-    Format (Android Enterprise provisioning):
-      androidenterprise://provisionDevice?package=<pkg>&admin_receiver=<admin>
-      &admin_extras=<base64url(json{enroll_token,cloud_url,org_id})>
+    Note this is the certificate digest, not a hash of the APK file — a common
+    mix-up with PACKAGE_CHECKSUM, and one that fails at the point the wizard has
+    already downloaded the APK, which makes it look like a network problem.
+    Read via apksigner so it always matches whatever key actually signed the
+    build being served.
+    """
+    apksigner = os.environ.get("APKSIGNER") or "apksigner"
+    r = subprocess.run([apksigner, "verify", "--print-certs", apk_path],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"apksigner failed on {apk_path}: {r.stderr.strip()}\n"
+                         "Set APKSIGNER=/path/to/build-tools/<ver>/apksigner")
+    for line in r.stdout.splitlines():
+        if "certificate SHA-256 digest" in line:
+            hex_digest = line.split(":")[-1].strip()
+            return base64.urlsafe_b64encode(bytes.fromhex(hex_digest)).decode().rstrip("=")
+    raise SystemExit(f"could not read a signing certificate from {apk_path}")
+
+
+def build_provisioning_payload(cloud_url, token, org_id, apk_url, checksum,
+                               group_id="", wifi_ssid="", wifi_password=""):
+    """
+    Build the JSON the Android setup wizard expects from a provisioning QR.
+
+    This must be a plain JSON object of android.app.extra.PROVISIONING_* keys.
+    An `androidenterprise://provisionDevice?...` URI — which an earlier version
+    of this script emitted — is a different mechanism entirely and is simply not
+    recognised by the wizard, so the scan appears to do nothing.
+
+    Requires no Google relationship: registering with Google is only needed for
+    zero-touch enrolment, where devices are enrolled by the reseller at purchase.
+    This flow works with a self-signed APK served from your own host.
     """
     extras = {
         "enroll_token": token,
         "cloud_url": cloud_url.rstrip("/"),
         "org_id": org_id,
     }
-    extras_json = json.dumps(extras, separators=(",", ":"))
-    # admin_extras is base64 of the JSON (URL-safe, no padding issues in practice)
-    extras_b64 = base64.urlsafe_b64encode(extras_json.encode()).decode()
-    q = urllib.parse.urlencode({
-        "package": PKG,
-        "admin_receiver": ADMIN,
-        "admin_extras": extras_b64,
-    })
-    return f"androidenterprise://provisionDevice?{q}"
+    if group_id:
+        extras["group_id"] = group_id
+
+    payload = {
+        "android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME": ADMIN,
+        "android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION": apk_url,
+        "android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM": checksum,
+        "android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE": extras,
+        # The tablets have no user data to protect at provisioning time, and
+        # forcing encryption adds a reboot to every enrolment.
+        "android.app.extra.PROVISIONING_SKIP_ENCRYPTION": True,
+        "android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED": True,
+    }
+    if wifi_ssid:
+        payload["android.app.extra.PROVISIONING_WIFI_SSID"] = wifi_ssid
+        if wifi_password:
+            payload["android.app.extra.PROVISIONING_WIFI_PASSWORD"] = wifi_password
+            payload["android.app.extra.PROVISIONING_WIFI_SECURITY_TYPE"] = "WPA"
+    return json.dumps(payload, separators=(",", ":"))
 
 
 def make_qr(data, out_path):
@@ -173,6 +210,13 @@ def main():
     ap.add_argument("--apk", default=None, help="Path to alimdm-release.apk to install first")
     ap.add_argument("--skip-owner", action="store_true", help="Skip dpm set-device-owner (device already owner)")
     ap.add_argument("--qr-out", default="enroll-qr.png", help="QR output path (qr mode)")
+    ap.add_argument("--group", default="", help="Enrol into this policy group (default: the server's default group)")
+    ap.add_argument("--apk-url", default=None,
+                    help="URL the setup wizard downloads the APK from (default: <cloud>/api/v1/provision/apk)")
+    ap.add_argument("--checksum", default=None,
+                    help="Signing-cert checksum. Omit to derive it from --apk with apksigner.")
+    ap.add_argument("--wifi-ssid", default="", help="Wi-Fi the tablet joins during provisioning (optional)")
+    ap.add_argument("--wifi-password", default="", help="Wi-Fi password (optional)")
     args = ap.parse_args()
 
     print(f"=== Ali MDM enrollment: {args.mode} ===")
@@ -184,10 +228,24 @@ def main():
     # QR mode works without a connected device (teacher scans it during setup).
     if args.mode in ("qr", "both"):
         print("[QR] Building setup-wizard provisioning QR...")
-        url = build_provisioning_url(args.cloud, args.token, args.org)
-        out = make_qr(url, args.qr_out)
+        apk_url = args.apk_url or (args.cloud.rstrip("/") + "/api/v1/provision/apk")
+        checksum = args.checksum
+        if not checksum:
+            if not args.apk:
+                raise SystemExit(
+                    "QR mode needs the signing-cert checksum: pass --checksum, or --apk "
+                    "<the APK the server serves> to derive it.")
+            checksum = apk_signature_checksum(args.apk)
+            print(f"  checksum (from {args.apk}): {checksum}")
+        payload = build_provisioning_payload(
+            args.cloud, args.token, args.org, apk_url, checksum,
+            group_id=args.group, wifi_ssid=args.wifi_ssid, wifi_password=args.wifi_password)
+        out = make_qr(payload, args.qr_out)
         if out:
             print(f"  ✓ QR written to {out} — scan it during the tablet's first setup")
+            print(f"    APK download: {apk_url}")
+            print("    The served APK must be signed with the key above, or the wizard")
+            print("    rejects it after downloading.")
         print()
 
     # Push / owner modes need a connected device.
