@@ -106,8 +106,9 @@ class AgentUpdateServiceClass {
     try {
       const current = await this.getVersionCode();
       if (current >= offer.version_code) {
-        // Already up to date — the rollout row just has not been closed out yet.
-        onError(`already on versionCode ${current}`);
+        // Already up to date — the rollout row simply has not been closed out
+        // yet. Deliberately not routed through onError: reporting this as a
+        // failure would overwrite a success that already happened.
         return false;
       }
       await Native.downloadAndInstall(offer.download_url, offer.sha256, offer.version_code);

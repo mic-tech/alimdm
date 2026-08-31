@@ -304,8 +304,19 @@ class CloudSyncServiceClass {
       const settled = await AgentUpdateService.reconcile();
       if (settled) {
         await this._reportAgentUpdate(c, settled.status, settled.error ?? '');
+        // The offer in *this* response was computed before that report landed,
+        // so a just-completed update still looks outstanding. Acting on it would
+        // start a second attempt, immediately find the device already on the
+        // target, and overwrite the success with a failure. The next heartbeat
+        // sees the updated status and stops offering.
+        if (settled.status === 'success') return;
       }
       if (!offer) return;
+
+      // Nothing to do if this build is already at or past the offer — same
+      // stale-offer race as above, just reached by a different path.
+      const current = await AgentUpdateService.getVersionCode();
+      if (current >= offer.version_code) return;
 
       // Deferrals (flat battery, module unavailable) must not consume an
       // attempt: skip quietly and let the next heartbeat re-offer the update.

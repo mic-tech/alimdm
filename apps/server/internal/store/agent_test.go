@@ -112,3 +112,38 @@ func TestListAgentUpdatesEmptyIsNotAnError(t *testing.T) {
 		t.Fatalf("expected no rollouts, got %d", len(ups))
 	}
 }
+
+// A device that already reported success can still be handed a stale offer that
+// the server computed before that report landed. Acting on it must not be able
+// to overwrite the success with a failure.
+func TestAgentSuccessIsTerminal(t *testing.T) {
+	st := newAgentTestStore(t)
+	if err := st.QueueAgentUpdate("dev-1", 46); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.SetAgentUpdateStatus("dev-1", AgentInstalling, "")
+	_ = st.SetAgentUpdateStatus("dev-1", AgentSuccess, "")
+
+	// A late failure report from a stale offer must be ignored.
+	_ = st.SetAgentUpdateStatus("dev-1", AgentFailed, "already on versionCode 46")
+
+	u, err := st.GetAgentUpdate("dev-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Status != AgentSuccess {
+		t.Fatalf("success must be terminal, got %q (%s)", u.Status, u.LastError)
+	}
+	if u.Attempts != 1 {
+		t.Fatalf("a stale report must not spend another attempt, got %d", u.Attempts)
+	}
+
+	// A fresh rollout is still allowed to re-arm the device.
+	if err := st.QueueAgentUpdate("dev-1", 47); err != nil {
+		t.Fatal(err)
+	}
+	u, _ = st.GetAgentUpdate("dev-1")
+	if u.Status != AgentQueued || u.TargetVersionCode != 47 {
+		t.Fatalf("re-queue should re-arm, got %+v", u)
+	}
+}

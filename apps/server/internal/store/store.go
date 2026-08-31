@@ -640,6 +640,11 @@ func (s *Store) GetAgentUpdate(deviceID string) (*AgentUpdate, error) {
 // SetAgentUpdateStatus records progress reported by the device. Attempts are
 // incremented server-side on each "installing" report rather than trusted from
 // the device, so a tablet stuck in a reboot loop cannot hide its retry count.
+// Success is terminal and cannot be downgraded. A device that has already
+// confirmed the new build may still be handed a stale offer computed before its
+// report landed; without this guard, acting on that offer would overwrite a real
+// success with a spurious failure. Re-arming a rollout goes through
+// QueueAgentUpdate, which resets the row deliberately.
 func (s *Store) SetAgentUpdateStatus(deviceID, status, lastErr string) error {
 	inc := 0
 	if status == AgentInstalling {
@@ -647,7 +652,7 @@ func (s *Store) SetAgentUpdateStatus(deviceID, status, lastErr string) error {
 	}
 	_, err := s.db.Exec(
 		`UPDATE agent_updates SET status=?, last_error=?, attempts=attempts+?, updated_at=?
-		 WHERE device_id=?`, status, lastErr, inc, nowISO(), deviceID)
+		 WHERE device_id=? AND status<>?`, status, lastErr, inc, nowISO(), deviceID, AgentSuccess)
 	return err
 }
 
