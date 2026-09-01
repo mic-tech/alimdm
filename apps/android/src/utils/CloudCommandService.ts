@@ -24,6 +24,7 @@ import { getCloudCredentials, CloudCredentials } from './secureStorage';
 import { StorageService } from './storage';
 import ManagedAppInstaller from './ManagedAppInstaller';
 import KioskModule from './KioskModule';
+import { CloudFileService } from './CloudFileService';
 
 const { HttpServerModule } = NativeModules;
 
@@ -242,6 +243,23 @@ class CloudCommandServiceClass {
       return this.captureAndUploadScreenshot(c);
     }
 
+    // The console cannot reach the tablet directly, so browsing its inbox is a
+    // command that answers by uploading the listing rather than a live query.
+    if (cmd.type === 'list_inbox') {
+      return this.uploadInboxListing(c);
+    }
+    if (cmd.type === 'delete_inbox_file') {
+      const name = String((cmd.params || {}).name ?? '');
+      if (!name) return { ok: false, error: 'No file name given' };
+      const removed = await CloudFileService.remove(name);
+      // Re-listing straight away keeps the console honest about what is left,
+      // instead of showing a file the operator has just deleted.
+      await this.uploadInboxListing(c);
+      return removed
+        ? { ok: true, result: { deleted: name } }
+        : { ok: false, error: `Could not delete ${name}` };
+    }
+
     const mapper = COMMAND_MAP[cmd.type];
     if (!mapper) {
       return { ok: false, error: `Unsupported command type: ${cmd.type}` };
@@ -397,6 +415,31 @@ class CloudCommandServiceClass {
           error: error?.message ?? String(error),
         });
       }
+    }
+  }
+
+  /**
+   * Send the tablet's current inbox contents to the console.
+   *
+   * The listing is cached server-side rather than requested live: a tablet that
+   * is asleep or off the network still has a last-known state worth showing,
+   * with the time it was taken.
+   */
+  private async uploadInboxListing(c: CloudCredentials): Promise<ActionResult> {
+    try {
+      const entries = await CloudFileService.list();
+      const res = await fetch(`${c.cloudUrl}/api/v1/devices/${c.deviceId}/inbox`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${c.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ entries }),
+      });
+      if (!res.ok) return { ok: false, error: `Listing upload failed: HTTP ${res.status}` };
+      return { ok: true, result: { files: entries.length } };
+    } catch (error: any) {
+      return { ok: false, error: error?.message ?? String(error) };
     }
   }
 

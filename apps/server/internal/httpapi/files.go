@@ -262,3 +262,121 @@ func (s *Server) fileDeliveryResult(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 }
+
+// ── Per-device inbox (the file manager) ──────────────────────────────────────
+//
+// The tablet is behind NAT, so the console cannot query it. Browsing a device's
+// inbox is therefore a command that answers by uploading a listing, and what
+// the console shows is the last answer plus when it arrived. A stale listing
+// labelled with its age is more use than a spinner that never resolves because
+// the tablet is in a cupboard.
+
+// deviceInbox returns the cached listing for one device.
+func (s *Server) deviceInbox(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.st.GetDevice(id); err != nil {
+		writeErr(w, http.StatusNotFound, "unknown device")
+		return
+	}
+	entriesJSON, fetchedAt := s.st.DeviceInbox(id)
+	var entries []map[string]any
+	if json.Unmarshal([]byte(entriesJSON), &entries) != nil {
+		entries = []map[string]any{}
+	}
+	if entries == nil {
+		entries = []map[string]any{}
+	}
+	writeJSON(w, map[string]any{
+		"device_id": id,
+		"entries":   entries,
+		// Empty until the tablet has answered once, which the console shows as
+		// "never" rather than pretending the folder is empty.
+		"fetched_at": fetchedAt,
+	})
+}
+
+// refreshDeviceInbox asks a tablet to report what is in its inbox.
+func (s *Server) refreshDeviceInbox(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.st.GetDevice(id); err != nil {
+		writeErr(w, http.StatusNotFound, "unknown device")
+		return
+	}
+	if err := s.queueDeviceCommand(id, "list_inbox", nil); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not queue the request")
+		return
+	}
+	writeJSON(w, map[string]any{"queued": true})
+}
+
+// deleteDeviceFile asks a tablet to remove one file from its inbox.
+func (s *Server) deleteDeviceFile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+	if _, err := s.st.GetDevice(id); err != nil {
+		writeErr(w, http.StatusNotFound, "unknown device")
+		return
+	}
+	if strings.TrimSpace(name) == "" {
+		writeErr(w, http.StatusBadRequest, "file name is required")
+		return
+	}
+	if err := s.queueDeviceCommand(id, "delete_inbox_file", map[string]any{"name": name}); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not queue the deletion")
+		return
+	}
+	s.record(r, "device_file_deleted", store.EventWarn, id,
+		"Asked "+id+" to delete "+name+" from its inbox")
+	writeJSON(w, map[string]any{"queued": true})
+}
+
+// reportDeviceInbox is the tablet answering a list_inbox command.
+func (s *Server) reportDeviceInbox(w http.ResponseWriter, r *http.Request) {
+	dev := deviceFrom(r.Context())
+	if dev == nil {
+		http.Error(w, "unknown device", http.StatusNotFound)
+		return
+	}
+	var req struct {
+		Entries []map[string]any `json:"entries"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	if req.Entries == nil {
+		req.Entries = []map[string]any{}
+	}
+	// Bound what one device can store, so a tablet with a full folder cannot
+	// push an unbounded blob into the database.
+	if len(req.Entries) > 500 {
+		req.Entries = req.Entries[:500]
+	}
+	blob, err := json.Marshal(req.Entries)
+	if err != nil {
+		http.Error(w, "bad entries", http.StatusBadRequest)
+		return
+	}
+	if err := s.st.SetDeviceInbox(dev.ID, string(blob)); err != nil {
+		http.Error(w, "could not store the listing", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// queueDeviceCommand enqueues a command and wakes the device.
+func (s *Server) queueDeviceCommand(deviceID, cmdType string, params map[string]any) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if params == nil {
+		params = map[string]any{}
+	}
+	c := &store.Command{
+		ID: "cmd-" + shortHash(deviceID+now+cmdType+fmt.Sprint(params)), DeviceID: deviceID,
+		Type: cmdType, Params: store.MustJSON(params), Status: "pending", CreatedAt: now,
+	}
+	if err := s.st.EnqueueCommand(c); err != nil {
+		return err
+	}
+	s.pokes.Enqueue(deviceID, device.Poke{Type: cmdType})
+	return nil
+}

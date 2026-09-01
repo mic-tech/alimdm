@@ -196,6 +196,14 @@ func migrate(db *sql.DB) error {
 		updated_at TEXT NOT NULL DEFAULT ''
 	);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_file_delivery ON file_deliveries(device_id, file_name);
+	-- Last-known contents of a device's inbox folder. Cached rather than queried
+	-- live: the tablet is behind NAT, so the console asks by command and the
+	-- answer arrives later. A stale listing with its timestamp beats none.
+	CREATE TABLE IF NOT EXISTS device_inbox(
+		device_id TEXT PRIMARY KEY,
+		entries TEXT NOT NULL DEFAULT '[]',
+		fetched_at TEXT NOT NULL DEFAULT ''
+	);
 	CREATE TABLE IF NOT EXISTS events(
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		at TEXT NOT NULL,
@@ -381,10 +389,16 @@ func (s *Store) DeleteDevice(deviceID string) error {
 		return err
 	}
 	defer tx.Rollback()
+	// Every per-device table, or a tablet that re-enrols on the same id inherits
+	// the old one's alert state, delivery history and inbox listing.
 	for _, q := range []string{
 		`DELETE FROM commands WHERE device_id=?`,
 		`DELETE FROM apk_updates WHERE device_id=?`,
 		`DELETE FROM agent_updates WHERE device_id=?`,
+		`DELETE FROM device_alerts WHERE device_id=?`,
+		`DELETE FROM device_event_state WHERE device_id=?`,
+		`DELETE FROM file_deliveries WHERE device_id=?`,
+		`DELETE FROM device_inbox WHERE device_id=?`,
 		`DELETE FROM devices WHERE id=?`,
 	} {
 		if _, err := tx.Exec(q, deviceID); err != nil {
@@ -1125,4 +1139,22 @@ func (s *Store) FileDeliveries(fileName string) ([]FileDelivery, error) {
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// SetDeviceInbox stores what a tablet reported its inbox folder contains.
+func (s *Store) SetDeviceInbox(deviceID, entriesJSON string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO device_inbox(device_id, entries, fetched_at) VALUES(?,?,?)
+		 ON CONFLICT(device_id) DO UPDATE SET entries=excluded.entries, fetched_at=excluded.fetched_at`,
+		deviceID, entriesJSON, nowISO())
+	return err
+}
+
+// DeviceInbox returns the cached listing and when it was taken. An empty
+// timestamp means the device has never reported.
+func (s *Store) DeviceInbox(deviceID string) (entriesJSON, fetchedAt string) {
+	entriesJSON, fetchedAt = "[]", ""
+	_ = s.db.QueryRow(`SELECT entries, fetched_at FROM device_inbox WHERE device_id=?`, deviceID).
+		Scan(&entriesJSON, &fetchedAt)
+	return entriesJSON, fetchedAt
 }

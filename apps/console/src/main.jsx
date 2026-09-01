@@ -296,7 +296,83 @@ function Groups({ onErr }) {
 
 /* ── Devices ────────────────────────────────────────────────────────────── */
 
+/* The tablet is behind NAT, so this cannot query it: the console asks by
+   command and shows the last answer with its age. A stale listing labelled
+   "checked 4 minutes ago" is more use than a spinner that never resolves
+   because the tablet is in a cupboard. */
+function DeviceInbox({ device, onErr }) {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try { setData(await api.deviceInbox(device.id)); }
+    catch (e) { onErr(e.message); }
+  }, [device.id, onErr]);
+  useEffect(() => { load(); }, [load]);
+  // The tablet answers on its own schedule, so poll while the panel is open.
+  useEffect(() => { const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+
+  async function refresh() {
+    setBusy(true);
+    try { await api.refreshDeviceInbox(device.id); toast("Asked the tablet for its file list"); }
+    catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+  async function remove(name) {
+    if (!confirm(`Delete ${name} from ${device.name || device.id}?\n\nThis removes it from the tablet itself.`)) return;
+    setBusy(true);
+    try { await api.deleteDeviceFile(device.id, name); toast(`Asked the tablet to delete ${name}`); }
+    catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  const entries = data?.entries ?? [];
+  return (
+    <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)" }}>
+      <div className="btn-group" style={{ alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+        <span className="strong small">Files on {device.name || device.id}</span>
+        <span className="muted small">
+          {!data ? "Loading…"
+            : data.fetched_at ? `Last checked ${timeAgo(data.fetched_at) || "just now"}`
+            : "Never checked — ask the tablet to report"}
+        </span>
+        <button className="btn outline sm" disabled={busy || !device.online} onClick={refresh}
+          title={device.online ? "" : "The tablet is offline; it will answer when it checks in"}>
+          <IconRefresh />Ask the tablet
+        </button>
+      </div>
+      {!data ? null : entries.length === 0 ? (
+        <div className="muted small">
+          {data.fetched_at ? "The inbox folder is empty." : "No listing yet."}
+        </div>
+      ) : (
+        <table style={{ margin: 0 }}>
+          <thead><tr><th>File</th><th>Size</th><th>Modified</th><th style={{ textAlign: "right" }}>Actions</th></tr></thead>
+          <tbody>
+            {entries.map((f) => (
+              <tr key={f.name}>
+                <td className="small strong">{f.name}</td>
+                <td className="small nowrap">{fmtSize(f.size)}</td>
+                <td className="small muted nowrap">
+                  {f.modified_at ? timeAgo(new Date(f.modified_at).toISOString()) : "—"}
+                </td>
+                <td>
+                  <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
+                    <button className="btn danger-outline sm icon" title="Delete from the tablet"
+                      disabled={busy} onClick={() => remove(f.name)}><IconTrash /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function Devices({ onErr }) {
+  const [inboxFor, setInboxFor] = useState(null);
   const [devices, setDevices] = useState(null);
   const [groups, setGroups] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -456,7 +532,8 @@ function Devices({ onErr }) {
           </thead>
           <tbody>
             {filtered.map((d) => (
-              <tr key={d.id}>
+              <React.Fragment key={d.id}>
+              <tr>
                 <td className="nowrap">
                   <input
                     defaultValue={d.name || ""}
@@ -490,6 +567,8 @@ function Devices({ onErr }) {
                 </td>
                 <td>
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
+                    <button className="btn outline sm icon" title="Files on this tablet"
+                      onClick={() => setInboxFor(inboxFor === d.id ? null : d.id)}><IconFile /></button>
                     <button className="btn outline sm icon" title="Reboot" disabled={busy}
                       onClick={() => cmd(d.id, "reboot")}><IconPower /></button>
                     <button className="btn outline sm icon" title="Lock" disabled={busy}
@@ -503,6 +582,12 @@ function Devices({ onErr }) {
                   </div>
                 </td>
               </tr>
+              {inboxFor === d.id && (
+                <tr><td colSpan="7" style={{ padding: 0 }}>
+                  <DeviceInbox device={d} onErr={onErr} />
+                </td></tr>
+              )}
+              </React.Fragment>
             ))}
             {filtered.length === 0 && (
               <tr><td colSpan="7" style={{ padding: 0 }}>

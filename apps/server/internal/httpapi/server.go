@@ -178,6 +178,12 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/devices/{id}/files/{name}/result", s.requireDevice(s.fileDeliveryResult))
 	mux.HandleFunc("GET /api/v1/files/{name}/download", s.requireDevice(s.downloadFile))
 
+	// Per-device file manager: the console asks, the tablet answers later.
+	mux.HandleFunc("GET /api/v1/devices/{id}/inbox", s.requireOperator(s.deviceInbox))
+	mux.HandleFunc("POST /api/v1/devices/{id}/inbox/refresh", s.requireOperator(s.refreshDeviceInbox))
+	mux.HandleFunc("DELETE /api/v1/devices/{id}/inbox/{name}", s.requireOperator(s.deleteDeviceFile))
+	mux.HandleFunc("POST /api/v1/devices/{id}/inbox", s.requireDevice(s.reportDeviceInbox))
+
 	// The notification feed is readable by any signed-in operator: it is how
 	// they see what the fleet and their colleagues have been doing.
 	mux.HandleFunc("GET /api/v1/events", s.requireOperator(s.listEvents))

@@ -104,6 +104,12 @@ export const api = {
     });
   },
 
+  // ── Per-device file manager ────────────────────────────────────────────────
+  deviceInbox: (id) => req("GET", "/devices/" + encodeURIComponent(id) + "/inbox"),
+  refreshDeviceInbox: (id) => req("POST", "/devices/" + encodeURIComponent(id) + "/inbox/refresh", {}),
+  deleteDeviceFile: (id, name) =>
+    req("DELETE", "/devices/" + encodeURIComponent(id) + "/inbox/" + encodeURIComponent(name)),
+
   // ── File library (console → device inbox) ──────────────────────────────────
   listLibraryFiles: () => req("GET", "/files"),
   deleteLibraryFile: (name) => req("DELETE", "/files/" + encodeURIComponent(name)),

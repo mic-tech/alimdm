@@ -209,3 +209,126 @@ func TestHeartbeatAnnouncesPendingFiles(t *testing.T) {
 		t.Errorf("pending_files = %v after a push, want 1 — the tablet would never fetch it", body["pending_files"])
 	}
 }
+
+// ── Per-device file manager ──────────────────────────────────────────────────
+
+// deviceCommands fetches what the tablet would collect on its next poll.
+// The trailing slash matters: without it the request lands on the operator
+// route instead of the device dispatcher, which is how these tests first failed.
+func (e *testEnv) deviceCommands(t *testing.T, id, key string) []map[string]any {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/devices/"+id+"/commands/", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	e.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("device commands: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Commands []map[string]any `json:"commands"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	return body.Commands
+}
+
+// Asking a tablet what is in its inbox must reach it as a command, since the
+// console cannot query a device behind NAT.
+func TestRefreshQueuesAListingCommand(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	key := e.newDeviceKey(t, "tablet-1")
+
+	if rec, _ := e.do("POST", "/api/v1/devices/tablet-1/inbox/refresh", tok, nil); rec.Code != http.StatusOK {
+		t.Fatalf("refresh: status %d", rec.Code)
+	}
+	cmds := e.deviceCommands(t, "tablet-1", key)
+	found := false
+	for _, c := range cmds {
+		if c["type"] == "list_inbox" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the tablet was never asked to list its inbox: %v", cmds)
+	}
+}
+
+// The listing the tablet reports is what the console shows, with its age.
+func TestReportedListingIsServedBackWithATimestamp(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	key := e.newDeviceKey(t, "tablet-1")
+
+	// Before the tablet has ever answered, the console must be able to tell
+	// "empty folder" from "never asked".
+	_, body := e.do("GET", "/api/v1/devices/tablet-1/inbox", tok, nil)
+	if body["fetched_at"] != "" {
+		t.Errorf("fetched_at = %v before any report, want empty", body["fetched_at"])
+	}
+
+	rec := httptest.NewRecorder()
+	payload, _ := json.Marshal(map[string]any{"entries": []map[string]any{
+		{"name": "worksheet.pdf", "size": 1024, "mime_type": "application/pdf", "modified_at": 1.7e12},
+	}})
+	req := httptest.NewRequest("POST", "/api/v1/devices/tablet-1/inbox", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer "+key)
+	e.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("report: status %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	_, body = e.do("GET", "/api/v1/devices/tablet-1/inbox", tok, nil)
+	entries, _ := body["entries"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %v, want the one file the tablet reported", body["entries"])
+	}
+	first, _ := entries[0].(map[string]any)
+	if first["name"] != "worksheet.pdf" {
+		t.Errorf("name = %v, want worksheet.pdf", first["name"])
+	}
+	if body["fetched_at"] == "" {
+		t.Error("fetched_at is empty after a report; the console could not show the listing's age")
+	}
+}
+
+// A device reports only its own inbox: the id comes from its key, not the path.
+func TestDeviceCannotReportAnotherDevicesInbox(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	e.newDeviceKey(t, "tablet-1")
+	otherKey := e.newDeviceKey(t, "tablet-2")
+
+	rec := httptest.NewRecorder()
+	payload, _ := json.Marshal(map[string]any{"entries": []map[string]any{{"name": "planted.pdf"}}})
+	// tablet-2's key, but tablet-1 in the path.
+	req := httptest.NewRequest("POST", "/api/v1/devices/tablet-1/inbox", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer "+otherKey)
+	e.mux.ServeHTTP(rec, req)
+
+	_, body := e.do("GET", "/api/v1/devices/tablet-1/inbox", tok, nil)
+	if entries, _ := body["entries"].([]any); len(entries) != 0 {
+		t.Errorf("tablet-2 wrote into tablet-1's listing: %v", body["entries"])
+	}
+}
+
+// Deleting a file on a tablet is a command carrying the file name.
+func TestDeleteQueuesACommandNamingTheFile(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	key := e.newDeviceKey(t, "tablet-1")
+
+	if rec, _ := e.do("DELETE", "/api/v1/devices/tablet-1/inbox/worksheet.pdf", tok, nil); rec.Code != http.StatusOK {
+		t.Fatalf("delete: status %d", rec.Code)
+	}
+	cmds := e.deviceCommands(t, "tablet-1", key)
+	for _, c := range cmds {
+		if c["type"] == "delete_inbox_file" {
+			params, _ := c["params"].(map[string]any)
+			if params["name"] != "worksheet.pdf" {
+				t.Errorf("command names %v, want worksheet.pdf", params["name"])
+			}
+			return
+		}
+	}
+	t.Errorf("no delete_inbox_file command reached the tablet: %v", cmds)
+}
