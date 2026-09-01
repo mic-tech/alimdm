@@ -609,6 +609,12 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; bac
   table.stacked td.cell-actions { display: block; padding-top: 10px; }
   table.stacked td.cell-actions .btn-group { width: 100%; flex-wrap: wrap; justify-content: flex-start !important; }
   table.stacked td select, table.stacked td input { max-width: 60vw; }
+  /* The Device cell carries a name and, under it, the model or id. As flex
+     items those sat side by side and crowded each other; the second line drops
+     beneath the first instead. Covers the App update table too, which pairs a
+     name with the device id the same way. */
+  table.stacked td[data-label="Device"] { flex-wrap: wrap; }
+  table.stacked td[data-label="Device"] > *:nth-child(n+2) { flex-basis: 100%; text-align: end; }
 
   /* Four full-width stat cards push the actual list a screen and a half down.
      Two across keeps them glanceable without owning the viewport. */
