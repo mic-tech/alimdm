@@ -588,13 +588,20 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; bac
   .table-scroll { overflow-x: visible; }
   table.stacked thead { display: none; }
   table.stacked, table.stacked tbody, table.stacked tr, table.stacked td { display: block; width: 100%; }
-  table.stacked tr { padding: 14px 0; border-bottom: 1px solid var(--border); }
+  /* The inset goes on the row, which is a block here, so each stacked row is
+     padded like the card it sits in rather than running to the edges. */
+  table.stacked tr { padding: 14px 16px; border-bottom: 1px solid var(--border); }
   table.stacked tr:last-child { border-bottom: none; }
   table.stacked td {
     display: flex; align-items: center; justify-content: space-between;
     gap: 12px; padding: 5px 0; border: none;
     white-space: normal; word-break: break-word;
   }
+  /* .card-table insets the first and last column so the table lines up with the
+     card header. Stacked, every cell is both, which would double the row's own
+     padding. */
+  table.stacked td:first-child { padding-inline-start: 0; }
+  table.stacked td:last-child { padding-inline-end: 0; }
   table.stacked td::before {
     content: attr(data-label);
     flex-shrink: 0;
@@ -602,6 +609,9 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; bac
   }
   /* An expanded panel (live view, a device's files) is its own layout, not a
      label/value pair, so it keeps the full width. */
+  /* An expanded panel brings its own padding and border, so the row must not
+     inset it as well. */
+  table.stacked tr:has(td[colspan]) { padding-inline: 0; }
   table.stacked td[colspan] { display: block; padding: 0; }
   table.stacked td[colspan]::before, table.stacked td:not([data-label])::before { content: none; }
   /* Controls need the room more than the alignment: let them wrap and run to
