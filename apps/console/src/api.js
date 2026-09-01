@@ -36,14 +36,19 @@ export const api = {
   listDevices: () => req("GET", "/devices"),
   listEvents: (limit = 50) => req("GET", "/events?limit=" + limit),
   /** One page of the feed. `before` is the id to walk back from, not an offset. */
-  listEventsPage: ({ limit = 50, before = 0, severity = "" } = {}) => {
+  listEventsPage: ({ limit = 50, before = 0, severity = "", device = "" } = {}) => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (before) q.set("before", String(before));
     if (severity) q.set("severity", severity);
+    // The same feed narrowed to one device, which is that device's history.
+    if (device) q.set("device", device);
     return req("GET", "/events?" + q.toString());
   },
   markEventsRead: (upTo) => req("POST", "/events/read", { up_to: upTo }),
-  getDevice: (id) => req("GET", "/devices/" + id),
+  /** One device in full, for its own page. */
+  getDevice: (id) => req("GET", "/devices/" + encodeURIComponent(id)),
+  /** What has been queued for a device, and how it went. */
+  deviceCommands: (id) => req("GET", "/devices/" + encodeURIComponent(id) + "/commands"),
   sendCommand: (id, type, params = {}) => req("POST", "/devices/" + id + "/commands", { type, params }),
   // Forced unenrolment: deletes the device server-side, revoking its API key.
   // Works without the tablet — a dead or lost device never has to cooperate.

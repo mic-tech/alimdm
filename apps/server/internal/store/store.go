@@ -908,7 +908,7 @@ func (s *Store) RecordEvent(e *Event) error {
 
 // ListEvents returns the most recent entries, newest first.
 func (s *Store) ListEvents(limit int) ([]Event, error) {
-	return s.ListEventsPage(0, limit, "")
+	return s.ListEventsPage(0, limit, "", "")
 }
 
 // ListEventsPage walks the feed backwards from a cursor.
@@ -919,7 +919,8 @@ func (s *Store) ListEvents(limit int) ([]Event, error) {
 //
 // beforeID of 0 starts at the newest. severity, when given, narrows to one
 // level, which is how an operator finds the failures among the routine traffic.
-func (s *Store) ListEventsPage(beforeID int64, limit int, severity string) ([]Event, error) {
+// deviceID narrows to one device's own history; empty means the whole fleet.
+func (s *Store) ListEventsPage(beforeID int64, limit int, severity, deviceID string) ([]Event, error) {
 	if limit <= 0 || limit > maxEvents {
 		limit = 50
 	}
@@ -928,6 +929,10 @@ func (s *Store) ListEventsPage(beforeID int64, limit int, severity string) ([]Ev
 	if beforeID > 0 {
 		q += ` AND id < ?`
 		args = append(args, beforeID)
+	}
+	if deviceID != "" {
+		q += ` AND device_id = ?`
+		args = append(args, deviceID)
 	}
 	switch severity {
 	case EventWarn:
@@ -960,9 +965,17 @@ func (s *Store) ListEventsPage(beforeID int64, limit int, severity string) ([]Ev
 
 // CountEvents reports how many entries are held, so the console can say how
 // much history there is rather than only how much it has fetched.
+// CountEvents is how much history is retained, for the whole fleet or for one
+// device, so a page can say what it is showing a slice of.
 func (s *Store) CountEvents() int {
 	var n int
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
+	return n
+}
+
+func (s *Store) CountDeviceEvents(deviceID string) int {
+	var n int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM events WHERE device_id = ?`, deviceID).Scan(&n)
 	return n
 }
 

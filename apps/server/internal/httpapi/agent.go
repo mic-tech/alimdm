@@ -167,7 +167,7 @@ func (s *Server) rolloutAgentUpdate(w http.ResponseWriter, r *http.Request) {
 			queued++
 		}
 	}
-	s.record(r, "agent_update_queued", store.EventWarn, "",
+	s.record(r, "agent_update_queued", store.EventWarn, singleTarget(req.Devices),
 		fmt.Sprintf("Rolling out Ali MDM %s to %s over the air", rel.VersionName, plural(queued, "device", "devices")))
 	writeJSON(w, map[string]any{"queued": queued, "targets": len(targets), "version_code": rel.VersionCode})
 }

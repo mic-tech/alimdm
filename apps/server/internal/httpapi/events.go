@@ -73,9 +73,12 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	severity := r.URL.Query().Get("severity")
+	// One device's history, for its own page. The same feed, narrowed — rather
+	// than a second endpoint that could drift from this one.
+	deviceID := r.URL.Query().Get("device")
 
 	// One extra row answers "is there more?" without a second count query.
-	events, err := s.st.ListEventsPage(before, limit+1, severity)
+	events, err := s.st.ListEventsPage(before, limit+1, severity, deviceID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not read events")
 		return
@@ -83,6 +86,14 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 	hasMore := len(events) > limit
 	if hasMore {
 		events = events[:limit]
+	}
+
+	// Total means "how much of this feed exists", so it has to follow the same
+	// filter the list did; a device page saying "showing 4 of 312" would be
+	// counting a fleet it is not displaying.
+	total := s.st.CountEvents()
+	if deviceID != "" {
+		total = s.st.CountDeviceEvents(deviceID)
 	}
 
 	marker := s.st.EventsReadMarker(op.Email)
@@ -96,7 +107,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 		"has_more": hasMore,
 		// So the page can say how much history exists at all, and why anything
 		// older than the cap is simply not there.
-		"total": s.st.CountEvents(),
+		"total": total,
 		"kept":  store.MaxEventsKept(),
 	})
 }

@@ -144,6 +144,10 @@ func (s *Server) Routes() *http.ServeMux {
 	// Operator console
 	mux.HandleFunc("POST /api/v1/operator/login", s.operatorLogin)
 	mux.HandleFunc("GET /api/v1/devices", s.requireOperator(s.listDevices))
+	// One device, in full — everything its own page shows above the history.
+	// Registered before the device-protocol dispatcher's subtree can claim it;
+	// a one-segment pattern is the more specific of the two.
+	mux.HandleFunc("GET /api/v1/devices/{id}", s.requireOperator(s.deviceDetail))
 	mux.HandleFunc("GET /api/v1/devices/{id}/commands", s.requireOperator(s.listDeviceCommands))
 	mux.HandleFunc("POST /api/v1/devices/{id}/commands", s.requireOperator(s.enqueueCommand))
 	mux.HandleFunc("GET /api/v1/groups", s.requireOperator(s.listGroups))
@@ -808,9 +812,100 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
+// deviceDetail is one device's full record, for its own page.
+//
+// Deliberately not the list row plus extras: the page shows things the list has
+// no room for — when it enrolled, which config version it is on, what is still
+// queued for it — and computing them here keeps the console from having to
+// stitch three responses together to describe one device.
+func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	d, err := s.st.GetDevice(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "unknown device")
+		return
+	}
+
+	online := false
+	if t, err := time.Parse(time.RFC3339, d.LastSeen); err == nil {
+		online = time.Since(t) < 3*time.Minute
+	}
+
+	// What the fleet is expected to converge on, so the page can say "behind"
+	// rather than leaving an operator to compare two version numbers by eye.
+	staged, stagedName := 0, ""
+	if rel, err := s.st.GetAgentRelease(); err == nil {
+		staged, stagedName = rel.VersionCode, rel.VersionName
+	}
+
+	groupName := d.GroupID
+	if g, err := s.st.GetGroup(d.GroupID); err == nil {
+		groupName = g.Name
+	}
+
+	// Only what is still waiting. A finished command is history, and the
+	// history is the feed below it on the page.
+	pending := 0
+	if cmds, err := s.st.ListCommands(d.ID); err == nil {
+		for _, c := range cmds {
+			if c.Status == "pending" || c.Status == "sent" {
+				pending++
+			}
+		}
+	}
+
+	writeJSON(w, map[string]any{
+		"id":               d.ID,
+		"name":             d.Name,
+		"label":            deviceLabel(d.ID, d.Name),
+		"group_id":         d.GroupID,
+		"group_name":       groupName,
+		"config_version":   d.ConfigVersion,
+		"battery":          d.Battery,
+		"android_ver":      d.AndroidVer,
+		"model":            d.Model,
+		"app_version_code": d.AppVersionCode,
+		"app_version_name": d.AppVersionName,
+		"staged_version":   stagedName,
+		"stale":            staged > 0 && d.AppVersionCode < staged,
+		"last_seen":        d.LastSeen,
+		"online":           online,
+		"enrolled_at":      d.CreatedAt,
+		"pending_commands": pending,
+	})
+}
+
+// singleTarget names the device an action was aimed at, when it was aimed at
+// exactly one. Empty for a fleet-wide action, which has no single device to
+// attribute it to.
+func singleTarget(devices []string) string {
+	if len(devices) == 1 {
+		return devices[0]
+	}
+	return ""
+}
+
+// listDeviceCommands is what has been queued for one device, and how it went.
+//
+// The store's struct carries no JSON tags, so encoding it directly emitted Go
+// field names — ID, CreatedAt, ErrMsg — while every other endpoint here speaks
+// snake_case. Nothing read this route until the device page did, and then read
+// nothing but empty cells.
 func (s *Server) listDeviceCommands(w http.ResponseWriter, r *http.Request) {
 	cmds, _ := s.st.ListCommands(r.PathValue("id"))
-	json.NewEncoder(w).Encode(cmds)
+	out := make([]map[string]any, 0, len(cmds))
+	for _, c := range cmds {
+		out = append(out, map[string]any{
+			"id":         c.ID,
+			"device_id":  c.DeviceID,
+			"type":       c.Type,
+			"status":     c.Status,
+			"err_msg":    c.ErrMsg,
+			"created_at": c.CreatedAt,
+			"expires_at": c.ExpiresAt,
+		})
+	}
+	writeJSON(w, out)
 }
 
 func (s *Server) enqueueCommand(w http.ResponseWriter, r *http.Request) {
@@ -1184,7 +1279,10 @@ func (s *Server) installAPK(w http.ResponseWriter, r *http.Request) {
 		queued++
 		s.pokes.Enqueue(devID, device.Poke{Type: "install_apk", Package: req.PackageName})
 	}
-	s.record(r, "apk_install_queued", store.EventInfo, "",
+	// An install aimed at one device belongs in that device's history. A
+	// fleet-wide push stays a fleet event rather than being repeated on all
+	// twelve.
+	s.record(r, "apk_install_queued", store.EventInfo, singleTarget(req.Devices),
 		fmt.Sprintf("Queued %s for install on %s", req.PackageName, plural(queued, "device", "devices")))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{

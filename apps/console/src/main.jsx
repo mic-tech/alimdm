@@ -10,6 +10,7 @@ import {
   IconRefresh, IconPlus, IconTrash, IconEdit, IconPower, IconLock, IconUnlock,
   IconEject, IconCopy, IconCheck, IconUpload, IconInfo, IconWarning,
   IconUser, IconUsers, IconKey, IconSave, IconShield, IconFile, IconEye, IconRows, IconGrid,
+  IconSliders,
 } from "./icons.jsx";
 
 // Compact "time ago" so the Last seen column stays narrow; the cell keeps the
@@ -303,7 +304,7 @@ function Groups({ onErr }) {
    connection to a tablet behind school NAT. The tablet only learns it is being
    watched on its next heartbeat, so the first frame can be up to 30 seconds
    away; the panel says so rather than showing a spinner that looks broken. */
-function LiveView({ device, onErr, onClose }) {
+function LiveView({ device, onErr }) {
   const imgRef = useRef(null);
   const [state, setState] = useState("starting");
   const [frames, setFrames] = useState(0);
@@ -344,35 +345,24 @@ function LiveView({ device, onErr, onClose }) {
   }, [device.id, onErr]);
 
   return (
-    <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)" }}>
-      <div className="btn-group" style={{ alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-        <span className="strong small">Live view — {device.name || device.id}</span>
-        <span className="muted small">
-          {state === "live" ? `${frames} frame${frames === 1 ? "" : "s"}`
-            : state === "error" ? "Stream ended"
-            : "Waiting for the device — it starts on its next check-in, up to 30s"}
-        </span>
-        <button className="btn outline sm" onClick={onClose}>Close</button>
-      </div>
-      <div style={{
-        background: "#000", borderRadius: "var(--radius)", overflow: "hidden",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        minHeight: 180, maxHeight: 520,
-      }}>
+    <>
+      <div className="screen-frame">
         {/* eslint-disable-next-line jsx-a11y/alt-text */}
-        <img ref={imgRef} style={{ maxWidth: "100%", maxHeight: 520, display: state === "live" ? "block" : "none" }} />
+        <img ref={imgRef} style={{ maxWidth: "100%", maxHeight: 460, display: state === "live" ? "block" : "none" }} />
         {state !== "live" && (
-          <span className="muted small" style={{ padding: 40 }}>
-            {state === "error" ? "The stream stopped." : "Waiting for the first frame…"}
+          <span className="muted small" style={{ padding: 40, textAlign: "center" }}>
+            {state === "error" ? "The stream stopped."
+              : "Waiting for the first frame — the device starts on its next check-in, up to 30s."}
           </span>
         )}
       </div>
-      <div className="muted small" style={{ marginTop: 8 }}>
+      <div className="muted small" style={{ marginTop: 10 }}>
+        {state === "live" && <>{frames} frame{frames === 1 ? "" : "s"}. </>}
         Smooth while the kiosk is on screen. Inside another app Android limits capture to
         about one frame a second, and screenshot protection is lifted for the length of the
-        session — so close this when you are done.
+        session — so stop this when you are done.
       </div>
-    </div>
+    </>
   );
 }
 
@@ -393,7 +383,7 @@ function useNarrowFlag() {
    clocks: the request reaches the tablet on its next check-in, so the image
    that answers it arrives later. The previous still stays on screen until the
    new one lands, and carries its age, rather than blanking between refreshes. */
-function DeviceSnapshot({ deviceId, online, intervalMs }) {
+function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
   const imgRef = useRef(null);
   const urlRef = useRef(null);
   const [state, setState] = useState("waiting");
@@ -440,10 +430,10 @@ function DeviceSnapshot({ deviceId, online, intervalMs }) {
       if (t) clearInterval(t);
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);
     };
-  }, [deviceId, online, intervalMs, manual]);
+  }, [deviceId, online, intervalMs, manual, nonce]);
 
   return (
-    <button className="snap" type="button"
+    <button className={"snap" + (big ? " big" : "")} type="button"
       title={online ? "Ask this device for a fresh screen" : "The device is offline"}
       disabled={!online} onClick={() => setManual((n) => n + 1)}>
       {/* eslint-disable-next-line jsx-a11y/alt-text */}
@@ -460,7 +450,17 @@ function DeviceSnapshot({ deviceId, online, intervalMs }) {
   );
 }
 
-function DeviceInbox({ device, onErr }) {
+/* ── One device ─────────────────────────────────────────────────────────────
+
+   Everything about a single device in one place: what it is, what its screen
+   is showing, what is on it, and what has happened to it.
+
+   The split with the Devices list is the point. The list answers "is the fleet
+   all right?" at a glance and stays a status board; anything that needs room —
+   a live stream, a file listing, a history that pages, an action you should
+   not take by accident — belongs here. */
+
+function DeviceFiles({ device, onErr }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -469,7 +469,7 @@ function DeviceInbox({ device, onErr }) {
     catch (e) { onErr(e.message); }
   }, [device.id, onErr]);
   useEffect(() => { load(); }, [load]);
-  // The tablet answers on its own schedule, so poll while the panel is open.
+  // The device answers on its own schedule, so keep looking while this is open.
   useEffect(() => { const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
 
   async function refresh() {
@@ -479,7 +479,7 @@ function DeviceInbox({ device, onErr }) {
     setBusy(false);
   }
   async function remove(name) {
-    if (!confirm(`Delete ${name} from ${device.name || device.id}?\n\nThis removes it from the device itself.`)) return;
+    if (!confirm(`Delete ${name} from ${device.label || device.id}?\n\nThis removes it from the device itself.`)) return;
     setBusy(true);
     try { await api.deleteDeviceFile(device.id, name); toast(`Asked the device to delete ${name}`); }
     catch (e) { onErr(e.message); }
@@ -488,45 +488,442 @@ function DeviceInbox({ device, onErr }) {
 
   const entries = data?.entries ?? [];
   return (
-    <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)" }}>
-      <div className="btn-group" style={{ alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-        <span className="strong small">Files on {device.name || device.id}</span>
+    <CardTable
+      title="Files"
+      actions={<>
         <span className="muted small">
           {!data ? "Loading…"
-            : data.fetched_at ? `Last checked ${timeAgo(data.fetched_at) || "just now"}`
-            : "Never checked — ask the device to report"}
+            : data.fetched_at ? `Checked ${timeAgo(data.fetched_at) || "just now"}`
+            : "Never checked"}
         </span>
         <button className="btn outline sm" disabled={busy || !device.online} onClick={refresh}
-          title={device.online ? "" : "The device is offline; it will answer when it checks in"}>
+          title={device.online
+            ? "The device answers on its next check-in"
+            : "The device is offline; it will answer when it checks in"}>
           <IconRefresh />Ask the device
         </button>
-      </div>
-      {!data ? null : entries.length === 0 ? (
-        <div className="muted small">
-          {data.fetched_at ? "The inbox folder is empty." : "No listing yet."}
-        </div>
-      ) : (
-        <table style={{ margin: 0 }}>
-          <thead><tr><th>File</th><th>Size</th><th>Modified</th><th style={{ textAlign: "right" }}>Actions</th></tr></thead>
+      </>}
+    >
+      <table className="stacked">
+        <thead>
+          <tr><th>File</th><th>Size</th><th>Modified</th><th style={{ textAlign: "right" }}>Actions</th></tr>
+        </thead>
+        <tbody>
+          {entries.length === 0 && (
+            <tr><td colSpan="4" style={{ padding: 0 }}>
+              <Empty icon={IconFile}
+                title={!data ? "Loading…" : data.fetched_at ? "Nothing in the inbox folder" : "No listing yet"}
+                desc={data && !data.fetched_at
+                  ? "Ask the device for its file list and it will answer on its next check-in."
+                  : "Send a document from the File library and it lands here, in Download/Ali MDM."} />
+            </td></tr>
+          )}
+          {entries.map((f) => (
+            <tr key={f.name}>
+              <td className="small strong" data-label="File">{f.name}</td>
+              <td className="small nowrap" data-label="Size">{fmtSize(f.size)}</td>
+              <td className="small muted nowrap" data-label="Modified">
+                {f.modified_at ? timeAgo(new Date(f.modified_at).toISOString()) : "—"}
+              </td>
+              <td className="cell-actions">
+                <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
+                  <button className="btn danger-outline sm icon" title="Delete from the device"
+                    disabled={busy} onClick={() => remove(f.name)}><IconTrash /></button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </CardTable>
+  );
+}
+
+/* This device's own history: the same feed the Activity page shows, narrowed
+   to the one device. Every entry the fleet feed holds for it is here — what was
+   sent to it, when it went quiet, when it came back — without the noise of the
+   other eleven. */
+function DeviceHistory({ deviceId, onErr }) {
+  const [events, setEvents] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const PAGE = 25;
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api.listEventsPage({ limit: PAGE, device: deviceId });
+      setEvents(r.events || []);
+      setHasMore(!!r.has_more);
+      setTotal(r.total || 0);
+    } catch (e) { onErr(e.message); }
+  }, [deviceId, onErr]);
+  useEffect(() => { load(); }, [load]);
+
+  async function loadOlder() {
+    if (!events || events.length === 0) return;
+    setBusy(true);
+    try {
+      const r = await api.listEventsPage({
+        limit: PAGE, before: events[events.length - 1].id, device: deviceId,
+      });
+      setEvents((prev) => [...prev, ...(r.events || [])]);
+      setHasMore(!!r.has_more);
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  return (
+    <div className="stack">
+      <CardTable title="History"
+        actions={<button className="btn outline sm" onClick={load}><IconRefresh />Refresh</button>}>
+        <table className="stacked">
+          <thead><tr><th>When</th><th>Level</th><th>Who</th><th>What happened</th></tr></thead>
           <tbody>
-            {entries.map((f) => (
-              <tr key={f.name}>
-                <td className="small strong">{f.name}</td>
-                <td className="small nowrap">{fmtSize(f.size)}</td>
-                <td className="small muted nowrap">
-                  {f.modified_at ? timeAgo(new Date(f.modified_at).toISOString()) : "—"}
+            {events && events.length === 0 && (
+              <tr><td colSpan="4" style={{ padding: 0 }}>
+                <Empty icon={IconBell} title="Nothing recorded yet"
+                  desc="Commands, renames, and going quiet or coming back are all logged here." />
+              </td></tr>
+            )}
+            {(events || []).map((ev) => (
+              <tr key={ev.id}>
+                <td className="small subtle nowrap" data-label="When"
+                  title={new Date(ev.at).toLocaleString()}>{timeAgo(ev.at) || "just now"}</td>
+                <td className="nowrap" data-label="Level">
+                  <span className={"badge " + (ev.severity === "error" ? "off"
+                    : ev.severity === "warn" ? "warning" : "")}>
+                    {SEVERITY_LABEL[ev.severity] || ev.severity}
+                  </span>
                 </td>
-                <td>
-                  <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
-                    <button className="btn danger-outline sm icon" title="Delete from the device"
-                      disabled={busy} onClick={() => remove(f.name)}><IconTrash /></button>
-                  </div>
-                </td>
+                <td className="small nowrap" data-label="Who">{ev.actor || "—"}</td>
+                <td className="small" data-label="What happened">{ev.summary}</td>
               </tr>
             ))}
           </tbody>
         </table>
+      </CardTable>
+      {events && events.length > 0 && (
+        <div className="flex" style={{ justifyContent: "center", gap: 12 }}>
+          <span className="small muted">Showing {events.length} of {total}</span>
+          {hasMore && (
+            <button className="btn outline sm" disabled={busy} onClick={loadOlder}>
+              {busy ? "Loading…" : "Load older"}
+            </button>
+          )}
+        </div>
       )}
+    </div>
+  );
+}
+
+/* What has been queued for this device, and how it went.
+   The history says what was asked for; this says what came of it — a command
+   still waiting for a device that is not checking in looks exactly like one
+   that succeeded, until you can see its status. */
+const CMD_BADGE = { pending: "warning", sent: "warning", success: "on", error: "off", failed: "off" };
+const CMD_LABEL = { pending: "Waiting", sent: "Sent", success: "Done", error: "Failed", failed: "Failed" };
+
+function DeviceCommands({ deviceId, onErr }) {
+  const [cmds, setCmds] = useState(null);
+  const load = useCallback(async () => {
+    try { setCmds(await api.deviceCommands(deviceId) || []); }
+    catch (e) { onErr(e.message); }
+  }, [deviceId, onErr]);
+  // A queued command is settled by the device on its own schedule, so this
+  // would otherwise sit on "Waiting" long after the device had answered.
+  useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [load]);
+
+  return (
+    <CardTable title="Commands"
+      actions={<button className="btn outline sm" onClick={load}><IconRefresh />Refresh</button>}>
+      <table className="stacked">
+        <thead><tr><th>When</th><th>Command</th><th>Status</th><th>Detail</th></tr></thead>
+        <tbody>
+          {cmds && cmds.length === 0 && (
+            <tr><td colSpan="4" style={{ padding: 0 }}>
+              <Empty icon={IconSliders} title="Nothing has been sent to this device"
+                desc="Reboot, lock and unlock are on this page; app installs and updates come from Packages and App update." />
+            </td></tr>
+          )}
+          {(cmds || []).map((c) => (
+            <tr key={c.id}>
+              <td className="small subtle nowrap" data-label="When"
+                title={c.created_at ? new Date(c.created_at).toLocaleString() : ""}>
+                {c.created_at ? timeAgo(c.created_at) || "just now" : "—"}
+              </td>
+              <td className="small strong nowrap" data-label="Command">{c.type}</td>
+              <td className="nowrap" data-label="Status">
+                <span className={"badge " + (CMD_BADGE[c.status] || "")}>
+                  {CMD_LABEL[c.status] || c.status}
+                </span>
+              </td>
+              <td className="small muted" data-label="Detail">{c.err_msg || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </CardTable>
+  );
+}
+
+function Fact({ label, children }) {
+  return <><dt>{label}</dt><dd>{children}</dd></>;
+}
+
+function DeviceDetail({ deviceId, onErr, onTitle, navigate }) {
+  // History, files and commands are all tables; on a phone they stack into
+  // cards like every other table in the console.
+  useNarrowFlag();
+  const [d, setD] = useState(null);
+  const [groups, setGroups] = useState([]);
+  const [missing, setMissing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState("history");
+  const [live, setLive] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [snapNonce, setSnapNonce] = useState(0);
+
+  const load = useCallback(async () => {
+    try {
+      const got = await api.getDevice(deviceId);
+      setD(got);
+      // The page is named after its device, which only this component knows.
+      // No description line: the bar names the device, and every fact one could
+      // carry is in the Details card a few lines below it.
+      onTitle({ title: got.label, desc: "" });
+    } catch (e) {
+      if (e.status === 404) {
+        setMissing(true);
+        onTitle({ title: "Device not found", desc: "" });
+      } else onErr(e.message);
+    }
+  }, [deviceId, onErr, onTitle]);
+
+  // Head the page with the id until the record lands, rather than leaving the
+  // previous page's title in the bar for the length of a request. It is also
+  // what an unnamed device is called everywhere else.
+  useEffect(() => { onTitle({ title: deviceId, desc: "" }); }, [deviceId, onTitle]);
+  useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [load]);
+  useEffect(() => { api.listGroups().then(setGroups).catch(() => {/* the group row just shows its id */}); }, []);
+
+  async function cmd(type, label) {
+    if (!confirm(`${label} ${d.label}?`)) return;
+    setBusy(true);
+    try { await api.sendCommand(d.id, type); toast(`Sent ${type} to ${d.label}`); load(); }
+    catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+  async function rename(next) {
+    const name = next.trim().slice(0, 64);
+    setRenaming(false);
+    if (name === (d.name || "")) return;
+    setBusy(true);
+    try { await api.renameDevice(d.id, name); toast(name ? `Renamed to "${name}"` : "Cleared the label"); load(); }
+    catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+  async function moveGroup(groupId) {
+    setBusy(true);
+    try { await api.moveDeviceGroup(d.id, groupId); toast(`Moved to ${groupId}`); load(); }
+    catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+  // Only the app can surrender Device Owner, so this is a queued command
+  // rather than something the server can do — unlike removing the device.
+  async function releaseOwner() {
+    if (!d.online && !confirm(
+      `${d.label} is offline.\n\n` +
+      "Only the app itself can surrender Device Owner, so this command sits queued " +
+      "until the device checks in. If it never does, nothing happens.\n\nQueue it anyway?",
+    )) return;
+    if (!confirm(
+      `Release Device Owner on ${d.label}?\n\n` +
+      "The device leaves kiosk mode and loses lockdown: no app whitelist, no " +
+      "navigation blocking, no factory-reset protection.\n\n" +
+      "This is one-way. Nothing on the device can grant it back — restoring " +
+      "management needs physical ADB access to the device.",
+    )) return;
+    setBusy(true);
+    try { await api.sendCommand(d.id, "release_device_owner"); toast(`Queued Device Owner release for ${d.label}`); load(); }
+    catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+  async function unenroll() {
+    if (!confirm(
+      `Remove ${d.label} from the console?\n\n` +
+      "This removes the device here and revokes its key. It does not need the " +
+      "device to be reachable, so it works for one that is lost or broken.\n\n" +
+      "If the device ever checks in again it will be rejected and will wipe its " +
+      "own cloud settings — but it stays locked down locally until Device Owner " +
+      "is removed on the device itself.",
+    )) return;
+    setBusy(true);
+    try {
+      await api.unenroll(d.id);
+      toast(`Removed ${d.label}`);
+      navigate("/devices");
+    } catch (e) { onErr(e.message); setBusy(false); }
+  }
+
+  if (missing) {
+    return (
+      <div className="stack">
+        <Empty icon={IconDevices} title="No such device"
+          desc="It may have been removed from the console, or this link may be out of date." />
+      </div>
+    );
+  }
+  if (!d) return <Loading label="Loading device…" />;
+
+  return (
+    <div className="stack">
+      {!d.online && (
+        <Alert tone="warning" icon={IconWarning} title="This device is not checking in">
+          It keeps showing its kiosk while offline, so nothing looks wrong in the room.
+          Commands and policy changes wait here and reach it when it returns
+          {d.last_seen ? ` — last seen ${timeAgo(d.last_seen)}` : ""}.
+        </Alert>
+      )}
+
+      <div className="detail-grid">
+        <Card title="Screen" actions={live ? (
+          <button className="btn outline sm" onClick={() => setLive(false)}>Stop live view</button>
+        ) : (<>
+          <button className="btn outline sm" disabled={!d.online}
+            title={d.online ? "Watch this screen as it changes" : "The device is offline"}
+            onClick={() => setLive(true)}><IconEye />Live view</button>
+          <button className="btn outline sm" disabled={!d.online}
+            title={d.online ? "Ask for a fresh screen now" : "The device is offline"}
+            onClick={() => setSnapNonce((n) => n + 1)}><IconRefresh />Refresh</button>
+        </>)}>
+          {live
+            ? <LiveView device={d} onErr={onErr} />
+            : <DeviceSnapshot deviceId={d.id} online={d.online} intervalMs={30000}
+                nonce={snapNonce} big />}
+        </Card>
+
+        <Card title="Details" footer={
+          <div className="btn-group">
+            <button className="btn outline sm" disabled={busy} onClick={() => cmd("reboot", "Reboot")}>
+              <IconPower />Reboot
+            </button>
+            <button className="btn outline sm" disabled={busy} onClick={() => cmd("lock", "Lock")}>
+              <IconLock />Lock
+            </button>
+            <button className="btn outline sm" disabled={busy} onClick={() => cmd("unlock", "Unlock")}>
+              <IconUnlock />Unlock
+            </button>
+          </div>
+        }>
+          <dl className="facts">
+            <Fact label="Label">
+              {renaming ? (
+                <input autoFocus defaultValue={d.name || ""} placeholder={d.id} maxLength={64}
+                  disabled={busy} style={{ height: 28, width: "100%" }}
+                  title="Shown in the corner of this device's kiosk screen"
+                  onBlur={(e) => rename(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.target.blur();
+                    if (e.key === "Escape") { e.target.value = d.name || ""; e.target.blur(); }
+                  }} />
+              ) : (
+                <span className="device-label" style={{ justifyContent: "flex-end" }}>
+                  <span className="strong">{d.name || <span className="muted">Not set</span>}</span>
+                  <button className="label-edit" title="Rename this device" disabled={busy}
+                    aria-label="Rename this device" onClick={() => setRenaming(true)}>
+                    <IconEdit />
+                  </button>
+                </span>
+              )}
+            </Fact>
+            <Fact label="Status">
+              <span className={"badge " + (d.online ? "on" : "off")}>
+                <span className="dot" />{d.online ? "Online" : "Offline"}
+              </span>
+            </Fact>
+            <Fact label="Last seen">
+              <span title={d.last_seen ? new Date(d.last_seen).toLocaleString() : ""}>
+                {d.last_seen ? timeAgo(d.last_seen) : "Never"}
+              </span>
+            </Fact>
+            <Fact label="Battery">{d.battery != null && d.battery > 0 ? d.battery + "%" : "—"}</Fact>
+            <Fact label="Android">{d.android_ver || "—"}</Fact>
+            <Fact label="Model">{d.model || "—"}</Fact>
+            <Fact label="Ali MDM">
+              {!d.app_version_code ? "—" : d.stale ? (
+                <span className="badge warning"
+                  title={d.staged_version ? `Behind ${d.staged_version}, staged for the fleet` : "Behind the staged build"}>
+                  {d.app_version_name || d.app_version_code}
+                </span>
+              ) : (d.app_version_name || d.app_version_code)}
+            </Fact>
+            <Fact label="Policy group">
+              <select value={d.group_id || ""} disabled={busy}
+                onChange={(e) => moveGroup(e.target.value)} style={{ height: 30, maxWidth: 170 }}>
+                {groups.length === 0 && <option value={d.group_id}>{d.group_name}</option>}
+                {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+            </Fact>
+            <Fact label="Config">v{d.config_version}</Fact>
+            <Fact label="Enrolled">
+              {d.enrolled_at ? new Date(d.enrolled_at).toLocaleDateString() : "—"}
+            </Fact>
+            <Fact label="Device id"><span className="mono small">{d.id}</span></Fact>
+            {d.pending_commands > 0 && (
+              <Fact label="Queued">
+                <button className="linkish small" onClick={() => setTab("commands")}>
+                  {d.pending_commands} waiting
+                </button>
+              </Fact>
+            )}
+          </dl>
+        </Card>
+      </div>
+
+      <span className="view-switch" role="group" aria-label="What to show about this device">
+        <button className={tab === "history" ? "on" : ""} aria-pressed={tab === "history"}
+          onClick={() => setTab("history")}><IconBell />History</button>
+        <button className={tab === "files" ? "on" : ""} aria-pressed={tab === "files"}
+          onClick={() => setTab("files")}><IconFile />Files</button>
+        <button className={tab === "commands" ? "on" : ""} aria-pressed={tab === "commands"}
+          onClick={() => setTab("commands")}><IconSliders />Commands</button>
+      </span>
+
+      {tab === "history" && <DeviceHistory deviceId={d.id} onErr={onErr} />}
+      {tab === "files" && <DeviceFiles device={d} onErr={onErr} />}
+      {tab === "commands" && <DeviceCommands deviceId={d.id} onErr={onErr} />}
+
+      <Card title="Retire this device">
+        <div className="stack" style={{ gap: 16 }}>
+          <div className="flex" style={{ justifyContent: "space-between", gap: 16 }}>
+            <div className="grow">
+              <div className="strong small">Release Device Owner</div>
+              <div className="muted small">
+                Hands the device back: no kiosk, no lockdown, no factory-reset protection.
+                Only the app can do this, so it needs the device to check in, and nothing
+                here can grant it back afterwards.
+              </div>
+            </div>
+            <button className="btn danger-outline sm" disabled={busy} onClick={releaseOwner}>
+              <IconShield />Release
+            </button>
+          </div>
+          <div className="flex" style={{ justifyContent: "space-between", gap: 16 }}>
+            <div className="grow">
+              <div className="strong small">Remove from the console</div>
+              <div className="muted small">
+                Revokes its key and drops it from the fleet. Works for a device that is lost
+                or broken, but it stays locked down until Device Owner is released on the
+                device itself.
+              </div>
+            </div>
+            <button className="btn danger-outline sm" disabled={busy} onClick={unenroll}>
+              <IconEject />Remove
+            </button>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -652,7 +1049,7 @@ function Notifications({ me, onErr }) {
   );
 }
 
-function Devices({ onErr }) {
+function Devices({ onErr, navigate }) {
   useNarrowFlag();
   const [view, setView] = useState(() => {
     try { return localStorage.getItem("devicesView") === "cards" ? "cards" : "table"; }
@@ -678,8 +1075,6 @@ function Devices({ onErr }) {
     try { localStorage.setItem("snapEvery", String(ms)); } catch { /* private mode */ }
   };
   const [renaming, setRenaming] = useState(null);
-  const [inboxFor, setInboxFor] = useState(null);
-  const [liveFor, setLiveFor] = useState(null);
   const [devices, setDevices] = useState(null);
   const [groups, setGroups] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -697,45 +1092,6 @@ function Devices({ onErr }) {
     if (!confirm(`Send "${type}" to ${id}?`)) return;
     setBusy(true);
     try { await api.sendCommand(id, type); toast(`Sent ${type} to ${id}`); load(); }
-    catch (e) { onErr(e.message); }
-    setBusy(false);
-  }
-  // Releasing Device Owner needs the tablet to be reachable: only the app can
-  // surrender it, so this is queued as a command rather than done server-side.
-  // Unlike unenrolling, it cannot be done for a device that is gone.
-  async function releaseOwner(d) {
-    if (!d.online && !confirm(
-      `${d.name || d.id} is offline.\n\n` +
-      "Only the app itself can surrender Device Owner, so this command sits queued " +
-      "until the device checks in. If it never does, nothing happens.\n\nQueue it anyway?",
-    )) return;
-    if (!confirm(
-      `Release Device Owner on ${d.name || d.id}?\n\n` +
-      "The device leaves kiosk mode and loses lockdown: no app whitelist, no " +
-      "navigation blocking, no factory-reset protection.\n\n" +
-      "This is one-way. Nothing on the device can grant it back — restoring " +
-      "management needs physical ADB access to the device.",
-    )) return;
-    setBusy(true);
-    try {
-      await api.sendCommand(d.id, "release_device_owner");
-      toast(`Queued Device Owner release for ${d.name || d.id}`);
-      load();
-    } catch (e) { onErr(e.message); }
-    setBusy(false);
-  }
-
-  async function unenroll(id) {
-    if (!confirm(
-      `Unenroll ${id}?\n\n` +
-      "This removes the device here and revokes its key. It does not need the " +
-      "device to be reachable, so it works for one that is lost or broken.\n\n" +
-      "If the device ever checks in again it will be rejected and will wipe its " +
-      "own cloud settings — but it stays locked down locally until Device Owner " +
-      "is removed on the device itself.",
-    )) return;
-    setBusy(true);
-    try { await api.unenroll(id); toast(`Unenrolled ${id}`); load(); }
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
@@ -878,10 +1234,11 @@ function Devices({ onErr }) {
                     />
                   ) : (
                     <span className="device-label">
-                      {/* Falls back to the id, so a tablet nobody has named is
-                          still identifiable now the id has its own tooltip
-                          rather than a line of its own. */}
-                      <span className="strong" title={d.id}>{d.name || d.id}</span>
+                      {/* The name opens the device's own page. It falls back to
+                          the id, so a tablet nobody has named is still
+                          identifiable, with the id in the tooltip. */}
+                      <a className="device-link strong" title={d.id}
+                        {...linkTo(pathForDevice(d.id), navigate)}>{d.name || d.id}</a>
                       <button className="label-edit" title="Rename this device"
                         aria-label={`Rename ${d.name || d.id}`}
                         disabled={busy} onClick={() => setRenaming(d.id)}>
@@ -923,34 +1280,22 @@ function Devices({ onErr }) {
                   </select>
                 </td>
                 <td className="cell-actions">
+                  {/* The quick ones only. Live view, files, and anything that
+                      cannot be undone are on the device's own page, where there
+                      is room to explain them and no chance of hitting one while
+                      aiming at the row above. */}
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
-                    <button className="btn outline sm icon" title="Live view of this device"
-                      onClick={() => setLiveFor(liveFor === d.id ? null : d.id)}><IconEye /></button>
-                    <button className="btn outline sm icon" title="Files on this device"
-                      onClick={() => setInboxFor(inboxFor === d.id ? null : d.id)}><IconFile /></button>
                     <button className="btn outline sm icon" title="Reboot" disabled={busy}
                       onClick={() => cmd(d.id, "reboot")}><IconPower /></button>
                     <button className="btn outline sm icon" title="Lock" disabled={busy}
                       onClick={() => cmd(d.id, "lock")}><IconLock /></button>
                     <button className="btn outline sm icon" title="Unlock" disabled={busy}
                       onClick={() => cmd(d.id, "unlock")}><IconUnlock /></button>
-                    <button className="btn danger-outline sm icon" title="Release Device Owner (needs the device online)"
-                      disabled={busy} onClick={() => releaseOwner(d)}><IconShield /></button>
-                    <button className="btn danger-outline sm icon" title="Unenroll" disabled={busy}
-                      onClick={() => unenroll(d.id)}><IconEject /></button>
+                    <a className="btn outline sm" {...linkTo(pathForDevice(d.id), navigate)}
+                      title="Everything about this device">Open</a>
                   </div>
                 </td>
               </tr>
-              {liveFor === d.id && (
-                <tr><td colSpan="8" style={{ padding: 0 }}>
-                  <LiveView device={d} onErr={onErr} onClose={() => setLiveFor(null)} />
-                </td></tr>
-              )}
-              {inboxFor === d.id && (
-                <tr><td colSpan="8" style={{ padding: 0 }}>
-                  <DeviceInbox device={d} onErr={onErr} />
-                </td></tr>
-              )}
               </React.Fragment>
             ))}
             {filtered.length === 0 && (
@@ -2262,18 +2607,44 @@ const NAV = [
 
 const HOME = NAV[0];
 
-/** The page a URL names, falling back to Devices for anything unrecognised. */
-function viewFromPath(pathname) {
-  const seg = pathname.replace(/^\/+|\/+$/g, "").split("/")[0].toLowerCase();
-  return (NAV.find((n) => n.path === seg) || HOME).id;
+/** The page a URL names — and the device, where it names one. */
+function parseRoute(pathname) {
+  const parts = pathname.replace(/^\/+|\/+$/g, "").split("/");
+  const page = NAV.find((n) => n.path === (parts[0] || "").toLowerCase()) || HOME;
+  // /devices/<id> is the only route with anything after the page name. The id
+  // is opaque, so it is taken as given rather than checked here; the page says
+  // so plainly if the server does not know it.
+  const deviceId = page.id === "devices" && parts[1] ? decodeURIComponent(parts[1]) : "";
+  return { view: page.id, deviceId };
 }
 
 function pathForView(id) {
   return "/" + ((NAV.find((n) => n.id === id) || HOME).path);
 }
+function pathForDevice(deviceId) {
+  return "/devices/" + encodeURIComponent(deviceId);
+}
+function pathForRoute({ view, deviceId }) {
+  return deviceId ? pathForDevice(deviceId) : pathForView(view);
+}
+
+/* A real link that navigates in place: href so the browser's own affordances
+   work — ctrl-click, middle-click, "copy link address" — with only a plain
+   left click taken over. */
+function linkTo(path, navigate) {
+  return {
+    href: path,
+    onClick: (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+      navigate(path);
+    },
+  };
+}
 
 function Shell({ onSignOut }) {
-  const [view, setView] = useState(() => viewFromPath(window.location.pathname));
+  const [route, setRoute] = useState(() => parseRoute(window.location.pathname));
+  const { view, deviceId } = route;
   const [collapsed, setCollapsed] = useState(false);
   const [me, setMe] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -2287,32 +2658,26 @@ function Shell({ onSignOut }) {
   // Navigate, and put it in the address bar. replace is for corrections the
   // operator did not ask for — landing on "/" or on a page they may not open —
   // which should not leave a Back step pointing at a URL that redirects again.
-  const go = useCallback((id, replace) => {
-    setView(id);
-    const to = pathForView(id);
+  const navigate = useCallback((to, replace) => {
+    setRoute(parseRoute(to));
     if (to !== window.location.pathname) {
-      window.history[replace ? "replaceState" : "pushState"]({ view: id }, "", to);
+      window.history[replace ? "replaceState" : "pushState"]({}, "", to);
     }
   }, []);
+  const go = useCallback((id, replace) => navigate(pathForView(id), replace), [navigate]);
 
   // Back and forward move between pages, as anyone would expect of real URLs.
   useEffect(() => {
-    const onPop = () => setView(viewFromPath(window.location.pathname));
+    const onPop = () => setRoute(parseRoute(window.location.pathname));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   // "/" and any unknown path show Devices; say so in the bar rather than
   // leaving a URL that does not match the page.
-  useEffect(() => { go(viewFromPath(window.location.pathname), true); }, [go]);
-
-  // A plain click navigates in place. Modified clicks are left alone, so
-  // ctrl/cmd-click and "open in new tab" work — the point of real links.
-  const navClick = (id) => (e) => {
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-    e.preventDefault();
-    go(id);
-  };
+  useEffect(() => {
+    navigate(pathForRoute(parseRoute(window.location.pathname)), true);
+  }, [navigate]);
 
   // The signed-in account comes from the server rather than the token so the
   // role shown here is the live one.
@@ -2333,6 +2698,18 @@ function Shell({ onSignOut }) {
     if (me && !nav.some((n) => n.id === view)) go("devices", true);
   }, [nav, view, me, go]);
 
+  // A device page is named after its device, which only the page itself knows.
+  // Cleared on every move so a stale name can never head the wrong page.
+  const [pageTitle, setPageTitle] = useState(null);
+  useEffect(() => { setPageTitle(null); }, [view, deviceId]);
+
+  // Declared here, above the effects that depend on them: a dependency array is
+  // evaluated during render, so a const declared further down would still be in
+  // its temporal dead zone when the effect below reads it.
+  const active = nav.find((n) => n.id === view) || nav[0];
+  const title = pageTitle?.title || active.title;
+  const desc = pageTitle?.desc ?? active.desc;
+
   // Offline count, polled here rather than on the Devices page so a silent
   // tablet is visible from wherever the operator happens to be. This is the
   // whole point: a device can stop being managed while looking perfectly fine
@@ -2348,14 +2725,13 @@ function Shell({ onSignOut }) {
     return () => { cancelled = true; clearInterval(t); };
   }, []);
 
-  useEffect(() => { window.scrollTo(0, 0); }, [view]);
+  useEffect(() => { window.scrollTo(0, 0); }, [view, deviceId]);
 
   // Name the tab after the page. Bookmarks and history entries are per page
   // now, and "Ali MDM Console" nine times over tells nobody which is which.
   useEffect(() => {
-    const page = NAV.find((n) => n.id === view);
-    document.title = page ? page.title + " · Ali MDM" : "Ali MDM Console";
-  }, [view]);
+    document.title = title ? title + " · Ali MDM" : "Ali MDM Console";
+  }, [title]);
 
   // A dropdown that can only be dismissed by its own button is a trap, so close
   // on any click outside it and on Escape. Listeners exist only while one is open.
@@ -2411,7 +2787,6 @@ function Shell({ onSignOut }) {
     );
   }
 
-  const active = nav.find((n) => n.id === view) || nav[0];
   const sidebarNav = nav.filter((n) => !n.menu);
   const menuNav = nav.filter((n) => n.menu);
 
@@ -2435,7 +2810,7 @@ function Shell({ onSignOut }) {
             const Icon = n.icon;
             return (
               <a key={n.id} className={"navbtn" + (view === n.id ? " active" : "")}
-                href={pathForView(n.id)} onClick={navClick(n.id)} title={n.txt}
+                {...linkTo(pathForView(n.id), navigate)} title={n.txt}
                 aria-current={view === n.id ? "page" : undefined}>
                 <span className="navbtn-icon"><Icon /></span>
                 <span className="navbtn-title">{n.txt}</span>
@@ -2455,7 +2830,7 @@ function Shell({ onSignOut }) {
       <div className="wrapper">
         <header className="header">
           <div className="container-fixed header-inner">
-            <h1 className="header-title">{active.title}</h1>
+            <h1 className="header-title">{title}</h1>
             <div className="header-tools">
             <div className="header-bell" ref={bellRef}>
               <button className="bell-btn" aria-haspopup="menu" aria-expanded={bellOpen}
@@ -2512,8 +2887,8 @@ function Shell({ onSignOut }) {
                     return (
                       <a key={n.id} role="menuitem"
                         className={"account-menu-item" + (view === n.id ? " active" : "")}
-                        href={pathForView(n.id)}
-                        onClick={(e) => { setMenuOpen(false); navClick(n.id)(e); }}>
+                        {...linkTo(pathForView(n.id), navigate)}
+                        onClickCapture={() => setMenuOpen(false)}>
                         <Icon />{n.txt}
                       </a>
                     );
@@ -2534,11 +2909,19 @@ function Shell({ onSignOut }) {
           <div className="container-fixed">
             <div className="toolbar">
               <div className="toolbar-heading">
-                <div className="toolbar-desc">{active.desc}</div>
+                {deviceId && (
+                  <a className="back-link" {...linkTo(pathForView("devices"), navigate)}>
+                    <IconChevronLeft />All devices
+                  </a>
+                )}
+                {desc && <div className="toolbar-desc">{desc}</div>}
               </div>
             </div>
 
-            {view === "devices" && <Devices onErr={onErr} />}
+            {view === "devices" && (deviceId
+              ? <DeviceDetail key={deviceId} deviceId={deviceId} onErr={onErr}
+                  onTitle={setPageTitle} navigate={navigate} />
+              : <Devices onErr={onErr} navigate={navigate} />)}
             {view === "groups" && <Groups onErr={onErr} />}
             {view === "enroll" && <Enroll onErr={onErr} />}
             {view === "apks" && <APKs onErr={onErr} />}
