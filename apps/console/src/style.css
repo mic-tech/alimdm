@@ -255,6 +255,16 @@ a { color: inherit; text-decoration: none; }
 .bell-item-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .bell-item-summary { font-size: 0.8125rem; color: var(--foreground); overflow-wrap: anywhere; }
 .bell-item-meta { font-size: 0.6875rem; color: var(--muted-foreground); }
+/* The way out of the peek and into the full record. */
+.bell-all {
+  display: block; width: 100%;
+  padding: 10px 14px;
+  border: 0; border-top: 1px solid var(--border);
+  background: var(--card); color: var(--primary);
+  font-family: inherit; font-size: 0.75rem; font-weight: 500;
+  text-align: center; cursor: pointer;
+}
+.bell-all:hover { background: var(--accent); }
 
 /* Account dropdown at the end of the header. Holds the pages that are about the
    operator rather than the fleet — profile, users, sign out — so the sidebar is
@@ -317,10 +327,9 @@ a { color: inherit; text-decoration: none; }
   border-bottom: 1px solid var(--border);
   transition: inset-inline-start var(--sidebar-transition);
 }
+.header-title { font-size: 1rem; font-weight: 500; color: var(--mono); letter-spacing: -0.025em; }
 .header-inner {
-  /* flex-end, not space-between: the bar holds only the bell and the account
-     now that the page title has gone, and space-between put them on the left. */
-  display: flex; align-items: center; justify-content: flex-end;
+  display: flex; align-items: center; justify-content: space-between;
   gap: 16px; width: 100%;
 }
 
@@ -715,6 +724,20 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; bac
 .form-row > .form-control > .form-desc { flex-basis: 100%; }
 @media (max-width: 48rem) {
   .form-row > .form-label { flex: 1 1 100%; }
+
+  /* The panel is anchored to the bell, which sits near the right edge, so at
+     340px wide it hung 25px off the left of a 390px phone. Pin it to the
+     viewport instead and let it use the full width. */
+  .bell-panel {
+    position: fixed;
+    /* Starts after the icon rail: the panel sits inside the header, whose
+       z-index traps it below the sidebar, so anything reaching under the rail
+       is painted over rather than merely overlapping it. */
+    inset-inline-start: calc(var(--sidebar-width) + 8px);
+    inset-inline-end: 8px;
+    top: calc(var(--header-height) + 6px);
+    width: auto; max-width: none;
+  }
 
   /* Four full-width stat cards push the actual list a screen and a half down.
      Two across keeps them glanceable without owning the viewport. */

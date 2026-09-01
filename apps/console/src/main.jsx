@@ -2396,9 +2396,7 @@ function Shell({ onSignOut }) {
       <div className="wrapper">
         <header className="header">
           <div className="container-fixed header-inner">
-            {/* No title here: the page prints the same words as its own heading
-                a few pixels below, and the sidebar already marks where you are.
-                Two identical headings one above the other is just noise. */}
+            <div className="header-title">{active.title}</div>
             <div className="header-tools">
             <div className="header-bell" ref={bellRef}>
               <button className="bell-btn" aria-haspopup="menu" aria-expanded={bellOpen}
@@ -2425,6 +2423,10 @@ function Shell({ onSignOut }) {
                       </div>
                     ))}
                   </div>
+                  <button className="bell-all" role="menuitem"
+                    onClick={() => { setBellOpen(false); setView("notifications"); }}>
+                    See all activity
+                  </button>
                 </div>
               )}
             </div>
