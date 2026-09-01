@@ -25,7 +25,7 @@ import CertificateModuleTyped, { CertificateInfo } from '../../utils/Certificate
 import AppLauncherModule, { AppInfo } from '../../utils/AppLauncherModule';
 import OverlayPermissionModule from '../../utils/OverlayPermissionModule';
 import LauncherModule from '../../utils/LauncherModule';
-import UpdateModule, { ENABLE_SELF_UPDATE } from '../../utils/UpdateModule';
+import UpdateModule, { ENABLE_SELF_UPDATE, ENABLE_ACCESSIBILITY_SERVICE } from '../../utils/UpdateModule';
 import AutoBrightnessModule from '../../utils/AutoBrightnessModule';
 import { httpServer } from '../../utils/HttpServerModule';
 import { hasSettingsAccess, revokeSettingsAccess } from '../../utils/authState';
@@ -2127,6 +2127,7 @@ const SettingsScreenNew: React.FC<SettingsScreenProps> = ({ navigation }) => {
             displayMode={displayMode}
             isDeviceOwner={isDeviceOwner}
             enableSelfUpdate={ENABLE_SELF_UPDATE}
+            enableAccessibilityService={ENABLE_ACCESSIBILITY_SERVICE}
             currentVersion={currentVersion}
             checkingUpdate={checkingUpdate}
             downloading={downloading}

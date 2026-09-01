@@ -30,7 +30,11 @@ class UpdateModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
      */
     override fun getConstants(): MutableMap<String, Any> {
         return mutableMapOf(
-            "ENABLE_SELF_UPDATE" to BuildConfig.ENABLE_SELF_UPDATE
+            "ENABLE_SELF_UPDATE" to BuildConfig.ENABLE_SELF_UPDATE,
+            // Separate from self-update: the settings screen used the flag above
+            // to decide whether to show the accessibility section, and hid it on
+            // every build of this fork.
+            "ENABLE_ACCESSIBILITY_SERVICE" to BuildConfig.ENABLE_ACCESSIBILITY_SERVICE
         )
     }
 

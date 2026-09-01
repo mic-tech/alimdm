@@ -91,6 +91,10 @@ ADB, which the QR path never uses:
 adb shell pm grant com.alimdm android.permission.WRITE_SECURE_SETTINGS
 ```
 
+(Builds before 63 could not do this at all — the service component was disabled
+in the manifest, so it did not appear in Android's accessibility list on any
+tablet, however it was enrolled. Fixed in build 63.)
+
 So on a QR-enrolled tablet, someone has to do one of these once:
 
 - **On the tablet, no computer:** Ali MDM **Settings → Advanced → Open

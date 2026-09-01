@@ -93,7 +93,17 @@ def enableProguardInReleaseBuilds = true
 //   ./gradlew assembleRelease -PupdateRepo=owner/name
 // App distribution is normally handled by the cloud console instead.
 def updateRepo = project.hasProperty('updateRepo') ? project.property('updateRepo') : ''
-def enableSelfUpdate = !updateRepo.isEmpty() && !project.hasProperty('playstore')
+def playStoreBuild = project.hasProperty('playstore')
+def enableSelfUpdate = !updateRepo.isEmpty() && !playStoreBuild
+
+// The accessibility service is off in Play Store builds only, because of the
+// BIND_ACCESSIBILITY_SERVICE policy. It used to ride on enableSelfUpdate, which
+// is false here for an unrelated reason — this fork ships no self-update repo —
+// so every release went out with the service component disabled in the
+// manifest. A disabled component cannot be switched on by anyone: it is absent
+// from Settings → Accessibility, writing ENABLED_ACCESSIBILITY_SERVICES for it
+// does nothing, and screen capture of any app but our own could never work.
+def enableAccessibilityService = !playStoreBuild
 
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
@@ -119,29 +129,22 @@ android {
         applicationId "com.alimdm"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 62
+        versionCode 64
         versionName "1.2.34"
 
         // Expose self-update flag to both Kotlin (BuildConfig) and JS (via UpdateModule constants)
         buildConfigField "boolean", "ENABLE_SELF_UPDATE", "${enableSelfUpdate}"
+        buildConfigField "boolean", "ENABLE_ACCESSIBILITY_SERVICE", "${enableAccessibilityService}"
         buildConfigField "String", "UPDATE_REPO", "\"${updateRepo}\""
 
         // Play Store compliance: when -Pplaystore is set, replace REQUEST_INSTALL_PACKAGES
         // with INTERNET (already declared → deduplicated by manifest merger → effectively removed)
         // and disable UpdateInstallReceiver.
-        if (enableSelfUpdate) {
-            manifestPlaceholders = [
-                usesCleartextTraffic: "true",
-                updateReceiverEnabled: "true",
-                accessibilityServiceEnabled: "true"
-            ]
-        } else {
-            manifestPlaceholders = [
-                usesCleartextTraffic: "true",
-                updateReceiverEnabled: "false",
-                accessibilityServiceEnabled: "false"
-            ]
-        }
+        manifestPlaceholders = [
+            usesCleartextTraffic: "true",
+            updateReceiverEnabled: "${enableSelfUpdate}",
+            accessibilityServiceEnabled: "${enableAccessibilityService}"
+        ]
     }
     
     signingConfigs {

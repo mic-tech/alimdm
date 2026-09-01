@@ -94,9 +94,24 @@ class AliMdmAccessibilityService : AccessibilityService() {
         fun ensureRunningOrReason(context: Context, timeoutMs: Long = 4000): String? {
             if (isRunning()) return null
             if (!enableViaSecureSettings(context)) {
-                return "the app does not hold WRITE_SECURE_SETTINGS, so only a person on the " +
-                    "device can enable it. Grant it once over ADB: adb shell pm grant " +
-                    "${context.packageName} android.permission.WRITE_SECURE_SETTINGS"
+                // Ask the package manager rather than inferring from the
+                // exception. A SecurityException from the write means one of two
+                // things, and blaming the permission for both sent a whole
+                // afternoon chasing an ADB grant that was already in place: the
+                // real fault was a build that shipped this service disabled, so
+                // the platform refused a write naming a component it did not
+                // consider a valid accessibility service.
+                val hasPermission = context.checkSelfPermission(
+                    android.Manifest.permission.WRITE_SECURE_SETTINGS,
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                return if (!hasPermission) {
+                    "the app does not hold WRITE_SECURE_SETTINGS, so only a person on the device " +
+                        "can enable it. Grant it once over ADB: adb shell pm grant " +
+                        "${context.packageName} android.permission.WRITE_SECURE_SETTINGS"
+                } else {
+                    "the permission is held but Android refused to enable it. Enable Ali MDM by " +
+                        "hand in Settings → Accessibility"
+                }
             }
             // Binding is asynchronous: the platform starts the service after the
             // setting is written, so returning immediately would report a

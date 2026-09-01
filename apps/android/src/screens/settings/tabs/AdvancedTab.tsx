@@ -34,6 +34,8 @@ interface AdvancedTabProps {
   
   // Play Store compliance: when false, the entire Updates section is hidden
   enableSelfUpdate: boolean;
+  /** Separate from self-update: whether this build ships the a11y service. */
+  enableAccessibilityService: boolean;
   
   // Version & updates
   currentVersion: string;
@@ -64,6 +66,7 @@ const AdvancedTab: React.FC<AdvancedTabProps> = ({
   displayMode,
   isDeviceOwner,
   enableSelfUpdate,
+  enableAccessibilityService,
   currentVersion,
   checkingUpdate,
   downloading,
@@ -441,7 +444,7 @@ const AdvancedTab: React.FC<AdvancedTabProps> = ({
       <MqttSettingsSection />
 
       {/* Accessibility Service - Hidden in Play Store builds (BIND_ACCESSIBILITY_SERVICE policy) */}
-      {enableSelfUpdate && (
+      {enableAccessibilityService && (
       <SettingsSection title="Accessibility Service" icon="keyboard-outline">
         <View style={styles.accessibilityStatusRow}>
           <Text style={styles.accessibilityStatusLabel}>Status</Text>

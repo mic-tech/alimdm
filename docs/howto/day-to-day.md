@@ -110,32 +110,42 @@ The new tablet inherits the same group config automatically.
 ## Seeing a device's screen
 
 The Devices page shows a still of each screen, and a device's own page can hold
-a live view. Both need to be able to capture whatever is on screen.
+a live view. Ali MDM can always capture **its own kiosk**. Capturing **another
+app** — Chrome, the Quran app, whatever a pupil is actually in — goes through
+its accessibility service.
 
-Ali MDM can always capture **its own kiosk**. To capture **another app** — which
-is what you want when a pupil is in Chrome or the Quran app — it needs its
-accessibility service, and Android only lets the app switch that on if it holds
-`WRITE_SECURE_SETTINGS`. That is granted once, over ADB, at enrolment:
+Two things have to be true for that, and until 1 September 2026 neither was:
+
+1. **The build must ship the service.** Every release before build 63 disabled
+   the component in the manifest, so it did not exist as far as Android was
+   concerned: absent from Settings → Accessibility, impossible to enable by any
+   means. Fixed in build 63.
+2. **The app must be able to switch it on**, which needs `WRITE_SECURE_SETTINGS`.
+   `enroll.py` grants it over ADB during enrolment. With it, the app enables the
+   service itself the first time capture needs it — no reboot, nobody at the
+   device.
+
+A tablet enrolled by QR never sees ADB, so it does not have the permission.
+Someone has to enable the service once, on the device: Ali MDM **Settings →
+Advanced → Open Accessibility Settings** → turn **Ali MDM** on. If Android greys
+the toggle out as a *restricted setting*, allow it first under Settings → Apps →
+Ali MDM → ⋮ → **Allow restricted settings**. Or run the grant by hand and let the
+app do the rest:
 
 ```
 adb shell pm grant com.alimdm android.permission.WRITE_SECURE_SETTINGS
 ```
 
-`enroll.py` does this for you. On a tablet enrolled before September 2026 the
-grant ran before the app was installed and quietly did nothing, so it has to be
-run by hand once — plug the tablet in, run the command, and that is the end of
-it. The app enables the service by itself from then on, including after a
-reboot.
-
-Two ways to tell whether a tablet is in this state:
-
-- Its **Commands** tab shows `screenshot` rows that failed, and the reason.
-- Its screen still shows the Ali MDM kiosk but never anything else.
+When capture of another app is not working, the device's **Commands** tab says
+which of the two is missing, in the `screenshot` rows.
 
 Capture of another app also requires **Allow remote screenshots** in the policy
 (Security → Lock Mode). Lock Mode blacks out screen capture; that setting lets
 the device lift the block for the fraction of a second the picture takes, which
 also re-enables the pupil's own Power+Volume Down screenshot for that moment.
+
+A capture that comes back black is usually a device whose screen is off — send
+**Wake** first.
 
 ---
 

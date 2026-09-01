@@ -8,6 +8,9 @@ const { UpdateModule } = NativeModules;
  * and all update methods become no-ops. The UI hides the update section.
  */
 export const ENABLE_SELF_UPDATE: boolean = UpdateModule?.ENABLE_SELF_UPDATE ?? true;
+/** Whether this build ships the accessibility service at all (off: Play Store). */
+export const ENABLE_ACCESSIBILITY_SERVICE: boolean =
+  UpdateModule?.ENABLE_ACCESSIBILITY_SERVICE ?? true;
 
 interface VersionInfo {
   versionName: string;
