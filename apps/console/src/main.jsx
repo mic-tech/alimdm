@@ -639,7 +639,7 @@ function Notifications({ me, onErr }) {
         </table>
       </CardTable>
 
-      <div className="flex" style={{ justifyContent: "center", gap: 12, alignItems: "center" }}>
+      <div className="flex wrap" style={{ justifyContent: "center", gap: 12, alignItems: "center" }}>
         <span className="small muted">
           Showing {events.length} of {total}{severity ? " matching" : ""}
         </span>
@@ -1783,7 +1783,10 @@ function OfflineAlertSettings({ onErr }) {
             </div>
           </div>
 
-          <div className="flex" style={{ gap: 8 }}>
+          {/* wrap: on a phone the two buttons and the status badge do not fit on
+              one line, and without it the badge was squeezed to 24px with its
+              text running under the button beside it. */}
+          <div className="flex wrap" style={{ gap: 8 }}>
             <button className="btn" onClick={save} disabled={busy}>
               <IconSave />{busy ? "Saving…" : "Save"}
             </button>
