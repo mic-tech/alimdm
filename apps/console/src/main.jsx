@@ -44,7 +44,7 @@ function Card({ title, actions, children, flush, footer }) {
     <div className="card">
       {(title || actions) && (
         <div className="card-header">
-          <h3 className="card-title">{title}</h3>
+          {title && <h3 className="card-title">{title}</h3>}
           {actions && <div className="card-toolbar">{actions}</div>}
         </div>
       )}
@@ -58,7 +58,7 @@ function CardTable({ title, actions, children, note }) {
   return (
     <div className="card">
       <div className="card-header">
-        <h3 className="card-title">{title}</h3>
+        {title && <h3 className="card-title">{title}</h3>}
         {actions && <div className="card-toolbar">{actions}</div>}
       </div>
       {note && <div className="card-content" style={{ paddingBottom: 0 }}>{note}</div>}
@@ -198,7 +198,6 @@ function Groups({ onErr }) {
   return (
     <div className="stack">
       <CardTable
-        title="Policy groups"
         actions={<>
           <button className="btn outline sm" onClick={load}><IconRefresh />Refresh</button>
           <button className="btn sm" onClick={() => setAdding((v) => !v)}><IconPlus />New group</button>
@@ -823,7 +822,6 @@ function Devices({ onErr }) {
       </div>
 
       <CardTable
-        title="Devices"
         actions={<>
           <input className="search-input" placeholder="Search devices…" value={q}
             onChange={(e) => setQ(e.target.value)} />
@@ -1209,7 +1207,6 @@ function APKs({ onErr }) {
   return (
     <div className="stack">
       <CardTable
-        title="App packages"
         actions={
           <label className="btn sm" style={{ position: "relative", overflow: "hidden" }}>
             <IconUpload />{busy ? "Uploading…" : "Upload APK"}
@@ -1502,7 +1499,6 @@ function Files({ onErr }) {
   return (
     <div className="stack">
       <CardTable
-        title="File library"
         actions={
           <label className="btn sm" style={{ position: "relative", overflow: "hidden" }}>
             <IconUpload />{busy ? "Working…" : "Upload file"}
@@ -2012,7 +2008,6 @@ function Users({ me, onErr, onMeChange }) {
   return (
     <div className="stack">
       <CardTable
-        title="User accounts"
         actions={<>
           <button className="btn outline sm" onClick={load}><IconRefresh />Refresh</button>
           <button className="btn sm" onClick={() => { setAdding((v) => !v); setEditing(null); setResetting(null); }}>
@@ -2401,7 +2396,9 @@ function Shell({ onSignOut }) {
       <div className="wrapper">
         <header className="header">
           <div className="container-fixed header-inner">
-            <div className="header-title">{active.title}</div>
+            {/* No title here: the page prints the same words as its own heading
+                a few pixels below, and the sidebar already marks where you are.
+                Two identical headings one above the other is just noise. */}
             <div className="header-tools">
             <div className="header-bell" ref={bellRef}>
               <button className="bell-btn" aria-haspopup="menu" aria-expanded={bellOpen}

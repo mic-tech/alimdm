@@ -318,10 +318,11 @@ a { color: inherit; text-decoration: none; }
   transition: inset-inline-start var(--sidebar-transition);
 }
 .header-inner {
-  display: flex; align-items: center; justify-content: space-between;
+  /* flex-end, not space-between: the bar holds only the bell and the account
+     now that the page title has gone, and space-between put them on the left. */
+  display: flex; align-items: center; justify-content: flex-end;
   gap: 16px; width: 100%;
 }
-.header-title { font-size: 1rem; font-weight: 500; color: var(--mono); letter-spacing: -0.025em; }
 
 /* Metronic's .kt-container-fixed */
 .container-fixed {
@@ -377,6 +378,9 @@ a { color: inherit; text-decoration: none; }
 /* wrap, and let the search box be the part that gives way: with nowrap the
    toolbar simply overflowed its card once the view switcher and the refresh
    interval joined it, pushing Refresh past the card's edge. */
+/* Pushed right by its own margin rather than by space-between, so a card whose
+   heading was dropped as a duplicate still has its controls on the right. */
+.card-header > .card-toolbar { margin-inline-start: auto; }
 .card-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
 /* Form controls default to width:100% because they normally sit in a stacked
    form. In a toolbar that makes one control swallow the whole line and shove
