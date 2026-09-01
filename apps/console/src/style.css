@@ -502,7 +502,8 @@ table.stacked.cards tbody tr:has(td[colspan]) { grid-column: 1 / -1; border: non
 
 /* Snapshot on a device card */
 .snap {
-  position: relative; width: 100%; margin-top: 10px;
+  position: relative; width: 100%; margin-top: 10px; padding: 0;
+  font: inherit; text-align: inherit; cursor: pointer;
   border: 1px solid var(--border); border-radius: var(--radius);
   background: #000; overflow: hidden;
   aspect-ratio: 10 / 16; max-height: 260px;
@@ -510,6 +511,8 @@ table.stacked.cards tbody tr:has(td[colspan]) { grid-column: 1 / -1; border: non
 }
 .snap img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .snap-note { color: var(--muted-foreground); font-size: 0.6875rem; text-align: center; padding: 10px; }
+.snap:disabled { cursor: default; }
+.snap:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .snap-age {
   position: absolute; inset-inline-end: 6px; inset-block-end: 6px;
   padding: 2px 6px; border-radius: 999px;

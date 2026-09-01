@@ -394,11 +394,13 @@ function useNarrowFlag() {
    clocks: the request reaches the tablet on its next check-in, so the image
    that answers it arrives later. The previous still stays on screen until the
    new one lands, and carries its age, rather than blanking between refreshes. */
-function DeviceSnapshot({ deviceId, online, intervalMs = 30000 }) {
+function DeviceSnapshot({ deviceId, online, intervalMs }) {
   const imgRef = useRef(null);
   const urlRef = useRef(null);
   const [state, setState] = useState("waiting");
   const [takenAt, setTakenAt] = useState(null);
+  // Bumped to ask for a fresh still outside the timer.
+  const [manual, setManual] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -423,24 +425,28 @@ function DeviceSnapshot({ deviceId, online, intervalMs = 30000 }) {
       // Offline tablets cannot answer; keep showing the last still rather than
       // queuing commands that will pile up until they return.
       if (!online) return;
-      api.requestSnapshot(deviceId).catch(() => {/* it will be retried next cycle */});
+      api.requestSnapshot(deviceId).catch(() => {/* retried on the next cycle */});
       // Give the tablet a check-in to act on it before looking for the result.
       setTimeout(() => { if (!cancelled) show(); }, 12000);
     };
 
     show();          // whatever is already there, immediately
     cycle();
-    const t = setInterval(cycle, intervalMs);
+    // 0 means the operator turned refreshing off: the last still stays, and the
+    // card can still be asked for a new one by hand.
+    const t = intervalMs > 0 ? setInterval(cycle, intervalMs) : null;
     return () => {
       cancelled = true;
       controller.abort();
-      clearInterval(t);
+      if (t) clearInterval(t);
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);
     };
-  }, [deviceId, online, intervalMs]);
+  }, [deviceId, online, intervalMs, manual]);
 
   return (
-    <div className="snap">
+    <button className="snap" type="button"
+      title={online ? "Ask this tablet for a fresh screen" : "The tablet is offline"}
+      disabled={!online} onClick={() => setManual((n) => n + 1)}>
       {/* eslint-disable-next-line jsx-a11y/alt-text */}
       <img ref={imgRef} style={{ display: state === "shown" ? "block" : "none" }} />
       {state !== "shown" && (
@@ -451,7 +457,7 @@ function DeviceSnapshot({ deviceId, online, intervalMs = 30000 }) {
       {state === "shown" && takenAt && (
         <span className="snap-age">{timeAgo(takenAt) || "just now"}</span>
       )}
-    </div>
+    </button>
   );
 }
 
@@ -535,6 +541,21 @@ function Devices({ onErr }) {
   const setViewMode = (v) => {
     setView(v);
     try { localStorage.setItem("devicesView", v); } catch { /* private mode */ }
+  };
+  // How often each card asks its tablet for a fresh screen. Per browser, like
+  // the view: it decides how much work this operator's page makes for the
+  // fleet, so it belongs with them rather than in the shared policy.
+  const [snapEvery, setSnapEvery] = useState(() => {
+    // Read null explicitly: Number(null) is 0, which is a valid stored value
+    // meaning "manual", so a fresh browser silently started with refreshing off.
+    const raw = localStorage.getItem("snapEvery");
+    if (raw === null || raw === "") return 30000;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 30000;
+  });
+  const setSnapInterval = (ms) => {
+    setSnapEvery(ms);
+    try { localStorage.setItem("snapEvery", String(ms)); } catch { /* private mode */ }
   };
   const [renaming, setRenaming] = useState(null);
   const [inboxFor, setInboxFor] = useState(null);
@@ -691,6 +712,17 @@ function Devices({ onErr }) {
             <button className={view === "cards" ? "on" : ""} aria-pressed={view === "cards"}
               onClick={() => setViewMode("cards")} title="Cards, with a screen snapshot"><IconGrid />Cards</button>
           </span>
+          {view === "cards" && (
+            <select value={snapEvery} onChange={(e) => setSnapInterval(Number(e.target.value))}
+              title="How often each card asks its tablet for a fresh screen. Every refresh wakes the tablet, so slower is kinder to a fleet you are not actively watching."
+              style={{ height: 32, minWidth: 132 }}>
+              <option value={0}>Screens: manual</option>
+              <option value={15000}>Screens: every 15s</option>
+              <option value={30000}>Screens: every 30s</option>
+              <option value={60000}>Screens: every minute</option>
+              <option value={300000}>Screens: every 5 min</option>
+            </select>
+          )}
           <button className="btn outline sm" onClick={load}><IconRefresh />Refresh</button>
         </>}
       >
@@ -739,7 +771,7 @@ function Devices({ onErr }) {
                   )}
                   {d.model && <div className="small muted">{d.model}</div>}
                   {view === "cards" && (
-                    <DeviceSnapshot deviceId={d.id} online={d.online} />
+                    <DeviceSnapshot deviceId={d.id} online={d.online} intervalMs={snapEvery} />
                   )}
                 </td>
                 <td data-label="Status">
