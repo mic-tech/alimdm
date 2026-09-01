@@ -119,7 +119,7 @@ func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
 		_ = s.files.Delete(name)
 	}
 	s.record(r, "file_deleted", store.EventWarn, "",
-		"Deleted "+name+" from the library (copies already on tablets are left alone)")
+		"Deleted "+name+" from the library (copies already on devices are left alone)")
 	writeJSON(w, map[string]any{"name": name, "deleted": true})
 }
 

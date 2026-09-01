@@ -373,7 +373,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		// keeps devices distinct; the cost is that a client which reports no
 		// serial gets a fresh row if it ever re-enrols, which is strictly
 		// better than two tablets silently sharing one.
-		id = "tablet-" + randomID()
+		id = "device-" + randomID()
 	}
 	key, _ := auth.GenerateAPIKey()
 	now := time.Now().UTC().Format(time.RFC3339)

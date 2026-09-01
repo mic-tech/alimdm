@@ -124,7 +124,7 @@ function Login({ onLogin }) {
           <div className="login-head">
             <img className="login-logo" src={logoMark} alt="" width="48" height="45" />
             <div className="login-title">Sign in to Ali MDM Console</div>
-            <div className="login-sub">Operator console for your tablet fleet</div>
+            <div className="login-sub">Operator console for your device fleet</div>
           </div>
 
           <div className="field">
@@ -350,7 +350,7 @@ function LiveView({ device, onErr, onClose }) {
         <span className="muted small">
           {state === "live" ? `${frames} frame${frames === 1 ? "" : "s"}`
             : state === "error" ? "Stream ended"
-            : "Waiting for the tablet — it starts on its next check-in, up to 30s"}
+            : "Waiting for the device — it starts on its next check-in, up to 30s"}
         </span>
         <button className="btn outline sm" onClick={onClose}>Close</button>
       </div>
@@ -444,13 +444,13 @@ function DeviceSnapshot({ deviceId, online, intervalMs }) {
 
   return (
     <button className="snap" type="button"
-      title={online ? "Ask this tablet for a fresh screen" : "The tablet is offline"}
+      title={online ? "Ask this device for a fresh screen" : "The device is offline"}
       disabled={!online} onClick={() => setManual((n) => n + 1)}>
       {/* eslint-disable-next-line jsx-a11y/alt-text */}
       <img ref={imgRef} style={{ display: state === "shown" ? "block" : "none" }} />
       {state !== "shown" && (
         <div className="snap-note">
-          {online ? "Waiting for the tablet to send a screen…" : "Offline — no screen to show"}
+          {online ? "Waiting for the device to send a screen…" : "Offline — no screen to show"}
         </div>
       )}
       {state === "shown" && takenAt && (
@@ -474,14 +474,14 @@ function DeviceInbox({ device, onErr }) {
 
   async function refresh() {
     setBusy(true);
-    try { await api.refreshDeviceInbox(device.id); toast("Asked the tablet for its file list"); }
+    try { await api.refreshDeviceInbox(device.id); toast("Asked the device for its file list"); }
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
   async function remove(name) {
-    if (!confirm(`Delete ${name} from ${device.name || device.id}?\n\nThis removes it from the tablet itself.`)) return;
+    if (!confirm(`Delete ${name} from ${device.name || device.id}?\n\nThis removes it from the device itself.`)) return;
     setBusy(true);
-    try { await api.deleteDeviceFile(device.id, name); toast(`Asked the tablet to delete ${name}`); }
+    try { await api.deleteDeviceFile(device.id, name); toast(`Asked the device to delete ${name}`); }
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
@@ -494,11 +494,11 @@ function DeviceInbox({ device, onErr }) {
         <span className="muted small">
           {!data ? "Loading…"
             : data.fetched_at ? `Last checked ${timeAgo(data.fetched_at) || "just now"}`
-            : "Never checked — ask the tablet to report"}
+            : "Never checked — ask the device to report"}
         </span>
         <button className="btn outline sm" disabled={busy || !device.online} onClick={refresh}
-          title={device.online ? "" : "The tablet is offline; it will answer when it checks in"}>
-          <IconRefresh />Ask the tablet
+          title={device.online ? "" : "The device is offline; it will answer when it checks in"}>
+          <IconRefresh />Ask the device
         </button>
       </div>
       {!data ? null : entries.length === 0 ? (
@@ -518,7 +518,7 @@ function DeviceInbox({ device, onErr }) {
                 </td>
                 <td>
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
-                    <button className="btn danger-outline sm icon" title="Delete from the tablet"
+                    <button className="btn danger-outline sm icon" title="Delete from the device"
                       disabled={busy} onClick={() => remove(f.name)}><IconTrash /></button>
                   </div>
                 </td>
@@ -707,14 +707,14 @@ function Devices({ onErr }) {
     if (!d.online && !confirm(
       `${d.name || d.id} is offline.\n\n` +
       "Only the app itself can surrender Device Owner, so this command sits queued " +
-      "until the tablet checks in. If it never does, nothing happens.\n\nQueue it anyway?",
+      "until the device checks in. If it never does, nothing happens.\n\nQueue it anyway?",
     )) return;
     if (!confirm(
       `Release Device Owner on ${d.name || d.id}?\n\n` +
-      "The tablet leaves kiosk mode and loses lockdown: no app whitelist, no " +
+      "The device leaves kiosk mode and loses lockdown: no app whitelist, no " +
       "navigation blocking, no factory-reset protection.\n\n" +
       "This is one-way. Nothing on the device can grant it back — restoring " +
-      "management needs physical ADB access to the tablet.",
+      "management needs physical ADB access to the device.",
     )) return;
     setBusy(true);
     try {
@@ -729,8 +729,8 @@ function Devices({ onErr }) {
     if (!confirm(
       `Unenroll ${id}?\n\n` +
       "This removes the device here and revokes its key. It does not need the " +
-      "tablet to be reachable, so it works for one that is lost or broken.\n\n" +
-      "If the tablet ever checks in again it will be rejected and will wipe its " +
+      "device to be reachable, so it works for one that is lost or broken.\n\n" +
+      "If the device ever checks in again it will be rejected and will wipe its " +
       "own cloud settings — but it stays locked down locally until Device Owner " +
       "is removed on the device itself.",
     )) return;
@@ -776,7 +776,7 @@ function Devices({ onErr }) {
       {offline.length > 0 && (
         <Alert tone="warning" icon={IconWarning}
           title={offline.length === 1 ? "1 device is not checking in" : `${offline.length} devices are not checking in`}>
-          A tablet that stops checking in keeps working on screen, so this is usually the only
+          A device that stops checking in keeps working on screen, so this is usually the only
           sign. Commands and policy changes will not reach it until it returns.
           <div style={{ marginTop: 8 }}>
             {offline.map((d) => (
@@ -835,7 +835,7 @@ function Devices({ onErr }) {
             <select className="snap-every" value={snapEvery}
               onChange={(e) => setSnapInterval(Number(e.target.value))}
               aria-label="Screen refresh"
-              title="How often each card asks its tablet for a fresh screen. Every refresh wakes the tablet, so slower is kinder to a fleet you are not actively watching. Click a screen to refresh it on demand.">
+              title="How often each card asks its device for a fresh screen. Every refresh wakes the device, so slower is kinder to a fleet you are not actively watching. Click a screen to refresh it on demand.">
               <option value={0}>Manual</option>
               <option value={15000}>Every 15s</option>
               <option value={30000}>Every 30s</option>
@@ -868,7 +868,7 @@ function Devices({ onErr }) {
                       placeholder={d.id}
                       maxLength={64}
                       disabled={busy}
-                      title="Shown in the corner of this tablet's kiosk screen"
+                      title="Shown in the corner of this device's kiosk screen"
                       style={{ width: 200, height: 28 }}
                       onBlur={(e) => { renameDevice(d.id, e.target.value, d.name); setRenaming(null); }}
                       onKeyDown={(e) => {
@@ -882,7 +882,7 @@ function Devices({ onErr }) {
                           still identifiable now the id has its own tooltip
                           rather than a line of its own. */}
                       <span className="strong" title={d.id}>{d.name || d.id}</span>
-                      <button className="label-edit" title="Rename this tablet"
+                      <button className="label-edit" title="Rename this device"
                         aria-label={`Rename ${d.name || d.id}`}
                         disabled={busy} onClick={() => setRenaming(d.id)}>
                         <IconEdit />
@@ -924,9 +924,9 @@ function Devices({ onErr }) {
                 </td>
                 <td className="cell-actions">
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
-                    <button className="btn outline sm icon" title="Live view of this tablet"
+                    <button className="btn outline sm icon" title="Live view of this device"
                       onClick={() => setLiveFor(liveFor === d.id ? null : d.id)}><IconEye /></button>
-                    <button className="btn outline sm icon" title="Files on this tablet"
+                    <button className="btn outline sm icon" title="Files on this device"
                       onClick={() => setInboxFor(inboxFor === d.id ? null : d.id)}><IconFile /></button>
                     <button className="btn outline sm icon" title="Reboot" disabled={busy}
                       onClick={() => cmd(d.id, "reboot")}><IconPower /></button>
@@ -934,7 +934,7 @@ function Devices({ onErr }) {
                       onClick={() => cmd(d.id, "lock")}><IconLock /></button>
                     <button className="btn outline sm icon" title="Unlock" disabled={busy}
                       onClick={() => cmd(d.id, "unlock")}><IconUnlock /></button>
-                    <button className="btn danger-outline sm icon" title="Release Device Owner (needs the tablet online)"
+                    <button className="btn danger-outline sm icon" title="Release Device Owner (needs the device online)"
                       disabled={busy} onClick={() => releaseOwner(d)}><IconShield /></button>
                     <button className="btn danger-outline sm icon" title="Unenroll" disabled={busy}
                       onClick={() => unenroll(d.id)}><IconEject /></button>
@@ -959,7 +959,7 @@ function Devices({ onErr }) {
                   icon={IconDevices}
                   title={devices.length === 0 ? "No devices enrolled yet" : "No devices match that search"}
                   desc={devices.length === 0
-                    ? "Enroll a tablet over ADB and it will appear here within a few seconds."
+                    ? "Enroll a device over ADB and it will appear here within a few seconds."
                     : "Try a different device id, model, or Android version."} />
               </td></tr>
             )}
@@ -1015,7 +1015,7 @@ function AppUpdate({ onErr }) {
     const label = ids.length ? `${ids.length} device(s)` : "all devices";
     if (!confirm(
       `Push Ali MDM ${release.version_name || ""} (versionCode ${release.version_code}) to ${label}?\n\n` +
-      "Each tablet downloads the build, verifies it, then restarts into the new version. " +
+      "Each device downloads the build, verifies it, then restarts into the new version. " +
       "The app is briefly unavailable while it installs.",
     )) return;
     setBusy(true);
@@ -1068,7 +1068,7 @@ function AppUpdate({ onErr }) {
           </div>
           <p className="small subtle">
             The version is read from the APK itself. Uploading anything other than an Ali MDM
-            build is rejected, since it could not replace the app the tablets are running.
+            build is rejected, since it could not replace the app the devices are running.
           </p>
         </div>
       </CardTable>
@@ -1127,7 +1127,7 @@ function AppUpdate({ onErr }) {
               {devices.length === 0 && (
                 <tr><td colSpan="6" style={{ padding: 0 }}>
                   <Empty icon={IconDevices} title="No devices enrolled"
-                    desc="Enroll a tablet before pushing an app update." />
+                    desc="Enroll a device before pushing an app update." />
                 </td></tr>
               )}
             </tbody>
@@ -1170,7 +1170,7 @@ function APKs({ onErr }) {
     setInstallName(apkName); setInstallPkg(""); setSelected({}); setSelectAll(false);
   }
   async function removeAPK(name) {
-    if (!confirm(`Delete ${name} from the server?\n\nTablets that already installed it keep it — this only removes the server copy and stops future installs.`)) return;
+    if (!confirm(`Delete ${name} from the server?\n\nDevices that already installed it keep it — this only removes the server copy and stops future installs.`)) return;
     setBusy(true);
     try {
       await api.deleteAPK(name);
@@ -1249,7 +1249,7 @@ function APKs({ onErr }) {
             {apks.length === 0 && (
               <tr><td colSpan="4" style={{ padding: 0 }}>
                 <Empty icon={IconPackage} title="No APKs uploaded"
-                  desc="Upload an APK to push it out to your enrolled tablets." />
+                  desc="Upload an APK to push it out to your enrolled devices." />
               </td></tr>
             )}
           </tbody>
@@ -1281,7 +1281,7 @@ function APKs({ onErr }) {
               <div className="form-control" style={{ flexDirection: "column", alignItems: "stretch" }}>
                 {devices.length === 0 ? (
                   <Alert tone="warning" icon={IconWarning}>
-                    No enrolled devices yet. Enroll a tablet first, then it will appear here.
+                    No enrolled devices yet. Enroll a device first, then it will appear here.
                   </Alert>
                 ) : (
                   <>
@@ -1361,10 +1361,10 @@ function QrEnrollCard({ onErr }) {
     <Card title="Enroll by QR (no cable)">
       <div className="stack">
         <Alert>
-          On a <b>factory-fresh</b> tablet, tap the first setup screen six times to open the QR
+          On a <b>factory-fresh</b> device, tap the first setup screen six times to open the QR
           scanner, then scan this. The wizard downloads Ali MDM from this server, verifies its
           signature, makes it Device Owner and enrolls it — no cable, no ADB. The same QR works
-          for every tablet.
+          for every device.
         </Alert>
 
         <div className="flex" style={{ gap: 12, alignItems: "flex-end" }}>
@@ -1377,10 +1377,10 @@ function QrEnrollCard({ onErr }) {
             </select>
           </div>
           <div>
-            <label className="small subtle" htmlFor="qr-label">Tablet label (optional)</label>
+            <label className="small subtle" htmlFor="qr-label">Device label (optional)</label>
             <input id="qr-label" value={label} onChange={(e) => setLabel(e.target.value)}
-              maxLength={64} placeholder="e.g. Library tablet"
-              title="One code carries one label, so name a code per tablet. Left blank, the tablet shows as its id until renamed."
+              maxLength={64} placeholder="e.g. Library device"
+              title="One code carries one label, so name a code per device. Left blank, the device shows as its id until renamed."
               style={{ display: "block", minWidth: 180, height: 34 }} />
           </div>
           <div>
@@ -1399,7 +1399,7 @@ function QrEnrollCard({ onErr }) {
           </button>
         </div>
         <p className="small subtle" style={{ marginTop: 0 }}>
-          Supplying Wi-Fi lets the tablet reach this server before anyone has typed a password
+          Supplying Wi-Fi lets the device reach this server before anyone has typed a password
           into it. Both the SSID and password are embedded in the QR.
         </p>
 
@@ -1482,7 +1482,7 @@ function Files({ onErr }) {
   }
 
   async function removeFile(name) {
-    if (!confirm(`Delete ${name} from the library?\n\nCopies already on tablets stay where they are — this only removes the server copy and stops future sends.`)) return;
+    if (!confirm(`Delete ${name} from the library?\n\nCopies already on devices stay where they are — this only removes the server copy and stops future sends.`)) return;
     setBusy(true);
     try { await api.deleteLibraryFile(name); toast(`Deleted ${name}`); if (detail === name) setDetail(null); load(); }
     catch (e) { onErr(e.message); }
@@ -1508,9 +1508,9 @@ function Files({ onErr }) {
         }
         note={
           <Alert>
-            Upload a file, then send it to a group. Each tablet downloads it on its next check-in into
-            a folder called <span className="mono">Download/Ali MDM</span>, where the tablet's own Files
-            app can open it. Deleting a file here does not remove copies already on tablets.
+            Upload a file, then send it to a group. Each device downloads it on its next check-in into
+            a folder called <span className="mono">Download/Ali MDM</span>, where the device's own Files
+            app can open it. Deleting a file here does not remove copies already on devices.
           </Alert>
         }
       >
@@ -1565,7 +1565,7 @@ function Files({ onErr }) {
                     <div className="btn-group" style={{ alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                       <span className="small muted">Send to</span>
                       <select value={pushGroup} onChange={(e) => setPushGroup(e.target.value)}>
-                        <option value="">Every enrolled tablet</option>
+                        <option value="">Every enrolled device</option>
                         {groups.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
                       </select>
                       <button className="btn sm" disabled={busy} onClick={() => doPush(f.name)}>
@@ -1611,7 +1611,7 @@ function FileDeliveries({ name, deviceName, onErr }) {
                     : d.status === "failed" ? <span className="badge off">Failed</span>
                     : <span className="badge warning">{d.status === "sent" ? "Downloading" : "Waiting"}</span>}
                 </td>
-                <td className="small muted">{d.last_error || (d.status === "done" ? "In the tablet's Ali MDM folder" : "—")}</td>
+                <td className="small muted">{d.last_error || (d.status === "done" ? "In the device's Ali MDM folder" : "—")}</td>
               </tr>
             ))}
           </tbody>
@@ -1633,19 +1633,19 @@ function Enroll({ onErr }) {
   }
 
   const steps = [
-    { title: "Factory-reset the tablet",
+    { title: "Factory-reset the device",
       body: "Settings → System → Reset → Erase all data. Let it reboot into the Android setup wizard." },
     { title: "Complete basic setup",
       body: "Choose language, connect to Wi-Fi, and get to the home screen. Skip the Google account sign-in if you can." },
     { title: "Enable USB debugging",
       body: "Settings → About tablet → tap “Build number” 7 times to unlock Developer options. Then Settings → System → Developer options → turn on USB debugging." },
-    { title: "Connect the tablet to the enrollment machine",
-      body: "Plug in a USB cable (or use Wi-Fi debugging). Accept the “Allow USB debugging?” prompt on the tablet." },
+    { title: "Connect the device to the enrollment machine",
+      body: "Plug in a USB cable (or use Wi-Fi debugging). Accept the “Allow USB debugging?” prompt on the device." },
     { title: "Run the enrollment command",
-      body: "On the enrollment machine, run the command below. It installs Ali MDM, sets it as Device Owner, and enrolls the tablet to the cloud — which then auto-installs the managed apps. --label names the tablet straight away (drop it and the device shows as its id until you rename it); add --group <id> to put it in a policy group other than the default.",
-      code: "cd /path/to/ali-mdm && ./apps/enroll/enroll_tablet.sh <SERIAL> --label \"Library tablet\"", copyKey: "cmd" },
-    { title: "Reboot the tablet",
-      body: "After enrollment completes, reboot the tablet. On boot it comes up in the kiosk with the managed apps installed and ready." },
+      body: "On the enrollment machine, run the command below. It installs Ali MDM, sets it as Device Owner, and enrolls the device to the cloud — which then auto-installs the managed apps. --label names the device straight away (drop it and the device shows as its id until you rename it); add --group <id> to put it in a policy group other than the default.",
+      code: "cd /path/to/ali-mdm && ./apps/enroll/enroll_tablet.sh <SERIAL> --label \"Library device\"", copyKey: "cmd" },
+    { title: "Reboot the device",
+      body: "After enrollment completes, reboot the device. On boot it comes up in the kiosk with the managed apps installed and ready." },
   ];
 
   return (
@@ -1667,10 +1667,10 @@ function Enroll({ onErr }) {
 
       <QrEnrollCard onErr={onErr} />
 
-      <Card title="Enroll a tablet over ADB">
+      <Card title="Enroll a device over ADB">
         <div className="stack">
           <Alert>
-            Use this when a tablet is already past its setup wizard, or when the QR path is not
+            Use this when a device is already past its setup wizard, or when the QR path is not
             an option. Both routes end in the same place; QR avoids the cable and the reset.
           </Alert>
 
@@ -1700,8 +1700,8 @@ function Enroll({ onErr }) {
       <Card title="Notes">
         <ul className="list-check">
           <li><span><b>USB is more reliable than Wi-Fi ADB</b> for the enrollment step — Wi-Fi ADB pairing does not survive a reboot.</span></li>
-          <li><span>The <span className="mono">enroll_tablet.sh</span> script lives on the enrollment machine and reads the enroll token and cloud URL from its config — you only supply the tablet serial.</span></li>
-          <li><span>Each tablet enrolls independently; the same cloud and group config applies to all of them.</span></li>
+          <li><span>The <span className="mono">enroll_tablet.sh</span> script lives on the enrollment machine and reads the enroll token and cloud URL from its config — you only supply the device serial.</span></li>
+          <li><span>Each device enrolls independently; the same cloud and group config applies to all of them.</span></li>
           <li><span><b>One-click helper (coming soon):</b> a Windows/macOS enrollment app will automate steps 4–6. Until then, the command above is all you need.</span></li>
         </ul>
       </Card>
@@ -1754,7 +1754,7 @@ function OfflineAlertSettings({ onErr }) {
     <Card title="Offline alerts">
         <div className="stack">
           <Alert>
-            A tablet that stops checking in keeps showing its kiosk, so nobody in the room can
+            A device that stops checking in keeps showing its kiosk, so nobody in the room can
             tell. This posts to a webhook when a device goes quiet, and again when it comes back.
             Leave the URL empty to turn alerting off.
           </Alert>
@@ -2230,19 +2230,19 @@ function Users({ me, onErr, onMeChange }) {
 
 const NAV = [
   { id: "devices", path: "devices", icon: IconDevices, txt: "Devices", title: "Devices",
-    desc: "Every enrolled tablet, its live status, and remote controls" },
+    desc: "Every enrolled device, its live status, and remote controls" },
   { id: "groups", path: "groups", icon: IconGroups, txt: "Groups", title: "Policy groups",
     desc: "Define one policy and apply it to a whole set of devices" },
   { id: "notifications", path: "activity", icon: IconBell, txt: "Activity", title: "Activity",
-    desc: "What the fleet has done, and who to tell when a tablet goes quiet" },
-  { id: "enroll", path: "enroll", icon: IconEnroll, txt: "Enroll", title: "Enroll a tablet",
+    desc: "What the fleet has done, and who to tell when a device goes quiet" },
+  { id: "enroll", path: "enroll", icon: IconEnroll, txt: "Enroll", title: "Enroll a device",
     desc: "Bring a new device under management over ADB" },
   { id: "apks", path: "packages", icon: IconPackage, txt: "Packages", title: "App packages",
     desc: "Upload APKs and push silent installs to your fleet" },
   { id: "files", path: "files", icon: IconFile, txt: "Files", title: "File library",
-    desc: "Send documents to every tablet's inbox folder" },
+    desc: "Send documents to every device's inbox folder" },
   { id: "appupdate", path: "app-update", icon: IconUpload, txt: "App update", title: "Ali MDM app update",
-    desc: "Push a new build of Ali MDM itself to your tablets over the air" },
+    desc: "Push a new build of Ali MDM itself to your devices over the air" },
   // menu: reached from the account dropdown in the header rather than the
   // sidebar. They stay in NAV so the header title and page description still
   // resolve by view id.
