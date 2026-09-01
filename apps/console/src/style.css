@@ -206,16 +206,14 @@ a { color: inherit; text-decoration: none; }
   text-transform: uppercase;
 }
 
-/* Account block, sitting at the end of the header. The sidebar no longer has a
-   footer, so nothing here is tied to its collapsed state. */
+/* Who you are signed in as, and the way out. Deliberately not a link to the
+   profile: that lives in the sidebar's Account section, and duplicating it here
+   made the header read as a second, competing nav control. */
 .header-user { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.header-user .avatar { width: 30px; height: 30px; font-size: 0.75rem; }
-.header-user-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
 .header-user-name {
-  font-size: 0.8125rem; font-weight: 500; color: var(--mono);
+  font-size: 0.8125rem; color: var(--muted-foreground);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.header-user-role { font-size: 0.6875rem; color: var(--muted-foreground); }
 .header-signout {
   display: flex; align-items: center; justify-content: center;
   width: 30px; height: 30px; flex-shrink: 0;
@@ -752,7 +750,7 @@ code.code, .code {
   :root { --header-height: 60px; }
   .app { --sidebar-width: var(--sidebar-width-collapse); }
   .sidebar-header { padding-inline: 12px; justify-content: center; }
-  .brand-logo-full, .navbtn-title, .header-user-meta { display: none; }
+  .brand-logo-full, .navbtn-title { display: none; }
   .brand-logo-mini { display: block; }
   .sidebar-content { padding-inline: 12px; overflow: hidden; }
   .navbtn { justify-content: center; padding-inline: 8px; }
