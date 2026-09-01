@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { api, getToken, setToken } from "./api.js";
 import PolicyEditor from "./PolicyEditor";
@@ -1581,21 +1581,24 @@ function Users({ me, onErr, onMeChange }) {
 /* ── Shell ──────────────────────────────────────────────────────────────── */
 
 const NAV = [
-  { id: "devices", icon: IconDevices, txt: "Devices", title: "Devices", group: "Manage",
+  { id: "devices", icon: IconDevices, txt: "Devices", title: "Devices",
     desc: "Every enrolled tablet, its live status, and remote controls" },
-  { id: "groups", icon: IconGroups, txt: "Groups", title: "Policy groups", group: "Manage",
+  { id: "groups", icon: IconGroups, txt: "Groups", title: "Policy groups",
     desc: "Define one policy and apply it to a whole set of devices" },
-  { id: "enroll", icon: IconEnroll, txt: "Enroll", title: "Enroll a tablet", group: "Manage",
-    desc: "Bring a new device under management over ADB" },
-  { id: "apks", icon: IconPackage, txt: "Packages", title: "App packages", group: "Manage",
-    desc: "Upload APKs and push silent installs to your fleet" },
-  { id: "appupdate", icon: IconUpload, txt: "App update", title: "Ali MDM app update", group: "Manage",
-    desc: "Push a new build of Ali MDM itself to your tablets over the air" },
-  { id: "profile", icon: IconUser, txt: "Profile", title: "Your profile", group: "Account",
-    desc: "Update your details and change your password" },
-  { id: "alerts", icon: IconWarning, txt: "Alerts", title: "Offline alerts", group: "Account",
+  { id: "alerts", icon: IconWarning, txt: "Alerts", title: "Offline alerts",
     adminOnly: true, desc: "Get told when a tablet stops checking in" },
-  { id: "users", icon: IconUsers, txt: "Users", title: "User accounts", group: "Account",
+  { id: "enroll", icon: IconEnroll, txt: "Enroll", title: "Enroll a tablet",
+    desc: "Bring a new device under management over ADB" },
+  { id: "apks", icon: IconPackage, txt: "Packages", title: "App packages",
+    desc: "Upload APKs and push silent installs to your fleet" },
+  { id: "appupdate", icon: IconUpload, txt: "App update", title: "Ali MDM app update",
+    desc: "Push a new build of Ali MDM itself to your tablets over the air" },
+  // menu: reached from the account dropdown in the header rather than the
+  // sidebar. They stay in NAV so the header title and page description still
+  // resolve by view id.
+  { id: "profile", icon: IconUser, txt: "Profile", title: "Your profile", menu: true,
+    desc: "Update your details and change your password" },
+  { id: "users", icon: IconUsers, txt: "Users", title: "User accounts", menu: true,
     adminOnly: true, desc: "Who can sign in to this console, and what they may do" },
 ];
 
@@ -1603,6 +1606,8 @@ function Shell({ onSignOut }) {
   const [view, setView] = useState("devices");
   const [collapsed, setCollapsed] = useState(false);
   const [me, setMe] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const accountRef = useRef(null);
   const onErr = useCallback((m) => toast(m, false), []);
 
   // The signed-in account comes from the server rather than the token so the
@@ -1640,6 +1645,22 @@ function Shell({ onSignOut }) {
 
   useEffect(() => { window.scrollTo(0, 0); }, [view]);
 
+  // A dropdown that can only be dismissed by its own button is a trap, so close
+  // on any click outside it and on Escape. Listeners exist only while it is open.
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onDown = (e) => {
+      if (accountRef.current && !accountRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    const onKey = (e) => { if (e.key === "Escape") setMenuOpen(false); };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
   if (!me) {
     return (
       <div className="login-wrap">
@@ -1649,7 +1670,8 @@ function Shell({ onSignOut }) {
   }
 
   const active = nav.find((n) => n.id === view) || nav[0];
-  const groups = [...new Set(nav.map((n) => n.group))];
+  const sidebarNav = nav.filter((n) => !n.menu);
+  const menuNav = nav.filter((n) => n.menu);
 
   return (
     <div className={"app" + (collapsed ? " collapsed" : "")}>
@@ -1667,27 +1689,22 @@ function Shell({ onSignOut }) {
         </div>
 
         <nav className="sidebar-content">
-          {groups.map((g) => (
-            <React.Fragment key={g}>
-              <div className="menu-heading">{g}</div>
-              {nav.filter((n) => n.group === g).map((n) => {
-                const Icon = n.icon;
-                return (
-                  <button key={n.id} className={"navbtn" + (view === n.id ? " active" : "")}
-                    onClick={() => setView(n.id)} title={n.txt}>
-                    <span className="navbtn-icon"><Icon /></span>
-                    <span className="navbtn-title">{n.txt}</span>
-                    {n.id === "devices" && offlineCount > 0 && (
-                      <span className="badge off" title={`${offlineCount} device(s) not checking in`}
-                        style={{ marginLeft: "auto", fontSize: "0.6875rem", padding: "1px 7px" }}>
-                        {offlineCount}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </React.Fragment>
-          ))}
+          {sidebarNav.map((n) => {
+            const Icon = n.icon;
+            return (
+              <button key={n.id} className={"navbtn" + (view === n.id ? " active" : "")}
+                onClick={() => setView(n.id)} title={n.txt}>
+                <span className="navbtn-icon"><Icon /></span>
+                <span className="navbtn-title">{n.txt}</span>
+                {n.id === "devices" && offlineCount > 0 && (
+                  <span className="badge off" title={`${offlineCount} device(s) not checking in`}
+                    style={{ marginLeft: "auto", fontSize: "0.6875rem", padding: "1px 7px" }}>
+                    {offlineCount}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </nav>
 
       </aside>
@@ -1696,12 +1713,40 @@ function Shell({ onSignOut }) {
         <header className="header">
           <div className="container-fixed header-inner">
             <div className="header-title">{active.title}</div>
-            <div className="header-user">
-              <span className="header-user-name" title={me.email}>{me.name || me.email}</span>
-              <button className="header-signout" title="Sign out" aria-label="Sign out"
-                onClick={onSignOut}>
-                <IconSignOut />
+            <div className="header-account" ref={accountRef}>
+              <button className="avatar header-avatar" aria-haspopup="menu"
+                aria-expanded={menuOpen} aria-label="Account menu"
+                title={me.name || me.email}
+                onClick={() => setMenuOpen((o) => !o)}>
+                {(me.name || me.email || "?").slice(0, 1)}
               </button>
+              {menuOpen && (
+                <div className="account-menu" role="menu">
+                  <div className="account-menu-head">
+                    <span className="account-menu-name">{me.name || me.email}</span>
+                    {me.name && <span className="account-menu-sub">{me.email}</span>}
+                    <span className="account-menu-sub">
+                      {me.role === "admin" ? "Administrator" : "Operator"}
+                    </span>
+                  </div>
+                  <div className="account-menu-sep" />
+                  {menuNav.map((n) => {
+                    const Icon = n.icon;
+                    return (
+                      <button key={n.id} role="menuitem"
+                        className={"account-menu-item" + (view === n.id ? " active" : "")}
+                        onClick={() => { setView(n.id); setMenuOpen(false); }}>
+                        <Icon />{n.txt}
+                      </button>
+                    );
+                  })}
+                  <div className="account-menu-sep" />
+                  <button role="menuitem" className="account-menu-item danger"
+                    onClick={() => { setMenuOpen(false); onSignOut(); }}>
+                    <IconSignOut />Sign out
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </header>

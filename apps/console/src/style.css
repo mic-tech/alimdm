@@ -151,14 +151,6 @@ a { color: inherit; text-decoration: none; }
 }
 .app.collapsed .sidebar-content { padding-inline: 12px; overflow: hidden; }
 
-.menu-heading {
-  padding: 12px 10px 6px;
-  font-size: 0.6875rem; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.05em;
-  color: var(--muted-foreground);
-  white-space: nowrap;
-}
-.app.collapsed .menu-heading { visibility: hidden; height: 20px; padding: 0; }
 
 /* Menu links mirror Metronic's accordion leaf: rounded-lg, accent/60 hover+active */
 .navbtn {
@@ -206,23 +198,46 @@ a { color: inherit; text-decoration: none; }
   text-transform: uppercase;
 }
 
-/* Who you are signed in as, and the way out. Deliberately not a link to the
-   profile: that lives in the sidebar's Account section, and duplicating it here
-   made the header read as a second, competing nav control. */
-.header-user { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.header-user-name {
-  font-size: 0.8125rem; color: var(--muted-foreground);
+/* Account dropdown at the end of the header. Holds the pages that are about the
+   operator rather than the fleet — profile, users, sign out — so the sidebar is
+   left to navigate the fleet alone. */
+.header-account { position: relative; display: flex; align-items: center; }
+.header-avatar { cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.header-avatar:hover { background: var(--accent); }
+.header-avatar[aria-expanded="true"] { border-color: var(--ring); background: var(--accent); }
+.account-menu {
+  position: absolute; inset-inline-end: 0; top: calc(100% + 8px);
+  z-index: 30; min-width: 220px; max-width: 280px; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  background: var(--card); color: var(--card-foreground);
+  box-shadow: var(--shadow-lg);
+}
+.account-menu-head { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px 6px; min-width: 0; }
+.account-menu-name {
+  font-size: 0.8125rem; font-weight: 500; color: var(--mono);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.header-signout {
-  display: flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; flex-shrink: 0;
-  border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px);
-  background: var(--background); color: var(--muted-foreground);
-  cursor: pointer; transition: background 0.15s, color 0.15s;
+.account-menu-sub {
+  font-size: 0.6875rem; color: var(--muted-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.header-signout:hover { background: var(--accent); color: var(--destructive); }
-.header-signout svg { width: 15px; height: 15px; }
+.account-menu-sep { height: 1px; margin: 4px 0; background: var(--border); }
+.account-menu-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent; border-radius: var(--radius);
+  background: transparent; color: var(--foreground);
+  font-family: inherit; font-size: 0.8125rem; text-align: start;
+  white-space: nowrap; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.account-menu-item:hover,
+.account-menu-item.active { background: color-mix(in oklab, var(--accent) 60%, transparent); }
+.account-menu-item svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--muted-foreground); }
+.account-menu-item.danger { color: var(--destructive); }
+.account-menu-item.danger svg { color: var(--destructive); }
 
 /* ── Wrapper + header ── */
 .wrapper {
@@ -754,7 +769,6 @@ code.code, .code {
   .brand-logo-mini { display: block; }
   .sidebar-content { padding-inline: 12px; overflow: hidden; }
   .navbtn { justify-content: center; padding-inline: 8px; }
-  .menu-heading { visibility: hidden; height: 20px; padding: 0; }
   .sidebar-toggle { display: none; }
   .container-fixed { padding-inline: 16px; }
   .toolbar { padding-bottom: 20px; }
