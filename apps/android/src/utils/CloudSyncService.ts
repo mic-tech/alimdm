@@ -5,6 +5,7 @@ import { StorageService, KEYS } from './storage';
 import DeviceControlService from '../services/DeviceControlService';
 import { CloudCommandService } from './CloudCommandService';
 import { CloudFileService } from './CloudFileService';
+import { ScreenStreamService } from './ScreenStreamService';
 import AgentUpdateService, { AgentUpdateOffer } from './AgentUpdateService';
 import { getCapabilities } from './capabilities';
 import KioskModule from './KioskModule';
@@ -55,6 +56,8 @@ interface HeartbeatResponse {
   /** Files queued for this tablet's inbox. Its own channel, so a stuck command
    *  cannot hold up a worksheet. */
   pending_files?: number;
+  /** True while an operator has the tablet's live view open. */
+  stream_requested?: boolean;
   server_time: string;
   sync_action: 'none' | 'apply';
   config: Record<string, unknown> | null;
@@ -327,6 +330,11 @@ class CloudSyncServiceClass {
       if ((data.pending_files ?? 0) > 0) {
         CloudFileService.poll(c).catch(() => {/* poll() handles its own errors */});
       }
+
+      // Live view follows the flag in both directions, so closing the console
+      // tab stops the tablet capturing without needing a command to arrive.
+      ScreenStreamService.sync(c, data.stream_requested === true)
+        .catch(() => {/* sync() reports its own errors */});
     } catch (error) {
       console.error('[CloudSync] Heartbeat error:', error);
     }

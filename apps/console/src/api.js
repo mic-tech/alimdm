@@ -1,4 +1,12 @@
 // Thin API client for the Ali MDM Console.
+
+/** Finds an 0xFF <marker> pair, used to locate JPEG frame boundaries. */
+function indexOfMarker(buf, marker, from) {
+  for (let i = from; i < buf.length - 1; i++) {
+    if (buf[i] === 0xff && buf[i + 1] === marker) return i;
+  }
+  return -1;
+}
 const TOKEN_KEY = "***";
 
 export function getToken() { return localStorage.getItem(TOKEN_KEY) || ""; }
@@ -101,6 +109,52 @@ export const api = {
       let d = null; try { d = JSON.parse(t); } catch { d = t; }
       if (!r.ok) throw new Error(d && d.error ? d.error : r.status);
       return d;
+    });
+  },
+
+  // ── Live view ──────────────────────────────────────────────────────────────
+  startStream: (id) => req("POST", "/devices/" + encodeURIComponent(id) + "/stream/start", {}),
+  stopStream: (id) => req("POST", "/devices/" + encodeURIComponent(id) + "/stream/stop", {}),
+  streamStatus: (id) => req("GET", "/devices/" + encodeURIComponent(id) + "/stream/status"),
+  /**
+   * Open the MJPEG stream and hand each JPEG to onFrame as a Blob.
+   *
+   * Read with fetch rather than pointed at with <img src>, because an <img>
+   * cannot send an Authorization header — the alternative would be a token in
+   * the URL, which ends up in logs and browser history.
+   */
+  openStream: (id, onFrame, onError, signal) => {
+    const tok = getToken();
+    return fetch("/api/v1/devices/" + encodeURIComponent(id) + "/stream.mjpeg", {
+      headers: tok ? { Authorization: "Bearer " + tok } : {},
+      signal,
+    }).then(async (res) => {
+      if (!res.ok) throw new Error("Stream failed: HTTP " + res.status);
+      const reader = res.body.getReader();
+      // Frames are found by scanning for JPEG start/end markers rather than by
+      // parsing MIME boundaries: it is fewer moving parts, and a boundary can
+      // straddle two chunks whereas the markers are self-synchronising.
+      let buf = new Uint8Array(0);
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        const next = new Uint8Array(buf.length + value.length);
+        next.set(buf); next.set(value, buf.length);
+        buf = next;
+
+        for (;;) {
+          const start = indexOfMarker(buf, 0xd8, 0);
+          if (start < 0) break;
+          const end = indexOfMarker(buf, 0xd9, start + 2);
+          if (end < 0) break;
+          onFrame(new Blob([buf.slice(start, end + 2)], { type: "image/jpeg" }));
+          buf = buf.slice(end + 2);
+        }
+        // A frame that never completes must not grow without bound.
+        if (buf.length > 8 * 1024 * 1024) buf = new Uint8Array(0);
+      }
+    }).catch((e) => {
+      if (e.name !== "AbortError") onError(e);
     });
   },
 

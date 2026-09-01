@@ -31,6 +31,9 @@ type Server struct {
 	// its own root so a worksheet can never be mistaken for an installable APK.
 	files        *blob.Store
 	pokes        *PokeQueue
+	// streams fans a tablet's live-view frames out to console viewers. In
+	// memory only: a picture of a classroom has no business on disk.
+	streams      *streamHubs
 	enrollToken  string
 	baseURL      string
 	consoleDir   string
@@ -38,7 +41,7 @@ type Server struct {
 }
 
 func New(st *store.Store, signer *auth.Signer, apks, agentAPKs *apk.Store, files *blob.Store, pokes *PokeQueue, enrollToken, baseURL, consoleDir, provisionAPK string) *Server {
-	return &Server{st: st, signer: signer, apks: apks, agentAPKs: agentAPKs, files: files, pokes: pokes, enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir, provisionAPK: provisionAPK}
+	return &Server{st: st, signer: signer, apks: apks, agentAPKs: agentAPKs, files: files, pokes: pokes, streams: newStreamHubs(), enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir, provisionAPK: provisionAPK}
 }
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -177,6 +180,14 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/devices/{id}/files", s.requireDevice(s.devicePendingFiles))
 	mux.HandleFunc("POST /api/v1/devices/{id}/files/{name}/result", s.requireDevice(s.fileDeliveryResult))
 	mux.HandleFunc("GET /api/v1/files/{name}/download", s.requireDevice(s.downloadFile))
+
+	// Live view. Frames travel device → server → console, because nothing can
+	// open a connection to a tablet behind school NAT.
+	mux.HandleFunc("POST /api/v1/devices/{id}/stream/start", s.requireOperator(s.startStream))
+	mux.HandleFunc("POST /api/v1/devices/{id}/stream/stop", s.requireOperator(s.stopStream))
+	mux.HandleFunc("GET /api/v1/devices/{id}/stream/status", s.requireOperator(s.streamStatus))
+	mux.HandleFunc("GET /api/v1/devices/{id}/stream.mjpeg", s.requireOperator(s.streamMJPEG))
+	mux.HandleFunc("POST /api/v1/devices/{id}/stream/frame", s.requireDevice(s.postFrame))
 
 	// Per-device file manager: the console asks, the tablet answers later.
 	mux.HandleFunc("GET /api/v1/devices/{id}/inbox", s.requireOperator(s.deviceInbox))
@@ -466,6 +477,9 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		// so the app fetches them on their own channel and a stuck command
 		// cannot hold up a worksheet.
 		"pending_files": s.st.CountPendingFileDeliveries(dev.ID),
+		// Live view is driven from here: the tablet starts capturing when an
+		// operator is watching and stops when the last one leaves.
+		"stream_requested": s.streams.get(dev.ID).wanted(),
 		"server_time":      lastSeen,
 		"sync_action":      "none",
 		"config":           nil,

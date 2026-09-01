@@ -18,6 +18,12 @@ type testEnv struct {
 	t   *testing.T
 	mux *http.ServeMux
 	st  *store.Store
+	srv *Server
+}
+
+// testGroup is the minimal group a device needs to heartbeat.
+var testGroup = store.Group{
+	ID: "default", Name: "Default", Config: "{}", ConfigHash: "h", ConfigVersion: 1,
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -40,7 +46,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	// would make them pass by refusing every upload.
 	files := blob.NewStore(filepath.Join(t.TempDir(), "files"))
 	srv := New(st, auth.NewSigner("test-secret"), nil, nil, files, NewPokeQueue(), "enroll", "http://x", "", "")
-	return &testEnv{t: t, mux: srv.Routes(), st: st}
+	return &testEnv{t: t, mux: srv.Routes(), st: st, srv: srv}
 }
 
 func (e *testEnv) do(method, path, token string, body any) (*httptest.ResponseRecorder, map[string]any) {

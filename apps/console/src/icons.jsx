@@ -104,6 +104,11 @@ export const IconWarning = mk(<>
   <path d="M12 9.5v4.2M12 16.8v.1" />
 </>);
 
+export const IconEye = mk(<>
+  <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+  <circle cx="12" cy="12" r="3" />
+</>);
+
 export const IconFile = mk(<>
   <path d="M14 3H7.5A1.5 1.5 0 0 0 6 4.5v15A1.5 1.5 0 0 0 7.5 21h9a1.5 1.5 0 0 0 1.5-1.5V7z" />
   <path d="M14 3v4.5H18" />

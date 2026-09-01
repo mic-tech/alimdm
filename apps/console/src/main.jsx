@@ -9,7 +9,7 @@ import {
   IconDevices, IconGroups, IconEnroll, IconPackage, IconSignOut, IconChevronLeft, IconBell,
   IconRefresh, IconPlus, IconTrash, IconEdit, IconPower, IconLock, IconUnlock,
   IconEject, IconCopy, IconCheck, IconUpload, IconInfo, IconWarning,
-  IconUser, IconUsers, IconKey, IconSave, IconShield, IconFile,
+  IconUser, IconUsers, IconKey, IconSave, IconShield, IconFile, IconEye,
 } from "./icons.jsx";
 
 // Compact "time ago" so the Last seen column stays narrow; the cell keeps the
@@ -300,6 +300,83 @@ function Groups({ onErr }) {
    command and shows the last answer with its age. A stale listing labelled
    "checked 4 minutes ago" is more use than a spinner that never resolves
    because the tablet is in a cupboard. */
+/* Live view. Frames travel tablet → server → here, because nothing can open a
+   connection to a tablet behind school NAT. The tablet only learns it is being
+   watched on its next heartbeat, so the first frame can be up to 30 seconds
+   away; the panel says so rather than showing a spinner that looks broken. */
+function LiveView({ device, onErr, onClose }) {
+  const imgRef = useRef(null);
+  const [state, setState] = useState("starting");
+  const [frames, setFrames] = useState(0);
+  const lastUrl = useRef(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    let framesSeen = 0;
+
+    api.startStream(device.id).catch((e) => onErr(e.message));
+
+    api.openStream(
+      device.id,
+      (blob) => {
+        if (cancelled) return;
+        framesSeen++;
+        setFrames(framesSeen);
+        setState("live");
+        const url = URL.createObjectURL(blob);
+        if (imgRef.current) imgRef.current.src = url;
+        // Revoking the previous URL only after the next one is set avoids a
+        // flash of nothing between frames.
+        if (lastUrl.current) URL.revokeObjectURL(lastUrl.current);
+        lastUrl.current = url;
+      },
+      (e) => { if (!cancelled) { setState("error"); onErr(e.message); } },
+      controller.signal,
+    );
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (lastUrl.current) URL.revokeObjectURL(lastUrl.current);
+      // Tell the tablet to stop now rather than waiting for the lease to lapse.
+      api.stopStream(device.id).catch(() => {/* the lease expires anyway */});
+    };
+  }, [device.id, onErr]);
+
+  return (
+    <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)" }}>
+      <div className="btn-group" style={{ alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+        <span className="strong small">Live view — {device.name || device.id}</span>
+        <span className="muted small">
+          {state === "live" ? `${frames} frame${frames === 1 ? "" : "s"}`
+            : state === "error" ? "Stream ended"
+            : "Waiting for the tablet — it starts on its next check-in, up to 30s"}
+        </span>
+        <button className="btn outline sm" onClick={onClose}>Close</button>
+      </div>
+      <div style={{
+        background: "#000", borderRadius: "var(--radius)", overflow: "hidden",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        minHeight: 180, maxHeight: 520,
+      }}>
+        {/* eslint-disable-next-line jsx-a11y/alt-text */}
+        <img ref={imgRef} style={{ maxWidth: "100%", maxHeight: 520, display: state === "live" ? "block" : "none" }} />
+        {state !== "live" && (
+          <span className="muted small" style={{ padding: 40 }}>
+            {state === "error" ? "The stream stopped." : "Waiting for the first frame…"}
+          </span>
+        )}
+      </div>
+      <div className="muted small" style={{ marginTop: 8 }}>
+        Smooth while the kiosk is on screen. Inside another app Android limits capture to
+        about one frame a second, and screenshot protection is lifted for the length of the
+        session — so close this when you are done.
+      </div>
+    </div>
+  );
+}
+
 function DeviceInbox({ device, onErr }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -373,6 +450,7 @@ function DeviceInbox({ device, onErr }) {
 
 function Devices({ onErr }) {
   const [inboxFor, setInboxFor] = useState(null);
+  const [liveFor, setLiveFor] = useState(null);
   const [devices, setDevices] = useState(null);
   const [groups, setGroups] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -567,6 +645,8 @@ function Devices({ onErr }) {
                 </td>
                 <td>
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
+                    <button className="btn outline sm icon" title="Live view of this tablet"
+                      onClick={() => setLiveFor(liveFor === d.id ? null : d.id)}><IconEye /></button>
                     <button className="btn outline sm icon" title="Files on this tablet"
                       onClick={() => setInboxFor(inboxFor === d.id ? null : d.id)}><IconFile /></button>
                     <button className="btn outline sm icon" title="Reboot" disabled={busy}
@@ -582,6 +662,11 @@ function Devices({ onErr }) {
                   </div>
                 </td>
               </tr>
+              {liveFor === d.id && (
+                <tr><td colSpan="7" style={{ padding: 0 }}>
+                  <LiveView device={d} onErr={onErr} onClose={() => setLiveFor(null)} />
+                </td></tr>
+              )}
               {inboxFor === d.id && (
                 <tr><td colSpan="7" style={{ padding: 0 }}>
                   <DeviceInbox device={d} onErr={onErr} />
