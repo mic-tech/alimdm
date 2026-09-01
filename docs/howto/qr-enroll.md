@@ -79,6 +79,36 @@ online within ~30s and is locked to your whitelist.
 
 ---
 
+## 5. The one step QR cannot do for you
+
+Ali MDM can capture its own kiosk screen on any tablet. Capturing **another
+app** — Chrome, the Quran app, whatever a pupil is actually in — goes through
+its accessibility service, and Android only lets the app switch that on by
+itself while it holds `WRITE_SECURE_SETTINGS`. That permission is granted over
+ADB, which the QR path never uses:
+
+```
+adb shell pm grant com.alimdm android.permission.WRITE_SECURE_SETTINGS
+```
+
+So on a QR-enrolled tablet, someone has to do one of these once:
+
+- **On the tablet, no computer:** Ali MDM **Settings → Advanced → Open
+  Accessibility Settings** → turn **Ali MDM** on. The permission wizard shown
+  after enrolment lists this too and takes you straight there. If Android greys
+  the toggle out as a *restricted setting*, allow it under Settings → Apps →
+  Ali MDM → ⋮ → **Allow restricted settings**.
+- **With a computer, once:** run the `pm grant` above, over USB or wireless
+  debugging. This is the durable one — the app can then re-enable the service
+  after a reboot or an update by itself, which the manual toggle does not
+  guarantee on Android 13+.
+
+Everything else about the tablet works without this. Only screenshots and live
+view of other apps are affected: without it they show the Ali MDM kiosk and
+nothing more.
+
+---
+
 ## Which should you use?
 
 | Situation | Use |

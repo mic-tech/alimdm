@@ -4,9 +4,13 @@
  * Shown right after a device enrolls (and reachable from settings). Its job is
  * to get the device to its fullest capability set:
  *
- *  - Device Owner: nothing to do, everything is auto-granted at app start
- *    (see MainActivity request*Permission()) and via the DPM. The wizard just
- *    reassures and offers to enable the accessibility service programmatically.
+ *  - Device Owner: the runtime permissions are auto-granted at app start (see
+ *    MainActivity request*Permission()) and via the DPM. The accessibility
+ *    service is the exception: enabling it needs WRITE_SECURE_SETTINGS, which
+ *    a Device Owner does not get for being one — it is granted over ADB at
+ *    enrolment, and a QR-provisioned tablet never sees ADB. So that row is
+ *    checked like any other, and offers the manual toggle when the automatic
+ *    route is not available.
  *  - Non Device Owner: walks the user through each runtime + special-access
  *    permission, with a deep-link into the relevant system screen. Statuses
  *    refresh when the app returns to the foreground.
@@ -82,18 +86,30 @@ const ITEMS: PermItem[] = [
   {
     key: 'accessibility',
     label: 'Accessibility service',
-    description: 'Suppresses the back button and gestures to keep the kiosk locked down.',
+    description:
+      'Suppresses the back button and gestures to keep the kiosk locked down, and is what ' +
+      'lets the console see the screen while another app is in front.',
     icon: 'gesture-tap',
-    check: isDO =>
-      isDO
-        ? Promise.resolve(true)
-        : safeBool(AccessibilityModule?.isAccessibilityServiceEnabled()),
+    // Ask the service, always. This used to report "done" for a Device Owner
+    // without checking anything, on the assumption that a Device Owner can
+    // always switch it on — which is only true while the app holds
+    // WRITE_SECURE_SETTINGS. A QR-enrolled tablet never gets that permission
+    // (there is no ADB step), so the one screen meant to catch this showed a
+    // tick while the service was off and screen capture quietly did not work.
+    check: () => safeBool(AccessibilityModule?.isAccessibilityServiceEnabled()),
     action: async isDO => {
+      // A Device Owner can enable it without anyone leaving this screen, when
+      // the permission is there. When it is not, this rejects and the fallback
+      // takes the operator to the toggle instead of failing silently.
       if (isDO) {
-        await AccessibilityModule?.enableViaDeviceOwner().catch(() => {});
-      } else {
-        await AccessibilityModule?.openAccessibilitySettings().catch(() => {});
+        try {
+          await AccessibilityModule?.enableViaDeviceOwner();
+          return;
+        } catch {
+          // No WRITE_SECURE_SETTINGS: fall through to the manual route.
+        }
       }
+      await AccessibilityModule?.openAccessibilitySettings().catch(() => {});
     },
   },
   {
