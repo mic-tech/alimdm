@@ -716,6 +716,28 @@ function DeviceLogs({ deviceId, onErr }) {
         <IconRefresh />{data?.status && data.status !== "none" ? "Fetch again" : "Fetch logs"}
       </button>
     </>}>
+      {/* How the last screen capture went. Shown before anything is asked of the
+          device, because the command history already knows and because a
+          capture that failed is usually why this tab is open at all. */}
+      {data?.last_capture && (
+        data.last_capture.error ? (
+          <Alert tone="warning" icon={IconWarning} title="The last screen capture failed">
+            {data.last_capture.error}
+            <div className="muted small" style={{ marginTop: 4 }}>
+              {timeAgo(data.last_capture.at) || "just now"}. Screenshots and live view show
+              the Ali MDM kiosk and nothing else until this is resolved.
+            </div>
+          </Alert>
+        ) : (
+          <div className="muted small" style={{ marginBottom: 12 }}>
+            Last screen capture{" "}
+            {data.last_capture.status === "success"
+              ? `succeeded ${timeAgo(data.last_capture.at) || "just now"}`
+              : `was asked for ${timeAgo(data.last_capture.at) || "just now"} and the device has not answered yet`}.
+          </div>
+        )
+      )}
+
       {!data || data.status === "none" ? (
         <Empty icon={IconSliders} title="No log captured yet"
           desc="Ask the device for its recent log and the state of the permissions that decide how it behaves. It answers on its next check-in." />

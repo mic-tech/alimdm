@@ -55,28 +55,49 @@ func (s *Server) deviceLogs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not read commands")
 		return
 	}
-	// ListCommands is newest first.
+	// Never asked is not an error: the page offers the button.
+	out := map[string]any{"status": "none"}
+
+	// ListCommands is newest first, so the first match of each kind is the
+	// latest one.
+	var haveLog, haveCapture bool
 	for _, c := range cmds {
-		if c.Type != "get_logs" {
-			continue
-		}
-		out := map[string]any{
-			"status":       c.Status,
-			"requested_at": c.CreatedAt,
-			"error":        c.ErrMsg,
-		}
-		if c.Result != "" {
-			var parsed map[string]any
-			if json.Unmarshal([]byte(c.Result), &parsed) == nil {
-				out["app_log"] = parsed["app_log"]
-				out["logcat"] = parsed["logcat"]
-				out["state"] = parsed["state"]
-				out["collected_at"] = parsed["collected_at"]
+		switch {
+		case c.Type == "get_logs" && !haveLog:
+			haveLog = true
+			out["status"] = c.Status
+			out["requested_at"] = c.CreatedAt
+			out["error"] = c.ErrMsg
+			if c.Result != "" {
+				var parsed map[string]any
+				if json.Unmarshal([]byte(c.Result), &parsed) == nil {
+					out["app_log"] = parsed["app_log"]
+					out["logcat"] = parsed["logcat"]
+					out["state"] = parsed["state"]
+					out["collected_at"] = parsed["collected_at"]
+				}
 			}
+
+		case c.Type == "screenshot" && !haveCapture:
+			// How the last screen capture went, which is the failure an
+			// operator is usually chasing when they open this tab. Carried
+			// here rather than left in the Commands list because the reason a
+			// capture failed — an accessibility service that is off, a policy
+			// that blocks it — is a fact about the device, not an incident.
+			//
+			// The newest attempt whatever its outcome: a success after a run
+			// of failures is the thing worth knowing, and an old error shown
+			// alone would send someone chasing a problem that has gone.
+			haveCapture = true
+			capture := map[string]any{"status": c.Status, "at": c.CreatedAt}
+			if c.ErrMsg != "" {
+				capture["error"] = c.ErrMsg
+			}
+			out["last_capture"] = capture
 		}
-		writeJSON(w, out)
-		return
+		if haveLog && haveCapture {
+			break
+		}
 	}
-	// Never asked. Not an error: the page offers the button.
-	writeJSON(w, map[string]any{"status": "none"})
+	writeJSON(w, out)
 }

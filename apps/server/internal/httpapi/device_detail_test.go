@@ -405,3 +405,56 @@ func TestADeviceAnswersWithItsLog(t *testing.T) {
 		t.Errorf("state did not come back: %v", body["state"])
 	}
 }
+
+// Why the last screen capture failed is the question this tab is usually opened
+// with, so it is answered before anyone asks the device for anything — the
+// command history already knows.
+func TestDiagnosticsCarryTheLastCapture(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	key := e.newDeviceKey(t, "tablet-1")
+
+	// A failed capture, with no diagnostics ever requested.
+	e.do("POST", "/api/v1/devices/tablet-1/snapshot/request", tok, nil)
+	_, cmds := e.do("GET", "/api/v1/devices/tablet-1/commands/", key, nil)
+	list, _ := cmds["commands"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("device sees %d commands, want 1", len(list))
+	}
+	shotID := list[0].(map[string]any)["id"].(string)
+	e.do("POST", "/api/v1/commands/"+shotID+"/result/", key, map[string]any{
+		"status": "error", "error_message": "Accessibility service is off",
+	})
+
+	_, body := e.do("GET", "/api/v1/devices/tablet-1/logs", tok, nil)
+	if body["status"] != "none" {
+		t.Errorf("status = %v, want none — no log has been asked for", body["status"])
+	}
+	capture, _ := body["last_capture"].(map[string]any)
+	if capture == nil {
+		t.Fatal("no last_capture: the tab would say nothing about a capture that just failed")
+	}
+	if capture["status"] != "error" || capture["error"] != "Accessibility service is off" {
+		t.Errorf("last_capture = %v", capture)
+	}
+
+	// A later success replaces it: an old error on its own sends someone
+	// chasing a problem that has gone.
+	e.do("POST", "/api/v1/devices/tablet-1/snapshot/request", tok, nil)
+	_, cmds = e.do("GET", "/api/v1/devices/tablet-1/commands/", key, nil)
+	list, _ = cmds["commands"].([]any)
+	okID := list[0].(map[string]any)["id"].(string)
+	e.do("POST", "/api/v1/commands/"+okID+"/result/", key, map[string]any{"status": "success"})
+
+	_, body = e.do("GET", "/api/v1/devices/tablet-1/logs", tok, nil)
+	capture, _ = body["last_capture"].(map[string]any)
+	if capture["status"] != "success" {
+		t.Errorf("after a successful capture, last_capture = %v", capture)
+	}
+	if _, stillThere := capture["error"]; stillThere {
+		t.Errorf("the old error is still being shown: %v", capture)
+	}
+}
