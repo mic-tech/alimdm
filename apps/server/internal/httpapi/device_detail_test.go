@@ -320,3 +320,88 @@ func TestQRProvisioningServesOnlyTheStagedRelease(t *testing.T) {
 		t.Errorf("build = %v, want the staged version so the page can name it", info["build"])
 	}
 }
+
+// A device log is a minute-by-minute account of a classroom's tablet. Asking
+// for one, and reading it, are both administrator work.
+func TestDeviceLogsAreAdminOnly(t *testing.T) {
+	e := newTestEnv(t)
+	admin := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	e.newDeviceKey(t, "tablet-1")
+
+	// An operator, who can see the fleet but not its logs.
+	if rec, _ := e.do("POST", "/api/v1/users", admin, map[string]any{
+		"email": "op@x.com", "name": "Op", "role": "operator", "password": "operatorpass",
+	}); rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		t.Fatalf("create operator: status %d", rec.Code)
+	}
+	opTok := e.login("op@x.com", "operatorpass")
+
+	for _, call := range []struct{ method, path string }{
+		{"POST", "/api/v1/devices/tablet-1/logs"},
+		{"GET", "/api/v1/devices/tablet-1/logs"},
+	} {
+		if rec, _ := e.do(call.method, call.path, opTok, nil); rec.Code != http.StatusForbidden {
+			t.Errorf("%s %s as operator: status %d, want 403", call.method, call.path, rec.Code)
+		}
+	}
+	if rec, _ := e.do("POST", "/api/v1/devices/tablet-1/logs", admin, nil); rec.Code != http.StatusOK {
+		t.Errorf("POST as admin: status %d, want 200", rec.Code)
+	}
+}
+
+// The round trip: the console asks, the tablet answers on its next check-in,
+// and the answer comes back as the log.
+func TestADeviceAnswersWithItsLog(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	key := e.newDeviceKey(t, "tablet-1")
+
+	// Nothing asked yet.
+	_, body := e.do("GET", "/api/v1/devices/tablet-1/logs", tok, nil)
+	if body["status"] != "none" {
+		t.Errorf("before asking: status = %v, want none", body["status"])
+	}
+
+	e.do("POST", "/api/v1/devices/tablet-1/logs", tok, nil)
+	_, body = e.do("GET", "/api/v1/devices/tablet-1/logs", tok, nil)
+	if body["status"] != "pending" {
+		t.Errorf("after asking: status = %v, want pending", body["status"])
+	}
+
+	// The device collects the commands and reports back, as the agent does.
+	_, cmds := e.do("GET", "/api/v1/devices/tablet-1/commands/", key, nil)
+	list, _ := cmds["commands"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("device sees %d commands, want 1", len(list))
+	}
+	cmdID := list[0].(map[string]any)["id"].(string)
+	if rec, _ := e.do("POST", "/api/v1/commands/"+cmdID+"/result/", key, map[string]any{
+		"status": "success",
+		"result": map[string]any{
+			"app_log":      "09-01 22:10:00 D/KioskScreen: launched com.google.android.calculator",
+			"logcat":       "I/OverlayService: Bringing AliMDM to foreground",
+			"collected_at": "2026-09-01T22:10:01Z",
+			"state":        map[string]any{"usage_access": false, "accessibility_running": false},
+		},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("report result: status %d", rec.Code)
+	}
+
+	_, body = e.do("GET", "/api/v1/devices/tablet-1/logs", tok, nil)
+	if body["status"] != "success" {
+		t.Fatalf("after the answer: status = %v", body["status"])
+	}
+	if s, _ := body["app_log"].(string); !strings.Contains(s, "calculator") {
+		t.Errorf("app_log = %q", s)
+	}
+	state, _ := body["state"].(map[string]any)
+	if state == nil || state["usage_access"] != false {
+		t.Errorf("state did not come back: %v", body["state"])
+	}
+}

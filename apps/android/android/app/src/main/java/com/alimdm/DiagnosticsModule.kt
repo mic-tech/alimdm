@@ -1,0 +1,114 @@
+package com.alimdm
+
+import android.app.ActivityManager
+import android.content.Context
+import android.os.Build
+import android.provider.Settings
+import com.facebook.react.bridge.*
+
+/**
+ * What a tablet can tell the console about itself when something is wrong.
+ *
+ * The console can see that a device is online and what it was asked to do, and
+ * nothing about why any of it failed. Every diagnosis so far has needed the
+ * tablet in hand. This collects the two things that actually answer the
+ * question: the app's own recent log, and the state of the permissions and
+ * modes that decide how it behaves.
+ */
+class DiagnosticsModule(private val reactContext: ReactApplicationContext) :
+    ReactContextBaseJavaModule(reactContext) {
+
+    override fun getName() = "DiagnosticsModule"
+
+    companion object {
+        /** Roughly what a command result can carry without being unwieldy. */
+        private const val MAX_LOGCAT_BYTES = 96 * 1024
+        private const val LOGCAT_LINES = 400
+    }
+
+    /**
+     * A snapshot for the console: the app's own buffer, this process's logcat,
+     * and the state that shapes its behaviour.
+     */
+    @ReactMethod
+    fun collect(promise: Promise) {
+        try {
+            val out = Arguments.createMap()
+            out.putString("app_log", DebugLog.recent())
+            out.putString("logcat", readOwnLogcat())
+            out.putMap("state", deviceState())
+            out.putString("collected_at", java.text.SimpleDateFormat(
+                "yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("UTC")
+            }.format(java.util.Date()))
+            promise.resolve(out)
+        } catch (e: Exception) {
+            promise.reject("ERROR", "Could not collect diagnostics: ${e.message}")
+        }
+    }
+
+    /**
+     * An app may read its own logcat and nothing else, which is exactly the
+     * scope wanted here: our native modules log through android.util.Log
+     * directly and those lines are not in [DebugLog]'s buffer.
+     */
+    private fun readOwnLogcat(): String {
+        return try {
+            val pid = android.os.Process.myPid().toString()
+            val process = ProcessBuilder(
+                "logcat", "-d", "-v", "time", "-t", LOGCAT_LINES.toString(), "--pid=$pid",
+            ).redirectErrorStream(true).start()
+            val text = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor()
+            if (text.length > MAX_LOGCAT_BYTES) {
+                "…trimmed to the last ${MAX_LOGCAT_BYTES / 1024}KB…\n" +
+                    text.substring(text.length - MAX_LOGCAT_BYTES)
+            } else {
+                text
+            }
+        } catch (e: Exception) {
+            "logcat unavailable: ${e.message}"
+        }
+    }
+
+    /** The handful of facts that explain most of what a tablet does. */
+    private fun deviceState(): WritableMap {
+        val m = Arguments.createMap()
+        m.putString("android", Build.VERSION.RELEASE)
+        m.putString("model", Build.MODEL)
+        m.putInt("app_version_code", BuildConfig.VERSION_CODE)
+
+        val dpm = reactContext.getSystemService(Context.DEVICE_POLICY_SERVICE)
+            as android.app.admin.DevicePolicyManager
+        m.putBoolean("device_owner", dpm.isDeviceOwnerApp(reactContext.packageName))
+
+        val am = reactContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        m.putBoolean("lock_task", am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE)
+
+        // The three that are granted outside the app and decide whether screen
+        // capture, overlays and foreground detection work at all.
+        m.putBoolean("accessibility_running", AliMdmAccessibilityService.isRunning())
+        m.putBoolean(
+            "can_write_secure_settings",
+            reactContext.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED,
+        )
+        m.putBoolean("can_draw_overlays", Settings.canDrawOverlays(reactContext))
+        m.putBoolean("usage_access", hasUsageAccess())
+        return m
+    }
+
+    private fun hasUsageAccess(): Boolean {
+        return try {
+            val usm = reactContext.getSystemService(Context.USAGE_STATS_SERVICE)
+                as? android.app.usage.UsageStatsManager ?: return false
+            val now = System.currentTimeMillis()
+            // Without the appop this comes back empty rather than throwing.
+            !usm.queryUsageStats(
+                android.app.usage.UsageStatsManager.INTERVAL_BEST, now - 60_000, now,
+            ).isNullOrEmpty()
+        } catch (e: Exception) {
+            false
+        }
+    }
+}

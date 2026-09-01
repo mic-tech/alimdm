@@ -22,6 +22,7 @@ import RNFS from 'react-native-fs';
 import { ApiService, ActionResult } from './ApiService';
 import { getCloudCredentials, CloudCredentials } from './secureStorage';
 import { StorageService } from './storage';
+import DiagnosticsModule from './DiagnosticsModule';
 import ManagedAppInstaller from './ManagedAppInstaller';
 import KioskModule from './KioskModule';
 import { CloudFileService } from './CloudFileService';
@@ -241,6 +242,18 @@ class CloudCommandServiceClass {
     // Screenshot needs a capture + upload round-trip, not a fire-and-forget action.
     if (cmd.type === 'screenshot') {
       return this.captureAndUploadScreenshot(c);
+    }
+
+    // What the tablet has been doing, answered into the command result. The
+    // console has never been able to see this: every diagnosis so far has meant
+    // having the tablet in hand.
+    if (cmd.type === 'get_logs') {
+      try {
+        const d = await DiagnosticsModule.collect();
+        return { ok: true, result: d as unknown as Record<string, unknown> };
+      } catch (e: any) {
+        return { ok: false, error: e?.message || 'Could not collect diagnostics' };
+      }
     }
 
     // The console cannot reach the tablet directly, so browsing its inbox is a

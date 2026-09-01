@@ -569,6 +569,17 @@ table.stacked.cards tbody tr:has(td[colspan]) { grid-column: 1 / -1; border: non
 .device-link { color: inherit; text-decoration: none; }
 .device-link:hover { color: var(--primary); text-decoration: underline; }
 
+/* A device's log. Monospace, scrolled in both directions rather than wrapped:
+   a wrapped log line is harder to read than a scrolled one. */
+.logbox {
+  margin: 0; padding: 12px;
+  max-height: 460px; overflow: auto;
+  background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem; line-height: 1.55; white-space: pre;
+  color: var(--foreground);
+}
+
 /* A button that reads as a link, for a value that is also a shortcut. */
 .linkish {
   padding: 0; border: 0; background: none; font: inherit; color: var(--primary);

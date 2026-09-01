@@ -7,13 +7,23 @@ COPY apps/server/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/api ./cmd/api \
     && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/bootstrap ./cmd/bootstrap
 
-# ---- Stage 2: build the React console (optional; skip if console/ absent) ----
+# ---- Stage 2: build the React console ----
+#
+# Nothing here is allowed to fail quietly. Both steps used to end in
+# "2>/dev/null || true", and the source copy brings the developer's own dist/
+# with it: a console that failed to build was therefore shipped as whatever
+# happened to be lying in that directory, silently and with no version anyone
+# could name. That is exactly what happened once the build started running the
+# linter — the lint error was swallowed and a stale bundle went to the server.
+#
+# The build now fails the image, and dist/ is cleared first so what ships can
+# only be what this stage produced.
 FROM node:20-alpine AS console
 WORKDIR /web
 COPY apps/console/package.json apps/console/package-lock.json* ./
-RUN npm install --no-audit --no-fund 2>/dev/null || true
+RUN npm install --no-audit --no-fund
 COPY apps/console/ ./
-RUN npm run build 2>/dev/null || true
+RUN rm -rf dist && npm run build
 
 # ---- Stage 3: runtime ----
 FROM alpine:3.20

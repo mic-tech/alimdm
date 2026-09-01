@@ -38,6 +38,7 @@ class MainApplication : Application(), ReactApplication {
           add(FilePickerPackage())
           add(InboxPackage())
           add(ScreenStreamPackage())
+          add(DiagnosticsPackage())
           add(WifiControlPackage())
           add(BluetoothControlPackage())
           add(AudioControlPackage())

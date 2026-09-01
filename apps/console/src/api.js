@@ -49,6 +49,10 @@ export const api = {
   getDevice: (id) => req("GET", "/devices/" + encodeURIComponent(id)),
   /** What has been queued for a device, and how it went. */
   deviceCommands: (id) => req("GET", "/devices/" + encodeURIComponent(id) + "/commands"),
+  // Diagnostics. Admin-only server-side: a device log is a minute-by-minute
+  // account of a classroom's tablet.
+  requestDeviceLogs: (id) => req("POST", "/devices/" + encodeURIComponent(id) + "/logs", {}),
+  deviceLogs: (id) => req("GET", "/devices/" + encodeURIComponent(id) + "/logs"),
   sendCommand: (id, type, params = {}) => req("POST", "/devices/" + id + "/commands", { type, params }),
   // Forced unenrolment: deletes the device server-side, revoking its API key.
   // Works without the tablet — a dead or lost device never has to cooperate.

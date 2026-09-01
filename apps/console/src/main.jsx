@@ -670,11 +670,112 @@ function DeviceCommands({ deviceId, onErr }) {
   );
 }
 
+/* What the tablet says it has been doing.
+   The console could see that a device was online and what it had been asked to
+   do, and nothing about why any of it failed — every diagnosis so far has meant
+   having the tablet in hand. This asks; the device answers on its next
+   check-in, so the page waits rather than pretending to be live.
+
+   Administrators only, and the server enforces it: a log is a minute-by-minute
+   account of a classroom's tablet, which is more detail about a room than
+   everyone who can sign in needs. */
+function DeviceLogs({ deviceId, onErr }) {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState("app_log");
+
+  const load = useCallback(async () => {
+    try { setData(await api.deviceLogs(deviceId)); }
+    catch (e) { onErr(e.message); }
+  }, [deviceId, onErr]);
+  useEffect(() => { load(); }, [load]);
+  // A queued capture is answered on the device's own schedule.
+  useEffect(() => {
+    if (data?.status !== "pending") return;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [data?.status, load]);
+
+  async function fetchLogs() {
+    setBusy(true);
+    try {
+      await api.requestDeviceLogs(deviceId);
+      toast("Asked the device for its log");
+      await load();
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  const state = data?.state || null;
+  const text = tab === "logcat" ? data?.logcat : data?.app_log;
+
+  return (
+    <Card title="Diagnostics" actions={<>
+      {data?.status === "pending" && <span className="muted small">Waiting for the device…</span>}
+      <button className="btn outline sm" disabled={busy} onClick={fetchLogs}>
+        <IconRefresh />{data?.status && data.status !== "none" ? "Fetch again" : "Fetch logs"}
+      </button>
+    </>}>
+      {!data || data.status === "none" ? (
+        <Empty icon={IconSliders} title="No log captured yet"
+          desc="Ask the device for its recent log and the state of the permissions that decide how it behaves. It answers on its next check-in." />
+      ) : (
+        <div className="stack">
+          {data.status === "error" && (
+            <Alert tone="warning" icon={IconWarning} title="The device could not collect a log">
+              {data.error || "No reason given."}
+            </Alert>
+          )}
+          {state && (
+            <dl className="facts">
+              <Fact label="Android">{state.android || "—"} on {state.model || "—"}</Fact>
+              <Fact label="Device Owner"><YesNo ok={state.device_owner} /></Fact>
+              <Fact label="Lock task"><YesNo ok={state.lock_task} /></Fact>
+              <Fact label="Accessibility service"><YesNo ok={state.accessibility_running} /></Fact>
+              <Fact label="Secure settings"><YesNo ok={state.can_write_secure_settings} /></Fact>
+              <Fact label="Draw over apps"><YesNo ok={state.can_draw_overlays} /></Fact>
+              <Fact label="Usage access"><YesNo ok={state.usage_access} /></Fact>
+              <Fact label="Captured">
+                {data.collected_at ? timeAgo(data.collected_at) || "just now" : "—"}
+              </Fact>
+            </dl>
+          )}
+          {(data.app_log || data.logcat) && (
+            <>
+              <span className="view-switch" role="group" aria-label="Which log">
+                <button className={tab === "app_log" ? "on" : ""} onClick={() => setTab("app_log")}>
+                  Ali MDM
+                </button>
+                <button className={tab === "logcat" ? "on" : ""} onClick={() => setTab("logcat")}>
+                  System
+                </button>
+              </span>
+              <pre className="logbox">{text || "Nothing recorded."}</pre>
+              <div className="muted small">
+                Newest last, and stamped with the device’s own clock — which is not
+                necessarily this one. The Ali MDM log is what the app records about itself
+                and survives only until it restarts; System is the last few hundred lines
+                Android holds for this process.
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* A permission or capability, said plainly. Missing ones are what an operator
+   is looking for, so they are the ones that stand out. */
+function YesNo({ ok }) {
+  return <span className={"badge " + (ok ? "on" : "off")}>{ok ? "Yes" : "No"}</span>;
+}
+
 function Fact({ label, children }) {
   return <><dt>{label}</dt><dd>{children}</dd></>;
 }
 
-function DeviceDetail({ deviceId, onErr, onTitle, navigate }) {
+function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
   // History, files and commands are all tables; on a phone they stack into
   // cards like every other table in the console.
   useNarrowFlag();
@@ -891,11 +992,17 @@ function DeviceDetail({ deviceId, onErr, onTitle, navigate }) {
           onClick={() => setTab("files")}><IconFile />Files</button>
         <button className={tab === "commands" ? "on" : ""} aria-pressed={tab === "commands"}
           onClick={() => setTab("commands")}><IconSliders />Commands</button>
+        {/* Administrators only, matching what the server will allow. */}
+        {me?.role === "admin" && (
+          <button className={tab === "logs" ? "on" : ""} aria-pressed={tab === "logs"}
+            onClick={() => setTab("logs")}><IconKey />Diagnostics</button>
+        )}
       </span>
 
       {tab === "history" && <DeviceHistory deviceId={d.id} onErr={onErr} />}
       {tab === "files" && <DeviceFiles device={d} onErr={onErr} />}
       {tab === "commands" && <DeviceCommands deviceId={d.id} onErr={onErr} />}
+      {tab === "logs" && me?.role === "admin" && <DeviceLogs deviceId={d.id} onErr={onErr} />}
 
       <Card title="Retire this device">
         <div className="stack" style={{ gap: 16 }}>
@@ -2925,7 +3032,7 @@ function Shell({ onSignOut }) {
             </div>
 
             {view === "devices" && (deviceId
-              ? <DeviceDetail key={deviceId} deviceId={deviceId} onErr={onErr}
+              ? <DeviceDetail key={deviceId} deviceId={deviceId} me={me} onErr={onErr}
                   onTitle={setPageTitle} navigate={navigate} />
               : <Devices onErr={onErr} navigate={navigate} />)}
             {view === "groups" && <Groups onErr={onErr} />}

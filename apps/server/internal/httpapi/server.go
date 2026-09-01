@@ -149,6 +149,10 @@ func (s *Server) Routes() *http.ServeMux {
 	// a one-segment pattern is the more specific of the two.
 	mux.HandleFunc("GET /api/v1/devices/{id}", s.requireOperator(s.deviceDetail))
 	mux.HandleFunc("GET /api/v1/devices/{id}/commands", s.requireOperator(s.listDeviceCommands))
+	// Diagnostics. Admin-only: a device log is a minute-by-minute account of a
+	// classroom's tablet, which belongs with whoever runs the fleet.
+	mux.HandleFunc("POST /api/v1/devices/{id}/logs", s.requireAdmin(s.requestDeviceLogs))
+	mux.HandleFunc("GET /api/v1/devices/{id}/logs", s.requireAdmin(s.deviceLogs))
 	mux.HandleFunc("POST /api/v1/devices/{id}/commands", s.requireOperator(s.enqueueCommand))
 	mux.HandleFunc("GET /api/v1/groups", s.requireOperator(s.listGroups))
 	mux.HandleFunc("POST /api/v1/groups", s.requireOperator(s.createGroup))
@@ -653,7 +657,9 @@ func (s *Server) commandResult(w http.ResponseWriter, r *http.Request) {
 		Result       json.RawMessage `json:"result"`
 		ErrorMessage string          `json:"error_message"`
 	}
-	if json.NewDecoder(r.Body).Decode(&req) != nil {
+	// A log is the first result with any size to it; unbounded, one device
+	// could fill the database with them.
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCommandResultBytes)).Decode(&req) != nil {
 		http.Error(w, "bad body", http.StatusBadRequest)
 		return
 	}
@@ -894,6 +900,9 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 		"pending_commands": pending,
 	})
 }
+
+// maxCommandResultBytes bounds what a device may post back as a command result.
+const maxCommandResultBytes = 1 << 20
 
 // singleTarget names the device an action was aimed at, when it was aimed at
 // exactly one. Empty for a fleet-wide action, which has no single device to
