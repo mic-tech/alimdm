@@ -989,11 +989,14 @@ func shortID(s string) string {
 }
 
 func (s *Store) SaveFile(f *File) error {
+	// Stamp the struct too, so the caller returns the same timestamp it stored
+	// rather than an empty string the list view would later contradict.
+	f.UploadedAt = nowISO()
 	_, err := s.db.Exec(
 		`INSERT INTO files(name,sha256,size,content_type,path,uploaded_at) VALUES(?,?,?,?,?,?)
 		 ON CONFLICT(name) DO UPDATE SET sha256=excluded.sha256, size=excluded.size,
 		   content_type=excluded.content_type, path=excluded.path, uploaded_at=excluded.uploaded_at`,
-		f.Name, f.SHA256, f.Size, f.ContentType, f.Path, nowISO())
+		f.Name, f.SHA256, f.Size, f.ContentType, f.Path, f.UploadedAt)
 	return err
 }
 

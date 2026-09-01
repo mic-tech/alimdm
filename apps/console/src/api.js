@@ -103,4 +103,26 @@ export const api = {
       return d;
     });
   },
+
+  // ── File library (console → device inbox) ──────────────────────────────────
+  listLibraryFiles: () => req("GET", "/files"),
+  deleteLibraryFile: (name) => req("DELETE", "/files/" + encodeURIComponent(name)),
+  pushLibraryFile: (name, body) => req("POST", "/files/" + encodeURIComponent(name) + "/push", body),
+  fileDeliveries: (name) => req("GET", "/files/" + encodeURIComponent(name) + "/deliveries"),
+  uploadLibraryFile: (file, name) => {
+    const tok = getToken();
+    const fd = new FormData();
+    fd.append("file", file);
+    if (name) fd.append("name", name);
+    return fetch("/api/v1/files", {
+      method: "POST",
+      headers: tok ? { Authorization: "Bearer " + tok } : {},
+      body: fd,
+    }).then(async (r) => {
+      const t = await r.text();
+      let d = null; try { d = JSON.parse(t); } catch { d = t; }
+      if (!r.ok) throw new Error(d && d.error ? d.error : r.status);
+      return d;
+    });
+  },
 };

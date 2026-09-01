@@ -36,6 +36,7 @@ class MainApplication : Application(), ReactApplication {
           add(PrintPackage())
           add(AccessibilityPackage())
           add(FilePickerPackage())
+          add(InboxPackage())
           add(WifiControlPackage())
           add(BluetoothControlPackage())
           add(AudioControlPackage())

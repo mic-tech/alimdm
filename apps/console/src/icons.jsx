@@ -104,6 +104,11 @@ export const IconWarning = mk(<>
   <path d="M12 9.5v4.2M12 16.8v.1" />
 </>);
 
+export const IconFile = mk(<>
+  <path d="M14 3H7.5A1.5 1.5 0 0 0 6 4.5v15A1.5 1.5 0 0 0 7.5 21h9a1.5 1.5 0 0 0 1.5-1.5V7z" />
+  <path d="M14 3v4.5H18" />
+</>);
+
 export const IconBell = mk(<>
   <path d="M18 9.2a6 6 0 1 0-12 0c0 4.6-1.4 6-1.4 6h14.8s-1.4-1.4-1.4-6z" />
   <path d="M13.7 19.4a2 2 0 0 1-3.4 0" />

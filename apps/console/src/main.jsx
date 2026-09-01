@@ -9,7 +9,7 @@ import {
   IconDevices, IconGroups, IconEnroll, IconPackage, IconSignOut, IconChevronLeft, IconBell,
   IconRefresh, IconPlus, IconTrash, IconEdit, IconPower, IconLock, IconUnlock,
   IconEject, IconCopy, IconCheck, IconUpload, IconInfo, IconWarning,
-  IconUser, IconUsers, IconKey, IconSave, IconShield,
+  IconUser, IconUsers, IconKey, IconSave, IconShield, IconFile,
 } from "./icons.jsx";
 
 // Compact "time ago" so the Last seen column stays narrow; the cell keeps the
@@ -973,6 +973,198 @@ function QrEnrollCard({ onErr }) {
   );
 }
 
+/* ── File library ─────────────────────────────────────────────────────────────
+   Upload once, push to a group, and every tablet fetches it into its "Ali MDM"
+   folder under Downloads, where the pupil's own Files app can open it. The list
+   shows where each push got to, because a push that quietly missed half a class
+   is the failure worth catching. */
+function fmtSize(bytes) {
+  if (!bytes && bytes !== 0) return "—";
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
+  return (bytes / 1024 / 1024).toFixed(1) + " MB";
+}
+
+function Files({ onErr }) {
+  const [files, setFiles] = useState(null);
+  const [groups, setGroups] = useState([]);
+  const [devices, setDevices] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [pushName, setPushName] = useState("");
+  const [pushGroup, setPushGroup] = useState("");
+  const [detail, setDetail] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [f, g, d] = await Promise.all([api.listLibraryFiles(), api.listGroups(), api.listDevices()]);
+      setFiles(f); setGroups(g); setDevices(d);
+    } catch (e) { onErr(e.message); }
+  }, [onErr]);
+  useEffect(() => { load(); }, [load]);
+  // Deliveries land on the tablets' own schedule, so the counts move on their own.
+  useEffect(() => { const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
+
+  async function upload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setBusy(true);
+    try { await api.uploadLibraryFile(file, file.name); toast(`Uploaded ${file.name}`); load(); }
+    catch (err) { onErr(err.message); }
+    setBusy(false); e.target.value = "";
+  }
+
+  async function doPush(name) {
+    setBusy(true);
+    try {
+      const r = await api.pushLibraryFile(name, pushGroup ? { group_id: pushGroup } : {});
+      toast(`Sending ${name} to ${r.queued} device${r.queued === 1 ? "" : "s"}`);
+      setPushName("");
+      load();
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  async function removeFile(name) {
+    if (!confirm(`Delete ${name} from the library?\n\nCopies already on tablets stay where they are — this only removes the server copy and stops future sends.`)) return;
+    setBusy(true);
+    try { await api.deleteLibraryFile(name); toast(`Deleted ${name}`); if (detail === name) setDetail(null); load(); }
+    catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  const deviceName = (id) => {
+    const d = devices.find((x) => x.id === id);
+    return d && d.name ? d.name : id;
+  };
+
+  if (!files) return <Loading label="Loading files…" />;
+
+  return (
+    <div className="stack">
+      <CardTable
+        title="File library"
+        actions={
+          <label className="btn sm" style={{ position: "relative", overflow: "hidden" }}>
+            <IconUpload />{busy ? "Working…" : "Upload file"}
+            <input type="file" onChange={upload} disabled={busy}
+              style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", height: "100%" }} />
+          </label>
+        }
+        note={
+          <Alert>
+            Upload a file, then send it to a group. Each tablet downloads it on its next check-in into
+            a folder called <span className="mono">Download/Ali MDM</span>, where the tablet's own Files
+            app can open it. Deleting a file here does not remove copies already on tablets.
+          </Alert>
+        }
+      >
+        <table>
+          <thead>
+            <tr>
+              <th>File</th><th>Size</th><th>Delivery</th>
+              <th style={{ textAlign: "right" }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {files.length === 0 && (
+              <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: "24px 0" }}>
+                No files yet. Upload one to send it to a class.
+              </td></tr>
+            )}
+            {files.map((f) => (
+              <React.Fragment key={f.name}>
+                <tr>
+                  <td className="strong">{f.name}</td>
+                  <td className="nowrap">{fmtSize(f.size)}</td>
+                  <td className="nowrap">
+                    {f.targets === 0 ? <span className="muted small">Not sent yet</span> : (
+                      <span className="small">
+                        <span className="badge success">{f.delivered} delivered</span>
+                        {f.pending > 0 && <> <span className="badge warning">{f.pending} pending</span></>}
+                        {f.failed > 0 && <> <span className="badge off">{f.failed} failed</span></>}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
+                      {f.targets > 0 && (
+                        <button className="btn outline sm" onClick={() => setDetail(detail === f.name ? null : f.name)}>
+                          {detail === f.name ? "Hide" : "Details"}
+                        </button>
+                      )}
+                      {pushName === f.name ? (
+                        <button className="btn outline sm" onClick={() => setPushName("")}>Cancel</button>
+                      ) : (
+                        <button className="btn outline sm" onClick={() => { setPushName(f.name); setPushGroup(""); }}>
+                          <IconUpload />Send to devices
+                        </button>
+                      )}
+                      <button className="btn danger-outline sm icon" title="Delete from library"
+                        disabled={busy} onClick={() => removeFile(f.name)}><IconTrash /></button>
+                    </div>
+                  </td>
+                </tr>
+                {pushName === f.name && (
+                  <tr><td colSpan={4} style={{ background: "var(--muted-bg, transparent)" }}>
+                    <div className="btn-group" style={{ alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <span className="small muted">Send to</span>
+                      <select value={pushGroup} onChange={(e) => setPushGroup(e.target.value)}>
+                        <option value="">Every enrolled tablet</option>
+                        {groups.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
+                      </select>
+                      <button className="btn sm" disabled={busy} onClick={() => doPush(f.name)}>
+                        Send {f.name}
+                      </button>
+                    </div>
+                  </td></tr>
+                )}
+                {detail === f.name && <FileDeliveries name={f.name} deviceName={deviceName} onErr={onErr} />}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      </CardTable>
+    </div>
+  );
+}
+
+/** Per-device delivery state for one file. */
+function FileDeliveries({ name, deviceName, onErr }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => api.fileDeliveries(name)
+      .then((r) => { if (!cancelled) setRows(r); })
+      .catch((e) => onErr(e.message));
+    load();
+    const t = setInterval(load, 10000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [name, onErr]);
+
+  return (
+    <tr><td colSpan={4}>
+      {!rows ? <span className="muted small">Loading…</span> : (
+        <table style={{ margin: 0 }}>
+          <thead><tr><th>Device</th><th>Status</th><th>Detail</th></tr></thead>
+          <tbody>
+            {rows.map((d) => (
+              <tr key={d.id}>
+                <td className="small">{deviceName(d.device_id)}</td>
+                <td className="nowrap small">
+                  {d.status === "done" ? <span className="badge success">Delivered</span>
+                    : d.status === "failed" ? <span className="badge off">Failed</span>
+                    : <span className="badge warning">{d.status === "sent" ? "Downloading" : "Waiting"}</span>}
+                </td>
+                <td className="small muted">{d.last_error || (d.status === "done" ? "In the tablet's Ali MDM folder" : "—")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </td></tr>
+  );
+}
+
 function Enroll({ onErr }) {
   const cloud = window.location.origin;
   const [copied, setCopied] = useState("");
@@ -1591,6 +1783,8 @@ const NAV = [
     desc: "Bring a new device under management over ADB" },
   { id: "apks", icon: IconPackage, txt: "Packages", title: "App packages",
     desc: "Upload APKs and push silent installs to your fleet" },
+  { id: "files", icon: IconFile, txt: "Files", title: "File library",
+    desc: "Send documents to every tablet's inbox folder" },
   { id: "appupdate", icon: IconUpload, txt: "App update", title: "Ali MDM app update",
     desc: "Push a new build of Ali MDM itself to your tablets over the air" },
   // menu: reached from the account dropdown in the header rather than the
@@ -1829,6 +2023,7 @@ function Shell({ onSignOut }) {
             {view === "groups" && <Groups onErr={onErr} />}
             {view === "enroll" && <Enroll onErr={onErr} />}
             {view === "apks" && <APKs onErr={onErr} />}
+            {view === "files" && <Files onErr={onErr} />}
             {view === "appupdate" && <AppUpdate onErr={onErr} />}
             {view === "profile" && <Profile me={me} onErr={onErr} onMeChange={setMe} />}
             {view === "alerts" && me.role === "admin" && <Alerts onErr={onErr} />}

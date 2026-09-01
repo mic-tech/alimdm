@@ -4,6 +4,7 @@ import { DeviceEventEmitter, NativeModules } from 'react-native';
 import { StorageService, KEYS } from './storage';
 import DeviceControlService from '../services/DeviceControlService';
 import { CloudCommandService } from './CloudCommandService';
+import { CloudFileService } from './CloudFileService';
 import AgentUpdateService, { AgentUpdateOffer } from './AgentUpdateService';
 import { getCapabilities } from './capabilities';
 import KioskModule from './KioskModule';
@@ -51,6 +52,9 @@ const MIN_HEARTBEAT_GAP_MS = 20_000;
 interface HeartbeatResponse {
   status: string;
   pending_commands: number;
+  /** Files queued for this tablet's inbox. Its own channel, so a stuck command
+   *  cannot hold up a worksheet. */
+  pending_files?: number;
   server_time: string;
   sync_action: 'none' | 'apply';
   config: Record<string, unknown> | null;
@@ -316,6 +320,12 @@ class CloudSyncServiceClass {
       // guards against overlapping polls internally.
       if (data.pending_commands > 0) {
         CloudCommandService.poll(c).catch(() => {/* poll() handles its own errors */});
+      }
+
+      // Files ride their own channel: a large slide deck must not delay a
+      // reboot command, and a stuck command must not delay a worksheet.
+      if ((data.pending_files ?? 0) > 0) {
+        CloudFileService.poll(c).catch(() => {/* poll() handles its own errors */});
       }
     } catch (error) {
       console.error('[CloudSync] Heartbeat error:', error);
