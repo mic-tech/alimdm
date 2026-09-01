@@ -158,6 +158,25 @@ export const api = {
     });
   },
 
+  // ── Snapshots ──────────────────────────────────────────────────────────────
+  requestSnapshot: (id) => req("POST", "/devices/" + encodeURIComponent(id) + "/snapshot/request", {}),
+  /**
+   * Fetch the latest still as a Blob. Read with fetch rather than pointed at
+   * with <img src> because an <img> cannot send an Authorization header, and a
+   * token in the URL would end up in logs and history.
+   */
+  fetchSnapshot: (id, signal) => {
+    const tok = getToken();
+    return fetch("/api/v1/devices/" + encodeURIComponent(id) + "/snapshot", {
+      headers: tok ? { Authorization: "Bearer " + tok } : {},
+      signal,
+    }).then(async (r) => {
+      if (r.status === 404) return null;          // never sent one yet
+      if (!r.ok) throw new Error("Snapshot failed: HTTP " + r.status);
+      return { blob: await r.blob(), at: r.headers.get("X-Snapshot-At") };
+    });
+  },
+
   // ── Per-device file manager ────────────────────────────────────────────────
   deviceInbox: (id) => req("GET", "/devices/" + encodeURIComponent(id) + "/inbox"),
   refreshDeviceInbox: (id) => req("POST", "/devices/" + encodeURIComponent(id) + "/inbox/refresh", {}),

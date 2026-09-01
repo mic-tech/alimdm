@@ -34,6 +34,9 @@ type Server struct {
 	// streams fans a tablet's live-view frames out to console viewers. In
 	// memory only: a picture of a classroom has no business on disk.
 	streams      *streamHubs
+	// snapshots holds the latest still per device for the console's card view.
+	// In memory only, like the live-view frames.
+	snapshots    *snapshotStore
 	enrollToken  string
 	baseURL      string
 	consoleDir   string
@@ -41,7 +44,7 @@ type Server struct {
 }
 
 func New(st *store.Store, signer *auth.Signer, apks, agentAPKs *apk.Store, files *blob.Store, pokes *PokeQueue, enrollToken, baseURL, consoleDir, provisionAPK string) *Server {
-	return &Server{st: st, signer: signer, apks: apks, agentAPKs: agentAPKs, files: files, pokes: pokes, streams: newStreamHubs(), enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir, provisionAPK: provisionAPK}
+	return &Server{st: st, signer: signer, apks: apks, agentAPKs: agentAPKs, files: files, pokes: pokes, streams: newStreamHubs(), snapshots: newSnapshotStore(), enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir, provisionAPK: provisionAPK}
 }
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -127,7 +130,7 @@ func (s *Server) Routes() *http.ServeMux {
 	// pattern ambiguity between the literal "enroll" and the "{id}" segment.
 	mux.HandleFunc("/api/v1/devices/", s.deviceDispatcher)
 	mux.HandleFunc("POST /api/v1/commands/{id}/result/", s.commandResult)
-	mux.HandleFunc("POST /api/v1/devices/{id}/screenshot/", s.screenshot)
+	mux.HandleFunc("POST /api/v1/devices/{id}/screenshot/", s.requireDevice(s.screenshot))
 	mux.HandleFunc("POST /api/v1/devices/{id}/unenroll/", s.unenroll)
 	mux.HandleFunc("GET /api/v1/apk/{name}", s.downloadAPK)
 	// Zero-touch provisioning: the tablet's setup wizard downloads the Ali MDM
@@ -188,6 +191,11 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/devices/{id}/stream/status", s.requireOperator(s.streamStatus))
 	mux.HandleFunc("GET /api/v1/devices/{id}/stream.mjpeg", s.requireOperator(s.streamMJPEG))
 	mux.HandleFunc("POST /api/v1/devices/{id}/stream/frame", s.requireDevice(s.postFrame))
+
+	// Snapshots: a still per device, for the console's card view.
+	mux.HandleFunc("GET /api/v1/devices/{id}/snapshot", s.requireOperator(s.deviceSnapshot))
+	mux.HandleFunc("GET /api/v1/devices/{id}/snapshot/meta", s.requireOperator(s.snapshotMeta))
+	mux.HandleFunc("POST /api/v1/devices/{id}/snapshot/request", s.requireOperator(s.requestSnapshot))
 
 	// Per-device file manager: the console asks, the tablet answers later.
 	mux.HandleFunc("GET /api/v1/devices/{id}/inbox", s.requireOperator(s.deviceInbox))
@@ -628,15 +636,6 @@ func (s *Server) commandResult(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Server) screenshot(w http.ResponseWriter, r *http.Request) {
-	// Accept the multipart upload; store it best-effort (not persisted in this build).
-	if err := r.ParseMultipartForm(8 << 20); err != nil {
-		http.Error(w, "bad upload", http.StatusBadRequest)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
 func (s *Server) unenroll(w http.ResponseWriter, r *http.Request) {
 	dev := deviceFrom(r.Context())
 	if dev == nil {
@@ -677,6 +676,8 @@ func (s *Server) forceUnenroll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unenroll failed", http.StatusInternalServerError)
 		return
 	}
+	// Forget its picture too; the row is gone, the image should go with it.
+	s.snapshots.drop(id)
 	s.record(r, "device_removed", store.EventWarn, id, "Removed "+id+" from the console")
 	writeJSON(w, map[string]any{"id": id, "unenrolled": true})
 }

@@ -9,7 +9,7 @@ import {
   IconDevices, IconGroups, IconEnroll, IconPackage, IconSignOut, IconChevronLeft, IconBell,
   IconRefresh, IconPlus, IconTrash, IconEdit, IconPower, IconLock, IconUnlock,
   IconEject, IconCopy, IconCheck, IconUpload, IconInfo, IconWarning,
-  IconUser, IconUsers, IconKey, IconSave, IconShield, IconFile, IconEye,
+  IconUser, IconUsers, IconKey, IconSave, IconShield, IconFile, IconEye, IconRows, IconGrid,
 } from "./icons.jsx";
 
 // Compact "time ago" so the Last seen column stays narrow; the cell keeps the
@@ -377,6 +377,84 @@ function LiveView({ device, onErr, onClose }) {
   );
 }
 
+/* The card layout is the phone layout, offered at any width. A class on <html>
+   drives it from one place so the CSS has a single copy of the rules. */
+function useNarrowFlag() {
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 48rem)");
+    const apply = () => document.documentElement.classList.toggle("is-narrow", mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+}
+
+/* A still of the tablet's screen, refreshed on a timer.
+   Asking and fetching are separate steps because they happen on different
+   clocks: the request reaches the tablet on its next check-in, so the image
+   that answers it arrives later. The previous still stays on screen until the
+   new one lands, and carries its age, rather than blanking between refreshes. */
+function DeviceSnapshot({ deviceId, online, intervalMs = 30000 }) {
+  const imgRef = useRef(null);
+  const urlRef = useRef(null);
+  const [state, setState] = useState("waiting");
+  const [takenAt, setTakenAt] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const show = async () => {
+      try {
+        const got = await api.fetchSnapshot(deviceId, controller.signal);
+        if (cancelled || !got) return;
+        const url = URL.createObjectURL(got.blob);
+        if (imgRef.current) imgRef.current.src = url;
+        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+        urlRef.current = url;
+        setTakenAt(got.at);
+        setState("shown");
+      } catch (e) {
+        if (!cancelled && e.name !== "AbortError") setState("error");
+      }
+    };
+
+    const cycle = () => {
+      // Offline tablets cannot answer; keep showing the last still rather than
+      // queuing commands that will pile up until they return.
+      if (!online) return;
+      api.requestSnapshot(deviceId).catch(() => {/* it will be retried next cycle */});
+      // Give the tablet a check-in to act on it before looking for the result.
+      setTimeout(() => { if (!cancelled) show(); }, 12000);
+    };
+
+    show();          // whatever is already there, immediately
+    cycle();
+    const t = setInterval(cycle, intervalMs);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearInterval(t);
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+    };
+  }, [deviceId, online, intervalMs]);
+
+  return (
+    <div className="snap">
+      {/* eslint-disable-next-line jsx-a11y/alt-text */}
+      <img ref={imgRef} style={{ display: state === "shown" ? "block" : "none" }} />
+      {state !== "shown" && (
+        <div className="snap-note">
+          {online ? "Waiting for the tablet to send a screen…" : "Offline — no screen to show"}
+        </div>
+      )}
+      {state === "shown" && takenAt && (
+        <span className="snap-age">{timeAgo(takenAt) || "just now"}</span>
+      )}
+    </div>
+  );
+}
+
 function DeviceInbox({ device, onErr }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -449,6 +527,15 @@ function DeviceInbox({ device, onErr }) {
 }
 
 function Devices({ onErr }) {
+  useNarrowFlag();
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem("devicesView") === "cards" ? "cards" : "table"; }
+    catch { return "table"; }
+  });
+  const setViewMode = (v) => {
+    setView(v);
+    try { localStorage.setItem("devicesView", v); } catch { /* private mode */ }
+  };
   const [renaming, setRenaming] = useState(null);
   const [inboxFor, setInboxFor] = useState(null);
   const [liveFor, setLiveFor] = useState(null);
@@ -598,10 +685,16 @@ function Devices({ onErr }) {
         actions={<>
           <input className="search-input" placeholder="Search devices…" value={q}
             onChange={(e) => setQ(e.target.value)} />
+          <span className="view-switch" role="group" aria-label="Device layout">
+            <button className={view === "table" ? "on" : ""} aria-pressed={view === "table"}
+              onClick={() => setViewMode("table")} title="Table"><IconRows />Table</button>
+            <button className={view === "cards" ? "on" : ""} aria-pressed={view === "cards"}
+              onClick={() => setViewMode("cards")} title="Cards, with a screen snapshot"><IconGrid />Cards</button>
+          </span>
           <button className="btn outline sm" onClick={load}><IconRefresh />Refresh</button>
         </>}
       >
-        <table className="stacked">
+        <table className={"stacked" + (view === "cards" ? " cards" : "")}>
           <thead>
             <tr>
               <th>Device</th><th>Status</th><th>Battery</th><th>Android</th>
@@ -645,6 +738,9 @@ function Devices({ onErr }) {
                     </span>
                   )}
                   {d.model && <div className="small muted">{d.model}</div>}
+                  {view === "cards" && (
+                    <DeviceSnapshot deviceId={d.id} online={d.online} />
+                  )}
                 </td>
                 <td data-label="Status">
                   <span className={"badge " + (d.online ? "on" : "off")}>

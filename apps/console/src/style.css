@@ -420,6 +420,109 @@ a { color: inherit; text-decoration: none; }
    ══════════════════════════════════════════════════════════════════════════ */
 
 .search-input { width: 200px; height: 34px; }
+
+/* ── Card layout for tables ──────────────────────────────────────────────
+   One block per row instead of columns. Applied automatically on a phone
+   (.is-narrow, set from matchMedia) and on demand at any width when the
+   operator picks the card view, so there is one copy of these rules. */
+/* A wide table on a phone means scrolling sideways to hunt for the one
+   column that matters, and the columns off the right edge are invisible —
+   there is nothing to say they exist. Below this width each row becomes its
+   own block and every value carries its column name. */
+/* Note: .table-scroll keeps overflow-x:auto here. Making it visible let the
+   policy editor's managed-apps table — which is not stacked, because it sits
+   inside a form rather than being a page-level list — push the whole page
+   wider than the phone instead of scrolling inside its own box. A stacked
+   table never overflows, so auto costs it nothing. */
+:is(table.stacked.cards, .is-narrow table.stacked) thead { display: none; }
+:is(table.stacked.cards, .is-narrow table.stacked), :is(table.stacked.cards, .is-narrow table.stacked) tbody, :is(table.stacked.cards, .is-narrow table.stacked) tr, :is(table.stacked.cards, .is-narrow table.stacked) td { display: block; width: 100%; }
+/* The inset goes on the row, which is a block here, so each stacked row is
+   padded like the card it sits in rather than running to the edges. */
+:is(table.stacked.cards, .is-narrow table.stacked) tr { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+:is(table.stacked.cards, .is-narrow table.stacked) tr:last-child { border-bottom: none; }
+:is(table.stacked.cards, .is-narrow table.stacked) td {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 5px 0; border: none;
+  white-space: normal; word-break: break-word;
+}
+/* .card-table insets the first and last column so the table lines up with the
+   card header. Stacked, every cell is both, which would double the row's own
+   padding. */
+:is(table.stacked.cards, .is-narrow table.stacked) td:first-child { padding-inline-start: 0; }
+:is(table.stacked.cards, .is-narrow table.stacked) td:last-child { padding-inline-end: 0; }
+:is(table.stacked.cards, .is-narrow table.stacked) td::before {
+  content: attr(data-label);
+  flex-shrink: 0;
+  font-size: 0.75rem; color: var(--muted-foreground);
+}
+/* An expanded panel (live view, a device's files) is its own layout, not a
+   label/value pair, so it keeps the full width. */
+/* An expanded panel brings its own padding and border, so the row must not
+   inset it as well. */
+:is(table.stacked.cards, .is-narrow table.stacked) tr:has(td[colspan]) { padding-inline: 0; }
+:is(table.stacked.cards, .is-narrow table.stacked) td[colspan] { display: block; padding: 0; }
+:is(table.stacked.cards, .is-narrow table.stacked) td[colspan]::before, :is(table.stacked.cards, .is-narrow table.stacked) td:not([data-label])::before { content: none; }
+/* Controls need the room more than the alignment: let them wrap and run to
+   the left rather than being squeezed against the right edge. */
+:is(table.stacked.cards, .is-narrow table.stacked) td.cell-actions { display: block; padding-top: 10px; }
+:is(table.stacked.cards, .is-narrow table.stacked) td.cell-actions .btn-group { width: 100%; flex-wrap: wrap; justify-content: flex-start !important; }
+:is(table.stacked.cards, .is-narrow table.stacked) td select, :is(table.stacked.cards, .is-narrow table.stacked) td input { max-width: 60vw; }
+
+/* Chosen deliberately at a width that fits more than one: lay the rows out as
+   a real grid of cards rather than one tall column. On a phone .is-narrow wins
+   and they stay full width. */
+table.stacked.cards tbody {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+  padding: 14px;
+}
+table.stacked.cards tbody tr {
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--card);
+}
+table.stacked.cards tbody tr:hover { background: color-mix(in oklab, var(--muted) 30%, transparent); }
+/* An expanded panel is full width, not a card in the grid. */
+table.stacked.cards tbody tr:has(td[colspan]) { grid-column: 1 / -1; border: none; background: none; }
+.is-narrow table.stacked.cards tbody { display: block; padding: 0; gap: 0; }
+.is-narrow table.stacked.cards tbody tr { border: none; border-bottom: 1px solid var(--border); border-radius: 0; }
+
+/* View switcher */
+.view-switch { display: inline-flex; border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px); overflow: hidden; }
+.view-switch button {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding-inline: 10px;
+  border: 0; background: var(--background); color: var(--muted-foreground);
+  font-family: inherit; font-size: 0.75rem; cursor: pointer;
+}
+.view-switch button + button { border-inline-start: 1px solid var(--input); }
+.view-switch button.on { background: var(--accent); color: var(--foreground); font-weight: 500; }
+.view-switch svg { width: 14px; height: 14px; }
+
+/* Snapshot on a device card */
+.snap {
+  position: relative; width: 100%; margin-top: 10px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: #000; overflow: hidden;
+  aspect-ratio: 10 / 16; max-height: 260px;
+  display: flex; align-items: center; justify-content: center;
+}
+.snap img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.snap-note { color: var(--muted-foreground); font-size: 0.6875rem; text-align: center; padding: 10px; }
+.snap-age {
+  position: absolute; inset-inline-end: 6px; inset-block-end: 6px;
+  padding: 2px 6px; border-radius: 999px;
+  background: rgb(0 0 0 / 0.55); color: #fff; font-size: 0.625rem;
+}
+/* The Device cell carries a name and, under it, the model or id. As flex
+   items those sat side by side and crowded each other; the second line drops
+   beneath the first instead. Covers the App update table too, which pairs a
+   name with the device id the same way. */
+:is(table.stacked.cards, .is-narrow table.stacked) td[data-label="Device"] { flex-wrap: wrap; }
+:is(table.stacked.cards, .is-narrow table.stacked) td[data-label="Device"] > *:nth-child(n+2) { flex-basis: 100%; text-align: end; }
+
+
 .table-scroll { width: 100%; overflow-x: auto; }
 table {
   width: 100%;
@@ -590,55 +693,6 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; bac
 .form-row > .form-control > .form-desc { flex-basis: 100%; }
 @media (max-width: 48rem) {
   .form-row > .form-label { flex: 1 1 100%; }
-
-  /* A wide table on a phone means scrolling sideways to hunt for the one
-     column that matters, and the columns off the right edge are invisible —
-     there is nothing to say they exist. Below this width each row becomes its
-     own block and every value carries its column name. */
-  /* Note: .table-scroll keeps overflow-x:auto here. Making it visible let the
-     policy editor's managed-apps table — which is not stacked, because it sits
-     inside a form rather than being a page-level list — push the whole page
-     wider than the phone instead of scrolling inside its own box. A stacked
-     table never overflows, so auto costs it nothing. */
-  table.stacked thead { display: none; }
-  table.stacked, table.stacked tbody, table.stacked tr, table.stacked td { display: block; width: 100%; }
-  /* The inset goes on the row, which is a block here, so each stacked row is
-     padded like the card it sits in rather than running to the edges. */
-  table.stacked tr { padding: 14px 16px; border-bottom: 1px solid var(--border); }
-  table.stacked tr:last-child { border-bottom: none; }
-  table.stacked td {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 12px; padding: 5px 0; border: none;
-    white-space: normal; word-break: break-word;
-  }
-  /* .card-table insets the first and last column so the table lines up with the
-     card header. Stacked, every cell is both, which would double the row's own
-     padding. */
-  table.stacked td:first-child { padding-inline-start: 0; }
-  table.stacked td:last-child { padding-inline-end: 0; }
-  table.stacked td::before {
-    content: attr(data-label);
-    flex-shrink: 0;
-    font-size: 0.75rem; color: var(--muted-foreground);
-  }
-  /* An expanded panel (live view, a device's files) is its own layout, not a
-     label/value pair, so it keeps the full width. */
-  /* An expanded panel brings its own padding and border, so the row must not
-     inset it as well. */
-  table.stacked tr:has(td[colspan]) { padding-inline: 0; }
-  table.stacked td[colspan] { display: block; padding: 0; }
-  table.stacked td[colspan]::before, table.stacked td:not([data-label])::before { content: none; }
-  /* Controls need the room more than the alignment: let them wrap and run to
-     the left rather than being squeezed against the right edge. */
-  table.stacked td.cell-actions { display: block; padding-top: 10px; }
-  table.stacked td.cell-actions .btn-group { width: 100%; flex-wrap: wrap; justify-content: flex-start !important; }
-  table.stacked td select, table.stacked td input { max-width: 60vw; }
-  /* The Device cell carries a name and, under it, the model or id. As flex
-     items those sat side by side and crowded each other; the second line drops
-     beneath the first instead. Covers the App update table too, which pairs a
-     name with the device id the same way. */
-  table.stacked td[data-label="Device"] { flex-wrap: wrap; }
-  table.stacked td[data-label="Device"] > *:nth-child(n+2) { flex-basis: 100%; text-align: end; }
 
   /* Four full-width stat cards push the actual list a screen and a half down.
      Two across keeps them glanceable without owning the viewport. */
