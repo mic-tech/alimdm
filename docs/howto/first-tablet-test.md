@@ -11,7 +11,7 @@ Everything runs locally on the workstation for now (no VPS needed).
 ## 0. Prerequisites (one-time)
 
 - [ ] Test server running: `docker ps | grep fk-cloud-test` (should be `Up`)
-- [ ] Console reachable: open `http://192.168.1.100:8090/console/` in a browser
+- [ ] Console reachable: open `http://192.168.1.100:8090` in a browser
 - [ ] The 3 school APKs uploaded (they already are — verify in the **APKs** tab)
 - [ ] Tablet **charged**, and you have its **Wi-Fi password** (the tablet must join the
       same network as the workstation to reach `192.168.1.100`)

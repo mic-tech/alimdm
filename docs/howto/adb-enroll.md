@@ -158,7 +158,7 @@ adb shell am start -n com.alimdm/.MainActivity
 
 ## 5. Verify
 
-1. Open your console: `https://cloud.yourdomain.com/console/` → **Devices**.
+1. Open your console: `https://cloud.yourdomain.com` → **Devices**.
 2. Within ~30 seconds the tablet appears **online** (battery, Android version, model).
 3. On the tablet, it should be showing your first whitelisted app, locked.
 4. Try the Home button / recents / Settings — none should work. That's the lockdown.

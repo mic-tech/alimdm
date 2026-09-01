@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -220,29 +221,54 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/users/{email}/password", s.requireAdmin(s.resetUserPassword))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 
-	// Operator console (static React build) at /console/ with SPA fallback.
+	// Operator console (static React build) at the root, with SPA fallback so
+	// that every page has a real URL: /devices, /groups, /activity and so on.
 	if s.consoleDir != "" {
-		mux.Handle("/console/", s.consoleHandler())
+		mux.Handle("/", s.consoleHandler())
 	}
 
 	return mux
 }
 
-// consoleHandler serves the built console; unknown /console/ paths fall back to
-// index.html so client-side routing works.
+// consoleHandler serves the built console. A path that names no file falls
+// back to index.html, which is what makes /devices and /groups work: the
+// browser asks the server for them, and the console then routes on the URL.
 func (s *Server) consoleHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rel := strings.TrimPrefix(r.URL.Path, "/console/")
-		rel = strings.TrimPrefix(rel, "/")
-		// If a real file exists under the console dir, serve it.
-		if rel != "" {
+		// This handler is registered at "/", so it also catches anything under
+		// /api/ that no route claimed. Falling back to index.html there would
+		// hand a client an HTML page to parse as JSON; a mistyped endpoint
+		// should say it does not exist.
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			writeErr(w, http.StatusNotFound, "unknown endpoint")
+			return
+		}
+		// path.Clean resolves any ".." before it can reach the filesystem.
+		rel := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		if rel != "" && !strings.Contains(rel, "..") {
 			full := filepath.Join(s.consoleDir, rel)
 			if st, err := os.Stat(full); err == nil && !st.IsDir() {
+				// Asset filenames carry a content hash, so a given URL never
+				// changes what it returns and can be cached for a long time.
+				if strings.HasPrefix(rel, "assets/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				http.ServeFile(w, r, full)
 				return
 			}
 		}
-		// Otherwise serve the SPA entry (index.html).
+		// Nothing under /assets/ is a page, so a miss there is a genuine 404.
+		// Answering with index.html would hand the browser an HTML page where
+		// it asked for a script, and the error it reports ("unexpected token
+		// <") says nothing about the missing file that caused it.
+		if strings.HasPrefix(rel, "assets/") {
+			http.NotFound(w, r)
+			return
+		}
+		// The SPA entry. Never cached: it is the one file whose contents change
+		// on a deploy while keeping its URL, and a stale copy would go on
+		// asking for assets that are no longer there.
+		w.Header().Set("Cache-Control", "no-store")
 		http.ServeFile(w, r, filepath.Join(s.consoleDir, "index.html"))
 	})
 }

@@ -182,7 +182,7 @@ func (a *AlertWatcher) notify(webhookURL, event string, d store.Device, silent t
 		"model":          d.Model,
 		"last_seen":      d.LastSeen,
 		"silent_minutes": minutes,
-		"console_url":    a.baseURL + "/console/",
+		"console_url":    a.baseURL + "/devices",
 		// Slack, Discord and Mattermost all render a bare "text" field, so one
 		// payload works with the common targets without a per-service adapter.
 		"text": text,

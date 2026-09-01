@@ -1,7 +1,7 @@
 # Day-to-Day Management
 
 Once your tablets are enrolled, this is how you manage them from the console
-(`https://cloud.yourdomain.com/console/`). No ADB needed for any of this.
+(`https://cloud.yourdomain.com`). No ADB needed for any of this.
 
 ## The console at a glance
 

@@ -20,7 +20,7 @@ breaking your setup.
 │ Ali MDM  │  heartbeat / commands /   │  ┌─────────┐  ┌──────────┐  │
 │ (Device    │  config / APK updates     │  │ Go API  │  │ React    │  │
 │  Owner)    │ ◀─────────────────────────│  │ :8080   │  │ console  │  │
-└────────────┘   config / poke           │  └────┬────┘  │ /console │  │
+└────────────┘   config / poke           │  └────┬────┘  │  at /   │  │
                                           │       │SQLite │  └──────────┘  │
                                           │  ┌────┴────┐ ┌──────────┐      │
                                           │  │  Caddy  │ │  (MQTT)  │      │
@@ -80,7 +80,7 @@ docker build -f apps/server/Dockerfile -t ali-mdm-cloud .
    ```
    It builds the images, starts API + Caddy (automatic HTTPS), and creates your
    first operator + the default 3-app lockdown group.
-6. **Open the console** — `https://cloud.yourdomain.com/console/` and sign in.
+6. **Open the console** — `https://cloud.yourdomain.com` and sign in.
 7. **Enroll tablets** — see `enroll/README.md`:
    ```
    python3 enroll/enroll.py --cloud https://cloud.yourdomain.com \

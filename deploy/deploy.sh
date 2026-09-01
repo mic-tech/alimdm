@@ -40,6 +40,6 @@ if [ "${ans:-Y}" != "n" ]; then
 fi
 
 echo
-echo "Done. Console: https://${CLOUD_DOMAIN}/console/"
+echo "Done. Console: https://${CLOUD_DOMAIN}"
 echo "Verify health:  curl -s https://${CLOUD_DOMAIN}/healthz"
 echo "Enroll a tablet: python3 enroll/enroll.py --cloud https://${CLOUD_DOMAIN} --token \"\$FK_ENROLL_TOKEN\" --mode qr"

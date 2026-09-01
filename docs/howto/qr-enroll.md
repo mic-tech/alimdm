@@ -14,7 +14,7 @@ run unattended. You generate the QR from the **console website**.
 
 ## 1. Generate the QR from the console
 
-1. Log in to `https://cloud.yourdomain.com/console/`
+1. Log in to `https://cloud.yourdomain.com`
 2. Click **➕ Enroll (QR)** in the sidebar
 3. Fill in:
    - **Cloud URL** — pre-filled with your console address

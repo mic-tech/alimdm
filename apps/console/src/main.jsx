@@ -2229,31 +2229,51 @@ function Users({ me, onErr, onMeChange }) {
 /* ── Shell ──────────────────────────────────────────────────────────────── */
 
 const NAV = [
-  { id: "devices", icon: IconDevices, txt: "Devices", title: "Devices",
+  { id: "devices", path: "devices", icon: IconDevices, txt: "Devices", title: "Devices",
     desc: "Every enrolled tablet, its live status, and remote controls" },
-  { id: "groups", icon: IconGroups, txt: "Groups", title: "Policy groups",
+  { id: "groups", path: "groups", icon: IconGroups, txt: "Groups", title: "Policy groups",
     desc: "Define one policy and apply it to a whole set of devices" },
-  { id: "notifications", icon: IconBell, txt: "Activity", title: "Activity",
+  { id: "notifications", path: "activity", icon: IconBell, txt: "Activity", title: "Activity",
     desc: "What the fleet has done, and who to tell when a tablet goes quiet" },
-  { id: "enroll", icon: IconEnroll, txt: "Enroll", title: "Enroll a tablet",
+  { id: "enroll", path: "enroll", icon: IconEnroll, txt: "Enroll", title: "Enroll a tablet",
     desc: "Bring a new device under management over ADB" },
-  { id: "apks", icon: IconPackage, txt: "Packages", title: "App packages",
+  { id: "apks", path: "packages", icon: IconPackage, txt: "Packages", title: "App packages",
     desc: "Upload APKs and push silent installs to your fleet" },
-  { id: "files", icon: IconFile, txt: "Files", title: "File library",
+  { id: "files", path: "files", icon: IconFile, txt: "Files", title: "File library",
     desc: "Send documents to every tablet's inbox folder" },
-  { id: "appupdate", icon: IconUpload, txt: "App update", title: "Ali MDM app update",
+  { id: "appupdate", path: "app-update", icon: IconUpload, txt: "App update", title: "Ali MDM app update",
     desc: "Push a new build of Ali MDM itself to your tablets over the air" },
   // menu: reached from the account dropdown in the header rather than the
   // sidebar. They stay in NAV so the header title and page description still
   // resolve by view id.
-  { id: "profile", icon: IconUser, txt: "Profile", title: "Your profile", menu: true,
+  { id: "profile", path: "profile", icon: IconUser, txt: "Profile", title: "Your profile", menu: true,
     desc: "Update your details and change your password" },
-  { id: "users", icon: IconUsers, txt: "Users", title: "User accounts", menu: true,
+  { id: "users", path: "users", icon: IconUsers, txt: "Users", title: "User accounts", menu: true,
     adminOnly: true, desc: "Who can sign in to this console, and what they may do" },
 ];
 
+/* ── Routing ─────────────────────────────────────────────────────────────────
+   Each page has its own URL, so a page can be bookmarked, sent to a colleague,
+   and reloaded where it was rather than always landing on Devices.
+
+   The History API directly, rather than a router: there are nine flat pages
+   and no nested or parameterised routes, so a dependency would only wrap what
+   is written here in three lines. */
+
+const HOME = NAV[0];
+
+/** The page a URL names, falling back to Devices for anything unrecognised. */
+function viewFromPath(pathname) {
+  const seg = pathname.replace(/^\/+|\/+$/g, "").split("/")[0].toLowerCase();
+  return (NAV.find((n) => n.path === seg) || HOME).id;
+}
+
+function pathForView(id) {
+  return "/" + ((NAV.find((n) => n.id === id) || HOME).path);
+}
+
 function Shell({ onSignOut }) {
-  const [view, setView] = useState("devices");
+  const [view, setView] = useState(() => viewFromPath(window.location.pathname));
   const [collapsed, setCollapsed] = useState(false);
   const [me, setMe] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -2263,6 +2283,36 @@ function Shell({ onSignOut }) {
   const [events, setEvents] = useState([]);
   const [unread, setUnread] = useState(0);
   const onErr = useCallback((m) => toast(m, false), []);
+
+  // Navigate, and put it in the address bar. replace is for corrections the
+  // operator did not ask for — landing on "/" or on a page they may not open —
+  // which should not leave a Back step pointing at a URL that redirects again.
+  const go = useCallback((id, replace) => {
+    setView(id);
+    const to = pathForView(id);
+    if (to !== window.location.pathname) {
+      window.history[replace ? "replaceState" : "pushState"]({ view: id }, "", to);
+    }
+  }, []);
+
+  // Back and forward move between pages, as anyone would expect of real URLs.
+  useEffect(() => {
+    const onPop = () => setView(viewFromPath(window.location.pathname));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // "/" and any unknown path show Devices; say so in the bar rather than
+  // leaving a URL that does not match the page.
+  useEffect(() => { go(viewFromPath(window.location.pathname), true); }, [go]);
+
+  // A plain click navigates in place. Modified clicks are left alone, so
+  // ctrl/cmd-click and "open in new tab" work — the point of real links.
+  const navClick = (id) => (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    go(id);
+  };
 
   // The signed-in account comes from the server rather than the token so the
   // role shown here is the live one.
@@ -2277,10 +2327,11 @@ function Shell({ onSignOut }) {
     () => NAV.filter((n) => !n.adminOnly || (me && me.role === "admin")),
     [me]);
 
-  // An admin who demotes themselves loses the Users page under their feet.
+  // An admin who demotes themselves loses the Users page under their feet, as
+  // does anyone who types /users without the role for it.
   useEffect(() => {
-    if (me && !nav.some((n) => n.id === view)) setView("devices");
-  }, [nav, view, me]);
+    if (me && !nav.some((n) => n.id === view)) go("devices", true);
+  }, [nav, view, me, go]);
 
   // Offline count, polled here rather than on the Devices page so a silent
   // tablet is visible from wherever the operator happens to be. This is the
@@ -2298,6 +2349,13 @@ function Shell({ onSignOut }) {
   }, []);
 
   useEffect(() => { window.scrollTo(0, 0); }, [view]);
+
+  // Name the tab after the page. Bookmarks and history entries are per page
+  // now, and "Ali MDM Console" nine times over tells nobody which is which.
+  useEffect(() => {
+    const page = NAV.find((n) => n.id === view);
+    document.title = page ? page.title + " · Ali MDM" : "Ali MDM Console";
+  }, [view]);
 
   // A dropdown that can only be dismissed by its own button is a trap, so close
   // on any click outside it and on Escape. Listeners exist only while one is open.
@@ -2376,8 +2434,9 @@ function Shell({ onSignOut }) {
           {sidebarNav.map((n) => {
             const Icon = n.icon;
             return (
-              <button key={n.id} className={"navbtn" + (view === n.id ? " active" : "")}
-                onClick={() => setView(n.id)} title={n.txt}>
+              <a key={n.id} className={"navbtn" + (view === n.id ? " active" : "")}
+                href={pathForView(n.id)} onClick={navClick(n.id)} title={n.txt}
+                aria-current={view === n.id ? "page" : undefined}>
                 <span className="navbtn-icon"><Icon /></span>
                 <span className="navbtn-title">{n.txt}</span>
                 {n.id === "devices" && offlineCount > 0 && (
@@ -2386,7 +2445,7 @@ function Shell({ onSignOut }) {
                     {offlineCount}
                   </span>
                 )}
-              </button>
+              </a>
             );
           })}
         </nav>
@@ -2424,7 +2483,7 @@ function Shell({ onSignOut }) {
                     ))}
                   </div>
                   <button className="bell-all" role="menuitem"
-                    onClick={() => { setBellOpen(false); setView("notifications"); }}>
+                    onClick={() => { setBellOpen(false); go("notifications"); }}>
                     See all activity
                   </button>
                 </div>
@@ -2451,11 +2510,12 @@ function Shell({ onSignOut }) {
                   {menuNav.map((n) => {
                     const Icon = n.icon;
                     return (
-                      <button key={n.id} role="menuitem"
+                      <a key={n.id} role="menuitem"
                         className={"account-menu-item" + (view === n.id ? " active" : "")}
-                        onClick={() => { setView(n.id); setMenuOpen(false); }}>
+                        href={pathForView(n.id)}
+                        onClick={(e) => { setMenuOpen(false); navClick(n.id)(e); }}>
                         <Icon />{n.txt}
-                      </button>
+                      </a>
                     );
                   })}
                   <div className="account-menu-sep" />
