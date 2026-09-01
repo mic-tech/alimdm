@@ -757,9 +757,9 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		if t, err := time.Parse(time.RFC3339, d.LastSeen); err == nil {
 			online = time.Since(t) < 3*time.Minute
 		}
-		// Only call a device stale once it has actually reported a version:
-		// a tablet on a build too old to report one is unknown, not behind.
-		stale := staged > 0 && d.AppVersionCode > 0 && d.AppVersionCode < staged
+		// A device below the staged build is behind, including one that has
+		// enrolled but not yet checked in — it does not have the build either.
+		stale := staged > 0 && d.AppVersionCode < staged
 		out = append(out, pub{d.ID, d.Name, d.GroupID, d.ConfigVersion, d.Battery, d.AndroidVer, d.Model,
 			d.AppVersionCode, d.AppVersionName, stale, d.LastSeen, online})
 	}

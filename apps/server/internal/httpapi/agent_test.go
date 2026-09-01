@@ -135,9 +135,10 @@ func TestMatchingResultStillSettles(t *testing.T) {
 	}
 }
 
-// Builds older than v56 send no version. Those must keep working as before,
-// or upgrading the server would strand every tablet still on an old build.
-func TestResultWithoutAVersionIsStillAccepted(t *testing.T) {
+// A report that does not say which rollout it belongs to is not applied.
+// Every build in the fleet sends the version; accepting reports without one was
+// the hole that let a finished v54 install settle a pending v55 rollout.
+func TestResultWithoutAVersionIsIgnored(t *testing.T) {
 	e := newTestEnv(t)
 	if err := e.st.UpsertGroup(&testGroup); err != nil {
 		t.Fatal(err)
@@ -148,8 +149,8 @@ func TestResultWithoutAVersionIsStillAccepted(t *testing.T) {
 
 	e.do("POST", "/api/v1/devices/tablet-1/agent-update", key, map[string]any{"status": "success"})
 	up, _ := e.st.GetAgentUpdate("tablet-1")
-	if up.Status != store.AgentSuccess {
-		t.Errorf("status = %q, want success for a versionless report from an old build", up.Status)
+	if up.Status == store.AgentSuccess {
+		t.Error("a report with no version settled the rollout; that is the hole that stranded a tablet on an old build")
 	}
 }
 
@@ -195,33 +196,21 @@ func TestHeartbeatRecordsTheRunningBuild(t *testing.T) {
 	}
 }
 
-// A build too old to report a version must not blank the last known one, and
-// must not be labelled stale on the strength of knowing nothing about it.
-func TestOlderBuildDoesNotBlankOrMislabelTheVersion(t *testing.T) {
+// A device that has enrolled but never checked in does not have the staged
+// build either, so it reads as behind rather than as a blank.
+func TestNeverSeenDeviceReadsAsBehind(t *testing.T) {
 	e := newTestEnv(t)
 	tok := e.login("admin@x.com", "adminpassword")
-	if err := e.st.UpsertGroup(&testGroup); err != nil {
-		t.Fatal(err)
-	}
-	key := e.newDeviceKey(t, "tablet-1")
-	_ = e.st.SaveAgentRelease(&store.AgentRelease{VersionCode: 56, VersionName: "1.2.31", FileName: "b.apk", SHA256: "y", Size: 1})
-
-	// It reports a version once...
-	e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{
-		"system": map[string]any{"app_version_code": 56, "app_version_name": "1.2.31"},
-	})
-	// ...then a heartbeat arrives without one, as an older build would send.
-	e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{
-		"system": map[string]any{"android_version": "15"},
-	})
+	e.newDeviceKey(t, "tablet-1")
+	_ = e.st.SaveAgentRelease(&store.AgentRelease{VersionCode: 57, VersionName: "1.2.32", FileName: "b.apk", SHA256: "y", Size: 1})
 
 	rec, _ := e.do("GET", "/api/v1/devices", tok, nil)
 	var devs []map[string]any
 	json.Unmarshal(rec.Body.Bytes(), &devs)
-	if devs[0]["app_version_code"] != float64(56) {
-		t.Errorf("app_version_code = %v after a versionless heartbeat, want the last known 56", devs[0]["app_version_code"])
+	if devs[0]["app_version_code"] != float64(0) {
+		t.Errorf("app_version_code = %v before any heartbeat, want 0", devs[0]["app_version_code"])
 	}
-	if devs[0]["stale"] != false {
-		t.Errorf("stale = %v for a device on the staged build, want false", devs[0]["stale"])
+	if devs[0]["stale"] != true {
+		t.Errorf("stale = %v for a device that has never reported, want true", devs[0]["stale"])
 	}
 }

@@ -341,13 +341,10 @@ func (s *Store) UpdateHeartbeat(id, appliedHash string, battery, wifi int, andro
 	return err
 }
 
-// SetDeviceAppVersion records the build a tablet says it is running. Kept apart
-// from UpdateHeartbeat so a build old enough not to report one leaves the last
-// known value alone rather than blanking it.
+// SetDeviceAppVersion records the build a tablet says it is running, straight
+// from its heartbeat. Every build in the fleet reports one, so there is no
+// missing-version case to carry.
 func (s *Store) SetDeviceAppVersion(id string, code int, name string) error {
-	if code <= 0 && name == "" {
-		return nil
-	}
 	_, err := s.db.Exec(
 		`UPDATE devices SET app_version_code=?, app_version_name=? WHERE id=?`, code, name, id)
 	return err

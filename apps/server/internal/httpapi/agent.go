@@ -194,8 +194,8 @@ func (s *Server) agentUpdateResult(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Status string `json:"status"`
 		Error  string `json:"error"`
-		// Which rollout this result is about. Absent from builds older than
-		// v56, which is why a mismatch is only enforced when it is present.
+		// Which rollout this result is about. Required: every build in the
+		// fleet sends it.
 		VersionCode int `json:"version_code"`
 	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil {
@@ -217,14 +217,17 @@ func (s *Server) agentUpdateResult(w http.ResponseWriter, r *http.Request) {
 	// again. Seen in the field: a tablet reported success for a version it had
 	// never been sent, and sat on the old build with the console calling it
 	// up to date.
-	if req.VersionCode > 0 {
-		if up, err := s.st.GetAgentUpdate(dev.ID); err == nil && up.TargetVersionCode != req.VersionCode {
-			log.Printf("agent update: ignoring %s for v%d from %s, which is queued for v%d",
-				req.Status, req.VersionCode, dev.ID, up.TargetVersionCode)
-			// Acknowledged so the device stops retrying a report we do not want.
-			w.WriteHeader(http.StatusOK)
-			return
-		}
+	// A report must say which rollout it is about, and it must be the one this
+	// device is queued for. A missing version is treated the same as a wrong
+	// one: accepting it was the hole that let a finished v54 install mark a
+	// pending v55 rollout complete, leaving the tablet on the old build with
+	// the console calling it up to date.
+	if up, err := s.st.GetAgentUpdate(dev.ID); err == nil && up.TargetVersionCode != req.VersionCode {
+		log.Printf("agent update: ignoring %s for v%d from %s, which is queued for v%d",
+			req.Status, req.VersionCode, dev.ID, up.TargetVersionCode)
+		// Acknowledged so the device stops retrying a report we will not apply.
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 	if err := s.st.SetAgentUpdateStatus(dev.ID, req.Status, req.Error); err != nil {
 		http.Error(w, "update failed", http.StatusInternalServerError)
