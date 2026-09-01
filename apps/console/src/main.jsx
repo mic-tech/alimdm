@@ -539,7 +539,7 @@ function DeviceInbox({ device, onErr }) {
    a gap reads as retention rather than as something lost. */
 const SEVERITY_LABEL = { info: "Info", warn: "Attention", error: "Failure" };
 
-function Notifications({ onErr }) {
+function Notifications({ me, onErr }) {
   useNarrowFlag();
   const [events, setEvents] = useState(null);
   const [hasMore, setHasMore] = useState(false);
@@ -585,6 +585,10 @@ function Notifications({ onErr }) {
 
   return (
     <div className="stack">
+      {/* Admin-only, as it was when this lived on its own page: it changes
+          behaviour for everyone, not just the operator looking at it. */}
+      {me?.role === "admin" && <OfflineAlertSettings onErr={onErr} />}
+
       <CardTable
         title="Notifications"
         actions={<>
@@ -1711,7 +1715,7 @@ function Enroll({ onErr }) {
 
 /* ── Alerts (server-wide) ───────────────────────────────────────────────── */
 
-function Alerts({ onErr }) {
+function OfflineAlertSettings({ onErr }) {
   const [settings, setSettings] = useState(null);
   const [url, setUrl] = useState("");
   const [minutes, setMinutes] = useState("15");
@@ -1751,8 +1755,7 @@ function Alerts({ onErr }) {
   if (!settings) return <Loading label="Loading alert settings…" />;
 
   return (
-    <div className="stack">
-      <Card title="Offline alerts">
+    <Card title="Offline alerts">
         <div className="stack">
           <Alert>
             A tablet that stops checking in keeps showing its kiosk, so nobody in the room can
@@ -1793,12 +1796,11 @@ function Alerts({ onErr }) {
             </span>
           </div>
         </div>
-      </Card>
-    </div>
+    </Card>
   );
 }
 
-/* ── Alerts (server-wide) end ───────────────────────────────────────────── */
+/* ── Offline alerts end ─────────────────────────────────────────────────── */
 
 /* ── Profile (own account) ──────────────────────────────────────────────── */
 
@@ -2233,10 +2235,8 @@ const NAV = [
     desc: "Every enrolled tablet, its live status, and remote controls" },
   { id: "groups", icon: IconGroups, txt: "Groups", title: "Policy groups",
     desc: "Define one policy and apply it to a whole set of devices" },
-  { id: "alerts", icon: IconWarning, txt: "Alerts", title: "Offline alerts",
-    adminOnly: true, desc: "Get told when a tablet stops checking in" },
-  { id: "notifications", icon: IconBell, txt: "Activity", title: "Notifications",
-    desc: "Everything the fleet and its operators have done" },
+  { id: "notifications", icon: IconBell, txt: "Activity", title: "Activity",
+    desc: "What the fleet has done, and who to tell when a tablet goes quiet" },
   { id: "enroll", icon: IconEnroll, txt: "Enroll", title: "Enroll a tablet",
     desc: "Bring a new device under management over ADB" },
   { id: "apks", icon: IconPackage, txt: "Packages", title: "App packages",
@@ -2484,8 +2484,7 @@ function Shell({ onSignOut }) {
             {view === "files" && <Files onErr={onErr} />}
             {view === "appupdate" && <AppUpdate onErr={onErr} />}
             {view === "profile" && <Profile me={me} onErr={onErr} onMeChange={setMe} />}
-            {view === "alerts" && me.role === "admin" && <Alerts onErr={onErr} />}
-            {view === "notifications" && <Notifications onErr={onErr} />}
+            {view === "notifications" && <Notifications me={me} onErr={onErr} />}
             {view === "users" && me.role === "admin" && <Users me={me} onErr={onErr} onMeChange={setMe} />}
           </div>
         </main>
