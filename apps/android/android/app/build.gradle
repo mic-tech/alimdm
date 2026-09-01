@@ -129,7 +129,7 @@ android {
         applicationId "com.alimdm"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 66
+        versionCode 67
         versionName "1.2.34"
 
         // Expose self-update flag to both Kotlin (BuildConfig) and JS (via UpdateModule constants)

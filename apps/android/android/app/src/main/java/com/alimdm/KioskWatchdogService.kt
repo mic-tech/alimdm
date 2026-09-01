@@ -236,14 +236,24 @@ class KioskWatchdogService : Service() {
 
         if (isMainActivityRunning()) return  // AliMDM itself is in foreground — fine
 
-        // In external app mode, the external app is expected to be in the foreground.
-        // Don't relaunch MainActivity just because it's not the topActivity. (#106)
-        if (getDisplayMode() == "external_app") {
-            val foreground = getForegroundPackage()
-            // Unknown (usage access not granted) means we cannot tell an external app from
-            // the launcher, and relaunching on a guess would hijack the app the user is on.
-            if (foreground == null) return
-            if (foreground in getAllowedForegroundPackages()) return
+        // Something else is in front. Whether that is expected has nothing to do
+        // with the display mode: external_app launches an app at startup, and a
+        // dashboard launches one whenever a pupil taps a tile. This check used to
+        // run only for external_app, so on a dashboard tablet the watchdog
+        // relaunched the kiosk over whatever had just been opened — a calculator
+        // closing itself a few seconds after every tap. (#106, #197)
+        val allowed = getAllowedForegroundPackages()
+        val foreground = getForegroundPackage()
+        if (foreground != null) {
+            if (foreground in allowed) return
+        } else if (allowed.size > 1) {
+            // Usage access is not granted, so we cannot tell a whitelisted app
+            // from the launcher — and this device has whitelisted apps to be in.
+            // Relaunching on that guess closes the app someone is using; leaving
+            // it alone costs a kiosk that is slower to reassert itself. The
+            // permission wizard asks for usage access at enrolment so this is
+            // the unusual case, not the normal one.
+            return
         }
 
         val now = System.currentTimeMillis()
