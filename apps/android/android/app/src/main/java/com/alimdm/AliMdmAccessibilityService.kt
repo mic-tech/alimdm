@@ -3,12 +3,15 @@ package com.alimdm
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
+import android.content.ComponentName
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
@@ -54,6 +57,98 @@ class AliMdmAccessibilityService : AccessibilityService() {
             private set
         
         fun isRunning(): Boolean = instance != null
+
+        /**
+         * Make sure the service is actually running, turning it on if we are
+         * allowed to, and wait for it to bind.
+         *
+         * Screen capture of anything other than our own window goes through
+         * this service, so a fleet where it is off silently loses every
+         * screenshot and every live view the moment a pupil opens another app —
+         * which is exactly what happened: 84 of 99 attempts on one tablet, with
+         * the console showing nothing but "waiting for the device to send a
+         * screen".
+         *
+         * It was only ever enabled from [BootReceiver], so a device that had not
+         * rebooted since the permission was granted stayed broken indefinitely.
+         * Enabling it here means capture repairs itself on first use instead.
+         *
+         * Blocks for up to [timeoutMs] waiting for the bind, so call it from a
+         * background thread — both callers already are.
+         *
+         * Returns false when the platform will not let us: without
+         * WRITE_SECURE_SETTINGS (granted once over ADB at enrolment) only the
+         * user can enable it, from Android's accessibility settings.
+         */
+        fun ensureRunning(context: Context, timeoutMs: Long = 4000): Boolean {
+            if (isRunning()) return true
+            if (!enableViaSecureSettings(context)) return false
+            // Binding is asynchronous: the platform starts the service after the
+            // setting is written, so returning immediately would report a
+            // failure that is only a few hundred milliseconds away.
+            val deadline = SystemClock.uptimeMillis() + timeoutMs
+            while (SystemClock.uptimeMillis() < deadline) {
+                if (isRunning()) return true
+                try {
+                    Thread.sleep(100)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return false
+                }
+            }
+            Log.w(TAG, "Accessibility service did not bind within ${timeoutMs}ms of being enabled")
+            return false
+        }
+
+        /** Adds this service to the enabled list. False if we may not write it. */
+        private fun enableViaSecureSettings(context: Context): Boolean {
+            return try {
+                val serviceName = "${context.packageName}/${AliMdmAccessibilityService::class.java.name}"
+
+                // A Device Owner can restrict which accessibility services may
+                // run at all. Add ours to that list rather than replacing it,
+                // which would drop any managed app that was whitelisted.
+                try {
+                    val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE)
+                        as android.app.admin.DevicePolicyManager
+                    if (dpm.isDeviceOwnerApp(context.packageName)) {
+                        val admin = ComponentName(context, DeviceAdminReceiver::class.java)
+                        // null means "no restriction", which already permits us.
+                        val permitted = dpm.getPermittedAccessibilityServices(admin)
+                        if (permitted != null && !permitted.contains(context.packageName)) {
+                            dpm.setPermittedAccessibilityServices(
+                                admin, permitted + context.packageName)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not check the permitted-services list: ${e.message}")
+                }
+
+                val enabled = Settings.Secure.getString(
+                    context.contentResolver,
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                ) ?: ""
+                if (!enabled.contains(serviceName)) {
+                    Settings.Secure.putString(
+                        context.contentResolver,
+                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                        if (enabled.isEmpty()) serviceName else "$enabled:$serviceName",
+                    )
+                }
+                Settings.Secure.putString(
+                    context.contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, "1")
+                Log.i(TAG, "Enabled the accessibility service on demand")
+                true
+            } catch (se: SecurityException) {
+                // WRITE_SECURE_SETTINGS is granted once over ADB at enrolment.
+                // Without it this is a manual step on the device itself.
+                Log.w(TAG, "Cannot enable the accessibility service: ${se.message}")
+                false
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot enable the accessibility service: ${e.message}")
+                false
+            }
+        }
         
         /**
          * Send a single key press.

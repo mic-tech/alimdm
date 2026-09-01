@@ -2137,8 +2137,13 @@ class HttpServerModule(private val reactContext: ReactApplicationContext) :
             lastScreenshotError = "Full-screen capture requires Android 11+"
             return null
         }
-        if (!AliMdmAccessibilityService.isRunning()) {
-            lastScreenshotError = "Accessibility service is not enabled (required to capture another app)"
+        // Turn it on rather than reporting that it is off: it is only ever
+        // needed here and in live view, and a fleet that has not rebooted since
+        // enrolment would otherwise never capture anything but its own window.
+        if (!AliMdmAccessibilityService.ensureRunning(reactContext)) {
+            lastScreenshotError = "Accessibility service is off and could not be enabled " +
+                "(required to capture another app). Grant it once over ADB: " +
+                "adb shell pm grant ${reactContext.packageName} android.permission.WRITE_SECURE_SETTINGS"
             return null
         }
         if (!AliMdmAccessibilityService.canTakeScreenshot()) {

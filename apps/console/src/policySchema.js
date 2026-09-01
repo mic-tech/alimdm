@@ -185,6 +185,11 @@ export const POLICY_FIELDS = [
     help: "Prevent the user from wiping the device via Settings." },
   { path: "security.defaultLauncher", label: "Set as default launcher", type: "bool", tab: "security", section: "Lock Mode",
     help: "Make Ali MDM the home screen so the launcher chooser never appears." },
+  { path: "security.allowRemoteScreenshot", label: "Allow remote screenshots", type: "bool", tab: "security", section: "Lock Mode",
+    help: "Lets the console capture the screen while another app is in front. Lock Mode blacks out capture; " +
+      "the device lifts that for the fraction of a second it takes to take the picture, which also re-enables " +
+      "the pupil's own Power+Volume Down screenshot for that moment. Off means screenshots and live view only " +
+      "ever show the Ali MDM kiosk itself." },
 
   // Auto Launch
   { path: "security.autoLaunch", label: "Auto-launch on boot", type: "bool", tab: "security", section: "Auto Launch",

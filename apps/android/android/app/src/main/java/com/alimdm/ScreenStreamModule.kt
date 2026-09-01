@@ -154,6 +154,7 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
         val targetIntervalMs = (1000L / fps).coerceAtLeast(50L)
         var failures = 0
         var lastAccessibilityAt = 0L
+        var triedEnablingAccessibility = false
 
         while (running.get()) {
             val startedAt = System.currentTimeMillis()
@@ -174,6 +175,17 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
                         Thread.sleep(ACCESSIBILITY_MIN_INTERVAL_MS - since)
                     }
                     if (!running.get()) break
+                    // The service is what sees an external app. Try once per
+                    // session to turn it on if it is off; retrying every frame
+                    // would spend the whole session waiting for a bind that is
+                    // not coming.
+                    if (!AliMdmAccessibilityService.isRunning() && !triedEnablingAccessibility) {
+                        triedEnablingAccessibility = true
+                        if (!AliMdmAccessibilityService.ensureRunning(reactContext)) {
+                            Log.w(TAG, "Accessibility service is off and could not be enabled; " +
+                                "live view will go blank behind an external app")
+                        }
+                    }
                     lastAccessibilityAt = System.currentTimeMillis()
                     bitmap = AliMdmAccessibilityService.captureScreen(3000)
                 }

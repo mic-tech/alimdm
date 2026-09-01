@@ -3082,6 +3082,7 @@ export const StorageService = {
         },
         overlayButtonPosition: str(KEYS.OVERLAY_BUTTON_POSITION, 'bottom-right'),
         blockFactoryReset: bool(KEYS.BLOCK_FACTORY_RESET),
+        allowRemoteScreenshot: bool(KEYS.ALLOW_REMOTE_SCREENSHOT),
         defaultLauncher: bool(KEYS.DEFAULT_LAUNCHER),
         screenLockCompat: bool(KEYS.SCREEN_LOCK_COMPAT),
         lockscreen: {
@@ -3302,6 +3303,7 @@ export const StorageService = {
       }
       set(KEYS.OVERLAY_BUTTON_POSITION, sec.overlayButtonPosition);
       set(KEYS.BLOCK_FACTORY_RESET, sec.blockFactoryReset);
+      set(KEYS.ALLOW_REMOTE_SCREENSHOT, sec.allowRemoteScreenshot);
       set(KEYS.DEFAULT_LAUNCHER, sec.defaultLauncher);
       set(KEYS.SCREEN_LOCK_COMPAT, sec.screenLockCompat);
       const ls = sec.lockscreen as Record<string, unknown> | undefined;
