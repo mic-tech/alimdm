@@ -494,7 +494,11 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		"force_unenroll":   false,
 		// Per-device label shown in the corner of the tablet's kiosk screen. It
 		// rides on every heartbeat rather than in config, which is group-wide.
-		"device_label": dev.Name,
+		// Falls back to the id, matching the console: a tablet nobody has named
+		// should still say which one it is when someone is standing in front of
+		// it. Resolved here rather than in the app so it applies to the fleet
+		// as it stands, without waiting for a new build.
+		"device_label": deviceLabel(dev.ID, dev.Name),
 		// Non-nil only while an operator-triggered self-update is outstanding.
 		"agent_update": s.agentUpdateFor(dev.ID),
 	}

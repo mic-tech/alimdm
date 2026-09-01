@@ -90,3 +90,12 @@ func TestNoPinMeansNoSensitiveConfig(t *testing.T) {
 		t.Fatalf("expected no sensitive_config when no PIN is set, got %v", sc)
 	}
 }
+
+// A tablet nobody has named still has to say which one it is on its own screen.
+// The fallback lives on the server so it applies to the fleet as it stands.
+func TestKioskLabelFallsBackToTheId(t *testing.T) {
+	body := heartbeatOnce(t, `{"general":{"displayMode":"webview"}}`)
+	if body["device_label"] != "tablet-1" {
+		t.Errorf("device_label = %v for an unnamed tablet, want its id", body["device_label"])
+	}
+}
