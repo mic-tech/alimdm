@@ -2396,7 +2396,7 @@ function Shell({ onSignOut }) {
       <div className="wrapper">
         <header className="header">
           <div className="container-fixed header-inner">
-            <div className="header-title">{active.title}</div>
+            <h1 className="header-title">{active.title}</h1>
             <div className="header-tools">
             <div className="header-bell" ref={bellRef}>
               <button className="bell-btn" aria-haspopup="menu" aria-expanded={bellOpen}
@@ -2474,7 +2474,6 @@ function Shell({ onSignOut }) {
           <div className="container-fixed">
             <div className="toolbar">
               <div className="toolbar-heading">
-                <h1 className="toolbar-title">{active.title}</h1>
                 <div className="toolbar-desc">{active.desc}</div>
               </div>
             </div>
