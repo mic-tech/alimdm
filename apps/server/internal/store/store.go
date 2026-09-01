@@ -23,7 +23,10 @@ type Device struct {
 	// LastAppliedHash is the config hash the device last confirmed it applied.
 	// The group's current hash differs from this => we must push config again.
 	LastAppliedHash string
-	ConfigVersion   int
+	// ConfigVersion is vestigial: written once at enrolment and never updated,
+	// so it is 0 on every device that has ever run. A device's policy version is
+	// its group's — read it from there. Kept only because the column exists.
+	ConfigVersion int
 	Battery         int
 	Wifi            int
 	AndroidVer      string

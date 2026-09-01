@@ -991,7 +991,15 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
                 {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
             </Fact>
-            <Fact label="Config">v{d.config_version}</Fact>
+            <Fact label="Policy version">
+              v{d.config_version}
+              {d.config_pending && (
+                <span className="badge warning" style={{ marginInlineStart: 6 }}
+                  title="Saved in the console, but this device has not checked in since. It will pick it up on its next check-in.">
+                  not yet delivered
+                </span>
+              )}
+            </Fact>
             <Fact label="Enrolled">
               {d.enrolled_at ? new Date(d.enrolled_at).toLocaleDateString() : "—"}
             </Fact>

@@ -823,6 +823,14 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	if rel, err := s.st.GetAgentRelease(); err == nil {
 		staged = rel.VersionCode
 	}
+	// Policy versions come from the groups, not from the devices' own unmaintained
+	// column. One lookup each rather than one per device.
+	groupVersion := map[string]int{}
+	if groups, err := s.st.ListGroups(); err == nil {
+		for _, g := range groups {
+			groupVersion[g.ID] = g.ConfigVersion
+		}
+	}
 	out := make([]pub, 0, len(devs))
 	for _, d := range devs {
 		online := false
@@ -832,7 +840,7 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		// A device below the staged build is behind, including one that has
 		// enrolled but not yet checked in — it does not have the build either.
 		stale := staged > 0 && d.AppVersionCode < staged
-		out = append(out, pub{d.ID, d.Name, d.GroupID, d.ConfigVersion, d.Battery, d.AndroidVer, d.Model,
+		out = append(out, pub{d.ID, d.Name, d.GroupID, groupVersion[d.GroupID], d.Battery, d.AndroidVer, d.Model,
 			d.AppVersionCode, d.AppVersionName, stale, d.LastSeen, online})
 	}
 	json.NewEncoder(w).Encode(out)
@@ -864,9 +872,19 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 		staged, stagedName = rel.VersionCode, rel.VersionName
 	}
 
+	// The policy version a device is on is the version of the group it is in.
+	// The devices table has a config_version column of its own, written once at
+	// enrolment and never again — every device page in the console read it and
+	// said "v0" while the fleet was on v19.
 	groupName := d.GroupID
+	configVersion := 0
+	configPending := false
 	if g, err := s.st.GetGroup(d.GroupID); err == nil {
 		groupName = g.Name
+		configVersion = g.ConfigVersion
+		// The hash is what the device was last handed, so this says the current
+		// policy has not reached it yet — not that it failed to apply it.
+		configPending = g.ConfigHash != d.LastAppliedHash
 	}
 
 	// Only what is still waiting. A finished command is history, and the
@@ -886,7 +904,8 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 		"label":            deviceLabel(d.ID, d.Name),
 		"group_id":         d.GroupID,
 		"group_name":       groupName,
-		"config_version":   d.ConfigVersion,
+		"config_version":   configVersion,
+		"config_pending":   configPending,
 		"battery":          d.Battery,
 		"android_ver":      d.AndroidVer,
 		"model":            d.Model,

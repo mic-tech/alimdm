@@ -458,3 +458,60 @@ func TestDiagnosticsCarryTheLastCapture(t *testing.T) {
 		t.Errorf("the old error is still being shown: %v", capture)
 	}
 }
+
+// A device's policy version is its group's. The devices table has a column of
+// its own that is written once at enrolment and never again, so every device
+// page in the console read it and said "v0" while the fleet was on v19.
+func TestDeviceReportsItsGroupsPolicyVersion(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	key := e.newDeviceKey(t, "tablet-1")
+
+	// Save a policy, twice, so the group is demonstrably past v1.
+	for i := 0; i < 2; i++ {
+		if rec, _ := e.do("PUT", "/api/v1/groups/"+testGroup.ID, tok, map[string]any{
+			"config": map[string]any{"security": map[string]any{"kioskEnabled": true, "pinMaxAttempts": 3 + i}},
+		}); rec.Code != http.StatusOK {
+			t.Fatalf("save policy: status %d", rec.Code)
+		}
+	}
+	g, err := e.st.GetGroup(testGroup.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.ConfigVersion < 2 {
+		t.Fatalf("group is on v%d, expected the saves to have moved it", g.ConfigVersion)
+	}
+
+	_, body := e.do("GET", "/api/v1/devices/tablet-1", tok, nil)
+	if got, _ := body["config_version"].(float64); int(got) != g.ConfigVersion {
+		t.Errorf("device reports config_version %v, want the group's v%d", body["config_version"], g.ConfigVersion)
+	}
+	// The device has not checked in since the policy changed.
+	if body["config_pending"] != true {
+		t.Errorf("config_pending = %v before the device has checked in, want true", body["config_pending"])
+	}
+
+	e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{})
+	_, body = e.do("GET", "/api/v1/devices/tablet-1", tok, nil)
+	if body["config_pending"] != false {
+		t.Errorf("config_pending = %v after a check-in, want false", body["config_pending"])
+	}
+
+	// The list says the same thing; it read the same dead column.
+	_, _ = body, tok
+	rec, _ := e.do("GET", "/api/v1/devices", tok, nil)
+	var list []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("got %d devices", len(list))
+	}
+	if got, _ := list[0]["config_version"].(float64); int(got) != g.ConfigVersion {
+		t.Errorf("list reports config_version %v, want v%d", list[0]["config_version"], g.ConfigVersion)
+	}
+}
