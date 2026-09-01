@@ -194,13 +194,6 @@ a { color: inherit; text-decoration: none; }
 .app.collapsed .navbtn { justify-content: center; padding-inline: 8px; }
 .app.collapsed .navbtn-title { display: none; }
 
-.sidebar-footer {
-  padding: 16px 20px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.app.collapsed .sidebar-footer { padding-inline: 12px; }
-.sidebar-user { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .avatar {
   display: flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; flex-shrink: 0; padding: 0;
@@ -212,23 +205,26 @@ a { color: inherit; text-decoration: none; }
   font-size: 0.8125rem; font-weight: 600;
   text-transform: uppercase;
 }
-.sidebar-user-meta { display: flex; flex-direction: column; min-width: 0; flex-grow: 1; }
-.sidebar-user-name {
+
+/* Account block, sitting at the end of the header. The sidebar no longer has a
+   footer, so nothing here is tied to its collapsed state. */
+.header-user { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.header-user .avatar { width: 30px; height: 30px; font-size: 0.75rem; }
+.header-user-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.header-user-name {
   font-size: 0.8125rem; font-weight: 500; color: var(--mono);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.sidebar-user-role { font-size: 0.6875rem; color: var(--muted-foreground); }
-.app.collapsed .sidebar-user-meta, .app.collapsed .sidebar-signout { display: none; }
-.app.collapsed .sidebar-user { justify-content: center; }
-.sidebar-signout {
+.header-user-role { font-size: 0.6875rem; color: var(--muted-foreground); }
+.header-signout {
   display: flex; align-items: center; justify-content: center;
   width: 30px; height: 30px; flex-shrink: 0;
   border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px);
   background: var(--background); color: var(--muted-foreground);
   cursor: pointer; transition: background 0.15s, color 0.15s;
 }
-.sidebar-signout:hover { background: var(--accent); color: var(--destructive); }
-.sidebar-signout svg { width: 15px; height: 15px; }
+.header-signout:hover { background: var(--accent); color: var(--destructive); }
+.header-signout svg { width: 15px; height: 15px; }
 
 /* ── Wrapper + header ── */
 .wrapper {
@@ -756,13 +752,11 @@ code.code, .code {
   :root { --header-height: 60px; }
   .app { --sidebar-width: var(--sidebar-width-collapse); }
   .sidebar-header { padding-inline: 12px; justify-content: center; }
-  .brand-logo-full, .navbtn-title, .sidebar-user-meta, .sidebar-signout { display: none; }
+  .brand-logo-full, .navbtn-title, .header-user-meta { display: none; }
   .brand-logo-mini { display: block; }
   .sidebar-content { padding-inline: 12px; overflow: hidden; }
   .navbtn { justify-content: center; padding-inline: 8px; }
   .menu-heading { visibility: hidden; height: 20px; padding: 0; }
-  .sidebar-user { justify-content: center; }
-  .sidebar-footer { padding-inline: 12px; }
   .sidebar-toggle { display: none; }
   .container-fixed { padding-inline: 16px; }
   .toolbar { padding-bottom: 20px; }

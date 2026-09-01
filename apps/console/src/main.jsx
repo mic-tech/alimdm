@@ -1690,30 +1690,28 @@ function Shell({ onSignOut }) {
           ))}
         </nav>
 
-        <div className="sidebar-footer">
-          <div className="sidebar-user">
-            <button className="avatar" title="Your profile" aria-label="Your profile"
-              style={{ cursor: "pointer" }} onClick={() => setView("profile")}>
-              {(me.name || me.email || "?").slice(0, 1)}
-            </button>
-            <span className="sidebar-user-meta">
-              <span className="sidebar-user-name">{me.name || me.email}</span>
-              <span className="sidebar-user-role">
-                {me.role === "admin" ? "Administrator" : "Operator"}
-              </span>
-            </span>
-            <button className="sidebar-signout" title="Sign out" aria-label="Sign out"
-              onClick={onSignOut}>
-              <IconSignOut />
-            </button>
-          </div>
-        </div>
       </aside>
 
       <div className="wrapper">
         <header className="header">
           <div className="container-fixed header-inner">
             <div className="header-title">{active.title}</div>
+            <div className="header-user">
+              <button className="avatar" title="Your profile" aria-label="Your profile"
+                style={{ cursor: "pointer" }} onClick={() => setView("profile")}>
+                {(me.name || me.email || "?").slice(0, 1)}
+              </button>
+              <span className="header-user-meta">
+                <span className="header-user-name">{me.name || me.email}</span>
+                <span className="header-user-role">
+                  {me.role === "admin" ? "Administrator" : "Operator"}
+                </span>
+              </span>
+              <button className="header-signout" title="Sign out" aria-label="Sign out"
+                onClick={onSignOut}>
+                <IconSignOut />
+              </button>
+            </div>
           </div>
         </header>
 
