@@ -312,7 +312,6 @@ const SHOW_IF = {
   "display.autoBrightness.max":          [{ path: "display.autoBrightness.enabled", value: true }],
   "display.autoBrightness.offset":       [{ path: "display.autoBrightness.enabled", value: true }],
   "display.screensaver.type":            [{ path: "display.screensaver.enabled", value: true }],
-  "display.screensaver.url":             [{ path: "display.screensaver.enabled", value: true }],
   "display.screensaver.inactivityEnabled": [{ path: "display.screensaver.enabled", value: true }],
   "display.screensaver.brightness":      [{ path: "display.screensaver.enabled", value: true }],
   "display.screenScheduler.wakeOnTouch": [{ path: "display.screenScheduler.enabled", value: true }],
@@ -425,11 +424,11 @@ export default function PolicyEditor({ groupId, onErr, onClose }) {
     setConfig(null); setDirty(false);
     api.getGroup(groupId).then((g) => {
       let c = {};
-      try { c = JSON.parse(g.config || "{}"); } catch {}
+      try { c = JSON.parse(g.config || "{}"); } catch { /* a group whose config will not parse starts empty */ }
       setConfig(c);
       setVersion(g.config_version);
     }).catch(onErr);
-  }, [groupId]);
+  }, [groupId, onErr]);
 
   if (!config) {
     return (

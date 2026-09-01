@@ -257,7 +257,7 @@ function Groups({ onErr }) {
             <button className="btn" disabled={busy} onClick={create}>
               <IconPlus />{busy ? "Creating…" : "Create group"}
             </button>
-            <span className="muted small">“Start from” copies an existing group's policy so you can tweak it.</span>
+            <span className="muted small">“Start from” copies an existing group’s policy so you can tweak it.</span>
           </>}
         >
           <div className="field-grid">
@@ -347,8 +347,8 @@ function LiveView({ device, onErr }) {
   return (
     <>
       <div className="screen-frame">
-        {/* eslint-disable-next-line jsx-a11y/alt-text */}
-        <img ref={imgRef} style={{ maxWidth: "100%", maxHeight: 460, display: state === "live" ? "block" : "none" }} />
+        <img ref={imgRef} alt="Live view of the device's screen"
+          style={{ maxWidth: "100%", maxHeight: 460, display: state === "live" ? "block" : "none" }} />
         {state !== "live" && (
           <span className="muted small" style={{ padding: 40, textAlign: "center" }}>
             {state === "error" ? "The stream stopped."
@@ -436,8 +436,8 @@ function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
     <button className={"snap" + (big ? " big" : "")} type="button"
       title={online ? "Ask this device for a fresh screen" : "The device is offline"}
       disabled={!online} onClick={() => setManual((n) => n + 1)}>
-      {/* eslint-disable-next-line jsx-a11y/alt-text */}
-      <img ref={imgRef} style={{ display: state === "shown" ? "block" : "none" }} />
+      <img ref={imgRef} alt="The device's screen"
+        style={{ display: state === "shown" ? "block" : "none" }} />
       {state !== "shown" && (
         <div className="snap-note">
           {online ? "Waiting for the device to send a screen…" : "Offline — no screen to show"}
@@ -449,6 +449,9 @@ function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
     </button>
   );
 }
+
+/* How an event's severity reads in the feeds, here and on the Activity page. */
+const SEVERITY_LABEL = { info: "Info", warn: "Attention", error: "Failure" };
 
 /* ── One device ─────────────────────────────────────────────────────────────
 
@@ -933,7 +936,6 @@ function DeviceDetail({ deviceId, onErr, onTitle, navigate }) {
    cursor rather than offset so a page cannot skip or repeat an entry when new
    events arrive while it is being read, and it says how much history exists so
    a gap reads as retention rather than as something lost. */
-const SEVERITY_LABEL = { info: "Info", warn: "Attention", error: "Failure" };
 
 function Notifications({ me, onErr }) {
   useNarrowFlag();
@@ -1854,7 +1856,7 @@ function Files({ onErr }) {
         note={
           <Alert>
             Upload a file, then send it to a group. Each device downloads it on its next check-in into
-            a folder called <span className="mono">Download/Ali MDM</span>, where the device's own Files
+            a folder called <span className="mono">Download/Ali MDM</span>, where the device’s own Files
             app can open it. Deleting a file here does not remove copies already on devices.
           </Alert>
         }
