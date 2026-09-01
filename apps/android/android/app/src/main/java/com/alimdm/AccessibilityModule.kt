@@ -61,22 +61,15 @@ class AccessibilityModule(private val reactContext: ReactApplicationContext) :
      */
     @ReactMethod
     fun openAccessibilitySettings(promise: Promise) {
-        // Try to land straight on AliMDM's own service page first. The plain
-        // accessibility list buries third-party services under a submenu ("Installed
-        // apps" on One UI), which is where users give up looking for us.
-        if (openServiceDetailsPage()) {
-            promise.resolve(true)
-            return
-        }
-        try {
-            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            reactContext.startActivity(intent)
-            promise.resolve(true)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to open accessibility settings: ${e.message}")
-            promise.reject("ERROR", "Failed to open accessibility settings: ${e.message}")
-        }
+        // Our own service page first: the plain accessibility list buries
+        // third-party services under a submenu ("Installed apps" on One UI),
+        // which is where people give up looking for us. The list is the
+        // fallback. Both go through SettingsLauncher, which leaves lock task
+        // first — without that, neither opens on a device in kiosk mode.
+        val intents = mutableListOf<Intent>()
+        serviceDetailsIntent()?.let { intents.add(it) }
+        intents.add(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        SettingsLauncher.launch(reactContext, promise, *intents.toTypedArray())
     }
 
     /**
@@ -87,24 +80,21 @@ class AccessibilityModule(private val reactContext: ReactApplicationContext) :
      * ":settings:fragment_args_key" convention that Settings apps honour. Best-effort by
      * design, hence the boolean return and the plain-list fallback in the caller.
      */
-    private fun openServiceDetailsPage(): Boolean {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return false
+    /** The intent for our own entry in accessibility settings, if this OS has one. */
+    private fun serviceDetailsIntent(): Intent? {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return null
         return try {
             val component = ComponentName(
                 reactContext, AliMdmAccessibilityService::class.java
             ).flattenToString()
             val args = Bundle().apply { putString(":settings:fragment_args_key", component) }
-            val intent = Intent(ACTION_ACCESSIBILITY_DETAILS).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            Intent(ACTION_ACCESSIBILITY_DETAILS).apply {
                 putExtra(":settings:fragment_args_key", component)
                 putExtra(":settings:show_fragment_args", args)
             }
-            if (intent.resolveActivity(reactContext.packageManager) == null) return false
-            reactContext.startActivity(intent)
-            true
         } catch (e: Exception) {
             Log.d(TAG, "Accessibility details deep-link unavailable: ${e.message}")
-            false
+            null
         }
     }
 

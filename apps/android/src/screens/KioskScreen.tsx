@@ -372,6 +372,10 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
   const closePermissionWizard = useCallback(() => {
     setWizardVisible(false);
     StorageService.savePermissionWizardShown(true).catch(() => {});
+    // Its buttons leave lock task to reach Android's settings screens. Re-apply
+    // the kiosk on the way out rather than trusting the next focus event to do
+    // it: a tablet handed over unlocked is the one failure here that matters.
+    loadSettings().catch(() => {});
   }, []);
 
   // Cloud sync: start heartbeat loop on mount, reload settings on config push

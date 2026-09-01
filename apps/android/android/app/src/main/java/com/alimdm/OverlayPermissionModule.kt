@@ -33,21 +33,23 @@ class OverlayPermissionModule(reactContext: ReactApplicationContext) :
     @ReactMethod
     fun requestOverlayPermission(promise: Promise) {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                if (!Settings.canDrawOverlays(reactApplicationContext)) {
-                    val intent = Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:${reactApplicationContext.packageName}")
-                    )
-                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    reactApplicationContext.startActivity(intent)
-                    promise.resolve(true)
-                } else {
-                    promise.resolve(true)
-                }
-            } else {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+                Settings.canDrawOverlays(reactApplicationContext)
+            ) {
                 promise.resolve(true)
+                return
             }
+            // Through SettingsLauncher: in lock task a plain startActivity is
+            // refused without a word, so this button did nothing on a kiosk
+            // device — which is every device this runs on.
+            SettingsLauncher.launch(
+                reactApplicationContext, promise,
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${reactApplicationContext.packageName}"),
+                ),
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION),
+            )
         } catch (e: Exception) {
             promise.reject("ERROR", "Failed to request overlay permission: ${e.message}")
         }

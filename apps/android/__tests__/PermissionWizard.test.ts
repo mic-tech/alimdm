@@ -18,6 +18,10 @@ jest.mock('react-native/Libraries/Utilities/Platform', () => ({
   },
 }));
 
+// export {} makes this a module: without it the file shares a global scope with
+// the other test file, and both declaring NativeModules is a type error.
+export {};
+
 const { NativeModules } = require('react-native');
 
 const accessibility = {

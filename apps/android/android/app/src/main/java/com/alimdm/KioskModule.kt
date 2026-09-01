@@ -886,14 +886,15 @@ class KioskModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
 
     @ReactMethod
     fun requestUsageStatsPermission(promise: Promise) {
-        try {
-            val intent = Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            reactApplicationContext.startActivity(intent)
-            promise.resolve(true)
-        } catch (e: Exception) {
-            promise.reject("ERROR", "Failed to open usage stats settings: ${e.message}")
-        }
+        // Through SettingsLauncher: in lock task a plain startActivity is
+        // refused without a word, so this button did nothing on a kiosk device.
+        // Our own entry first, the whole list as the fallback.
+        SettingsLauncher.launch(
+            reactApplicationContext, promise,
+            Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS,
+                android.net.Uri.parse("package:${reactApplicationContext.packageName}")),
+            Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS),
+        )
     }
 
     @ReactMethod
