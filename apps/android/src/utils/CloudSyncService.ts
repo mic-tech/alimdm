@@ -370,10 +370,17 @@ class CloudSyncServiceClass {
       }
       if (!offer) return;
 
-      // Nothing to do if this build is already at or past the offer — same
-      // stale-offer race as above, just reached by a different path.
+      // Already at or past the offer. Two ways to get here: the stale-offer
+      // race above, or a build that arrived by a route the server never saw —
+      // a sideload over ADB, say. Report it rather than returning quietly: the
+      // rollout's goal is met either way, and staying silent leaves the row
+      // "queued" for ever, so the console shows a pending update that can never
+      // complete and the tablet is re-offered it on every heartbeat.
       const current = await AgentUpdateService.getVersionCode();
-      if (current >= offer.version_code) return;
+      if (current >= offer.version_code) {
+        await this._reportAgentUpdate(c, 'success', '');
+        return;
+      }
 
       // Deferrals (flat battery, module unavailable) must not consume an
       // attempt: skip quietly and let the next heartbeat re-offer the update.
