@@ -378,6 +378,11 @@ a { color: inherit; text-decoration: none; }
    toolbar simply overflowed its card once the view switcher and the refresh
    interval joined it, pushing Refresh past the card's edge. */
 .card-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+/* Form controls default to width:100% because they normally sit in a stacked
+   form. In a toolbar that makes one control swallow the whole line and shove
+   everything after it onto the next row, which is what the Activity filter did
+   to Mark all read and Refresh. Here they size to their content instead. */
+.card-toolbar > select, .card-toolbar > input { width: auto; }
 .card-toolbar > .search-input { flex: 1 1 110px; min-width: 90px; }
 .card-content { flex-grow: 1; padding: 20px; }
 .card-content.flush { padding: 0; }
