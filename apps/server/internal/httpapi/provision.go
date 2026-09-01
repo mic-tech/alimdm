@@ -38,17 +38,14 @@ func env(name string) string {
 func (s *Server) provisionQR(w http.ResponseWriter, r *http.Request) {
 	var problems []string
 
-	// A staged release is enough on its own — it is what the wizard will serve.
+	// The staged release is the only thing a scan can install, so its absence
+	// stops the QR here rather than at the tablet's setup wizard.
 	staged := ""
 	if rel, err := s.st.GetAgentRelease(); err == nil && rel.VersionCode > 0 {
 		staged = rel.VersionName
 	}
 	if staged == "" {
-		if s.provisionAPK == "" {
-			problems = append(problems, "No build to install. Upload one on the App update page, or set ALIMDM_PROVISION_APK to a release APK on the server.")
-		} else if st, err := os.Stat(s.provisionAPK); err != nil || st.IsDir() {
-			problems = append(problems, "The configured provisioning APK is missing on the server: "+s.provisionAPK)
-		}
+		problems = append(problems, "No build has been staged. Upload the Ali MDM APK on the App update page — that is what a scanned tablet installs.")
 	}
 
 	// The checksum is the SHA-256 of the *signing certificate*, url-safe base64

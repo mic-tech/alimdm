@@ -40,7 +40,11 @@ When the setup wizard scans it:
 1. **Cloud server reachable from the tablet's network.**
    - Local test: `http://192.168.1.100:8090` (tablet on the same Wi-Fi/LAN)
    - Production: `https://cloud.yourdomain.com` (HTTPS required — see note below)
-2. **The Ali MDM APK hosted on the server** via the `FK_PROVISION_APK` env var.
+2. **A build staged on the App update page.** That upload is what a scanned
+   tablet downloads and installs — the same APK the fleet is updated to, so a
+   new tablet cannot arrive on an older build than everything else. There is no
+   configured fallback: with nothing staged, the Enroll page refuses to produce
+   a QR and says why.
 3. **The signing-cert checksum** matching that exact APK. Derive it from the
    build you actually serve — never copy one from documentation:
    ```bash

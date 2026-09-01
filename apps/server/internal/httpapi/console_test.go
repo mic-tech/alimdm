@@ -47,7 +47,7 @@ func newConsoleEnv(t *testing.T) (*http.ServeMux, string) {
 	}
 
 	files := blob.NewStore(filepath.Join(t.TempDir(), "files"))
-	srv := New(st, auth.NewSigner("test-secret"), nil, nil, files, NewPokeQueue(), "enroll", "http://x", dir, "")
+	srv := New(st, auth.NewSigner("test-secret"), nil, nil, files, NewPokeQueue(), "enroll", "http://x", dir)
 	return srv.Routes(), dir
 }
 

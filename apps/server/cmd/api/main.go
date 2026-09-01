@@ -40,7 +40,6 @@ func main() {
 	enrollToken := envOr("ENROLL_TOKEN", "alimdm-enroll")
 	baseURL := envOr("BASE_URL", "http://localhost:8080")
 	consoleDir := env("CONSOLE_DIR")     // e.g. ../console/dist
-	provisionAPK := env("PROVISION_APK") // path to Ali MDM APK for zero-touch QR
 
 	st, err := store.Open(dbPath)
 	if err != nil {
@@ -79,9 +78,9 @@ func main() {
 	}
 	httpapi.NewAlertWatcher(st, baseURL).Start(context.Background())
 
-	srv := httpapi.New(st, signer, apks, agentAPKs, files, pokes, enrollToken, baseURL, consoleDir, provisionAPK)
-	if provisionAPK != "" {
-		log.Printf("zero-touch provisioning APK: %s", provisionAPK)
+	srv := httpapi.New(st, signer, apks, agentAPKs, files, pokes, enrollToken, baseURL, consoleDir)
+	if rel, err := st.GetAgentRelease(); err == nil && rel.VersionCode > 0 {
+		log.Printf("zero-touch provisioning serves Ali MDM %s (%d)", rel.VersionName, rel.VersionCode)
 	}
 	log.Printf("Ali MDM cloud API listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, srv.Routes()))

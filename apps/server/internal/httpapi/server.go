@@ -42,11 +42,10 @@ type Server struct {
 	enrollToken  string
 	baseURL      string
 	consoleDir   string
-	provisionAPK string // path to the Ali MDM APK served for zero-touch QR provisioning
 }
 
-func New(st *store.Store, signer *auth.Signer, apks, agentAPKs *apk.Store, files *blob.Store, pokes *PokeQueue, enrollToken, baseURL, consoleDir, provisionAPK string) *Server {
-	return &Server{st: st, signer: signer, apks: apks, agentAPKs: agentAPKs, files: files, pokes: pokes, streams: newStreamHubs(), snapshots: newSnapshotStore(), enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir, provisionAPK: provisionAPK}
+func New(st *store.Store, signer *auth.Signer, apks, agentAPKs *apk.Store, files *blob.Store, pokes *PokeQueue, enrollToken, baseURL, consoleDir string) *Server {
+	return &Server{st: st, signer: signer, apks: apks, agentAPKs: agentAPKs, files: files, pokes: pokes, streams: newStreamHubs(), snapshots: newSnapshotStore(), enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir}
 }
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -137,7 +136,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/apk/{name}", s.downloadAPK)
 	// Zero-touch provisioning: the tablet's setup wizard downloads the Ali MDM
 	// APK from here while scanning the QR. Open (no auth) — it runs before the
-	// device has an API key. Serves nothing if FK_PROVISION_APK is unset.
+	// device has an API key. 404 until a build is staged on the App update page.
 	mux.HandleFunc("GET /api/v1/provision/apk", s.provisionAPKHandler)
 	// QR payload for setup-wizard provisioning (operator-only: it carries the
 	// enrolment token).
@@ -726,33 +725,29 @@ func (s *Server) downloadAPK(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, f)
 }
 
-// provisionAPK opens the build a QR-provisioned tablet should install.
+// openProvisionAPK opens the build a QR-provisioned tablet will install: the
+// release staged on the App update page, and nothing else.
 //
-// The release staged in the console wins over the file in FK_PROVISION_APK.
-// They used to be unrelated: one is uploaded on the App update page and rolled
-// out to the fleet, the other is a file someone copies onto the server by hand,
-// and nobody remembers the second. A tablet enrolled by QR therefore installed
-// whatever had last been copied there — in the field, a build four days and
-// nine versions behind the one every other tablet was running.
-//
-// Safe to swap: the QR carries the SHA-256 of the signing *certificate*, not of
-// the file, and every build is signed with the same key.
+// There used to be a second source — a path in FK_PROVISION_APK, pointing at a
+// file someone copied onto the server by hand. Nobody remembered it. The console
+// rolled build 65 to the fleet for a day while every newly provisioned tablet
+// installed a four-day-old APK from that file, and nothing anywhere said so.
+// A default that is silently wrong is worse than no default: with one source,
+// forgetting to upload a build is an error on the Enroll page rather than a
+// tablet that quietly arrives out of date.
 func (s *Server) openProvisionAPK() (io.ReadCloser, string, error) {
-	if s.agentAPKs != nil {
-		if rel, err := s.st.GetAgentRelease(); err == nil && rel.FileName != "" {
-			if f, err := s.agentAPKs.Open(rel.FileName); err == nil {
-				return f, rel.FileName, nil
-			}
-		}
+	if s.agentAPKs == nil {
+		return nil, "", errors.New("no agent apk store")
 	}
-	if s.provisionAPK == "" {
-		return nil, "", errors.New("no provisioning apk")
+	rel, err := s.st.GetAgentRelease()
+	if err != nil || rel.FileName == "" {
+		return nil, "", errors.New("no build staged")
 	}
-	f, err := os.Open(s.provisionAPK)
+	f, err := s.agentAPKs.Open(rel.FileName)
 	if err != nil {
 		return nil, "", err
 	}
-	return f, "alimdm.apk", nil
+	return f, rel.FileName, nil
 }
 
 // provisionAPKHandler serves the Ali MDM APK for zero-touch QR provisioning.
@@ -763,7 +758,8 @@ func (s *Server) openProvisionAPK() (io.ReadCloser, string, error) {
 func (s *Server) provisionAPKHandler(w http.ResponseWriter, r *http.Request) {
 	f, _, err := s.openProvisionAPK()
 	if err != nil {
-		http.Error(w, "provisioning apk not available", http.StatusNotFound)
+		http.Error(w, "no build has been staged: upload one on the App update page",
+			http.StatusNotFound)
 		return
 	}
 	defer f.Close()

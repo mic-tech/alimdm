@@ -1770,7 +1770,7 @@ function QrEnrollCard({ onErr }) {
               {/* Which build a tablet scanning this will end up on. It is the
                   release staged on the App update page, so it cannot drift
                   behind the fleet the way a hand-copied file did. */}
-              Installs: <span className="mono">{info.build || "the APK configured on the server"}</span><br />
+              Installs: <span className="mono">{info.build || "nothing staged"}</span><br />
               APK: <span className="mono">{info.apk_url}</span><br />
               Signing checksum: <span className="mono">{info.checksum}</span>
             </div>

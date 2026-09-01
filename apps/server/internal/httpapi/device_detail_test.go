@@ -252,11 +252,11 @@ func TestWakeOnlyPokesDoNotBecomeCommands(t *testing.T) {
 	}
 }
 
-// A tablet enrolled by QR must get the build the console has staged, not a file
-// someone copied onto the server once. They were unrelated: the fleet was on
-// build 65 while a newly provisioned tablet installed a four-day-old APK and
-// arrived reporting no version at all.
-func TestQRProvisioningServesTheStagedRelease(t *testing.T) {
+// A tablet enrolled by QR installs the build staged on the App update page, and
+// nothing else. There used to be a second source — a file path in an env var —
+// which is how a newly provisioned tablet arrived four days and nine versions
+// behind the fleet with nothing on screen to say so.
+func TestQRProvisioningServesOnlyTheStagedRelease(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -268,23 +268,31 @@ func TestQRProvisioningServesTheStagedRelease(t *testing.T) {
 		PasswordHash: hash, CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	})
 
-	// A stale file, standing in for the one on the server.
-	stale := filepath.Join(t.TempDir(), "old.apk")
-	if err := os.WriteFile(stale, []byte("an old build"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	agentRoot := t.TempDir()
-	agents := apk.NewStore(agentRoot)
 	files := blob.NewStore(filepath.Join(t.TempDir(), "files"))
-	srv := New(st, auth.NewSigner("test-secret"), nil, agents, files, NewPokeQueue(),
-		"enroll", "http://x", "", stale)
+	srv := New(st, auth.NewSigner("test-secret"), nil, apk.NewStore(agentRoot), files,
+		NewPokeQueue(), "enroll", "http://x", "")
 	mux := srv.Routes()
+	tok := (&testEnv{t: t, mux: mux, st: st, srv: srv}).login("admin@x.com", "adminpassword")
 
-	// Nothing staged yet: the configured file is what a tablet gets.
+	// Nothing staged: refuse, and say so on the page where the QR is printed
+	// rather than letting a tablet find out mid-provisioning.
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/provision/apk", nil))
-	if rec.Body.String() != "an old build" {
-		t.Fatalf("with no staged release, served %q", rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("with no staged build: status %d, want 404", rec.Code)
+	}
+	req := httptest.NewRequest("GET", "/api/v1/provision/qr", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	qr := httptest.NewRecorder()
+	mux.ServeHTTP(qr, req)
+	var info map[string]any
+	json.Unmarshal(qr.Body.Bytes(), &info)
+	if info["ready"] != false {
+		t.Errorf("ready = %v with no staged build, want false", info["ready"])
+	}
+	if !strings.Contains(qr.Body.String(), "App update") {
+		t.Errorf("the problem does not say where to upload a build: %s", qr.Body.String())
 	}
 
 	// Stage one, as the App update page does.
@@ -301,6 +309,14 @@ func TestQRProvisioningServesTheStagedRelease(t *testing.T) {
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/provision/apk", nil))
 	if got := rec.Body.String(); got != "the current build" {
-		t.Errorf("served %q, want the staged release — a new tablet would arrive behind the fleet", got)
+		t.Errorf("served %q, want the staged release", got)
+	}
+	req = httptest.NewRequest("GET", "/api/v1/provision/qr", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	qr = httptest.NewRecorder()
+	mux.ServeHTTP(qr, req)
+	json.Unmarshal(qr.Body.Bytes(), &info)
+	if info["build"] != "1.2.34" {
+		t.Errorf("build = %v, want the staged version so the page can name it", info["build"])
 	}
 }

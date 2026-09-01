@@ -45,7 +45,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	// A real file store: the inbox tests move actual bytes, and a nil store
 	// would make them pass by refusing every upload.
 	files := blob.NewStore(filepath.Join(t.TempDir(), "files"))
-	srv := New(st, auth.NewSigner("test-secret"), nil, nil, files, NewPokeQueue(), "enroll", "http://x", "", "")
+	srv := New(st, auth.NewSigner("test-secret"), nil, nil, files, NewPokeQueue(), "enroll", "http://x", "")
 	return &testEnv{t: t, mux: srv.Routes(), st: st, srv: srv}
 }
 
