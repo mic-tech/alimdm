@@ -53,6 +53,21 @@ interface PermItem {
   action: (isDeviceOwner: boolean) => Promise<void>;
 }
 
+/**
+ * Whether anything in the wizard still needs a person. Lets a caller decide to
+ * show it rather than putting a screen of green ticks in someone's way.
+ */
+export async function hasOutstandingPermissions(): Promise<boolean> {
+  if (Platform.OS !== 'android') return false;
+  try {
+    const isDO = await safeBool(KioskModule?.isDeviceOwner());
+    const results = await Promise.all(ITEMS.map(item => item.check(isDO)));
+    return results.some(ok => !ok);
+  } catch {
+    return false;
+  }
+}
+
 async function safeBool(p: Promise<boolean> | undefined): Promise<boolean> {
   try {
     return p ? await p : false;
@@ -109,7 +124,15 @@ const ITEMS: PermItem[] = [
           // No WRITE_SECURE_SETTINGS: fall through to the manual route.
         }
       }
-      await AccessibilityModule?.openAccessibilitySettings().catch(() => {});
+      // Through KioskModule: it drops out of lock task before launching the
+      // settings intent and returns afterwards. Going straight to the
+      // accessibility screen does nothing on a device in kiosk mode, which is
+      // every device this wizard runs on.
+      try {
+        await KioskModule.openAndroidSettings('accessibility');
+      } catch {
+        await AccessibilityModule?.openAccessibilitySettings().catch(() => {});
+      }
     },
   },
   {

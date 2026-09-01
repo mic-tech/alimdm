@@ -14,6 +14,7 @@ export const KEYS = {
   AUTO_LAUNCH: '@kiosk_auto_launch',
   SCREEN_LOCK_COMPAT: '@kiosk_screen_lock_compat',
   ALLOW_REMOTE_SCREENSHOT: '@kiosk_allow_remote_screenshot',
+  PERMISSION_WIZARD_SHOWN: '@kiosk_permission_wizard_shown',
   DEFAULT_LAUNCHER: '@kiosk_default_launcher',
   INTERCOM_MODE: '@kiosk_intercom_mode',
   SCREENSAVER_ENABLED: '@screensaver_enabled',
@@ -330,6 +331,28 @@ export const StorageService = {
       return value ? JSON.parse(value) : false;
     } catch (error) {
       console.error('Error getting screen lock compatibility:', error);
+      return false;
+    }
+  },
+
+  // PERMISSION WIZARD - whether the post-enrolment prompt has been shown. An
+  // enrolled tablet is often set up by someone who will never see the console,
+  // and the permissions it cannot grant itself can only be granted while they
+  // are still holding it. Shown once, and only when something is outstanding.
+  savePermissionWizardShown: async (value: boolean): Promise<void> => {
+    try {
+      await AsyncStorage.setItem(KEYS.PERMISSION_WIZARD_SHOWN, JSON.stringify(value));
+    } catch (error) {
+      console.error('Error saving permission wizard flag:', error);
+    }
+  },
+
+  getPermissionWizardShown: async (): Promise<boolean> => {
+    try {
+      const value = await AsyncStorage.getItem(KEYS.PERMISSION_WIZARD_SHOWN);
+      return value ? JSON.parse(value) : false;
+    } catch (error) {
+      console.error('Error reading permission wizard flag:', error);
       return false;
     }
   },

@@ -10,6 +10,7 @@ import StatusBar from '../components/StatusBar';
 import MotionDetector from '../components/MotionDetector';
 import ProximityDetectionModule, { onProximityNear as onProximityNearEvent } from '../utils/ProximityDetectionModule';
 import ExternalAppOverlay from '../components/ExternalAppOverlay';
+import PermissionWizard, { hasOutstandingPermissions } from '../components/PermissionWizard';
 import { StorageService } from '../utils/storage';
 import { saveSecurePin, saveSecureMqttPassword, getSecureBasicAuthPassword } from '../utils/secureStorage';
 import KioskModule from '../utils/KioskModule';
@@ -341,6 +342,38 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
   // Keep the ref above in step with the state it mirrors.
   useEffect(() => { displayModeRef.current = displayMode; }, [displayMode]);
 
+  // The post-enrolment permission prompt.
+  //
+  // A tablet is enrolled by whoever is holding it — over a QR at the setup
+  // wizard, or over ADB from a laptop — and then handed to a room. The handful
+  // of permissions the app cannot grant itself can only be granted by that
+  // person, at that moment: the accessibility service above all, without which
+  // the console can never see anything but the kiosk itself. Nothing used to
+  // ask them, and nothing in the console could tell them afterwards.
+  //
+  // Shown once per device, and only when something is genuinely outstanding —
+  // a screen of green ticks in a teacher's way is worse than no screen at all.
+  const [wizardVisible, setWizardVisible] = useState(false);
+  const maybeOfferPermissionWizard = useCallback(async () => {
+    try {
+      if (await StorageService.getPermissionWizardShown()) return;
+      if (!(await CloudSyncService.isEnrolled())) return;
+      if (await hasOutstandingPermissions()) {
+        setWizardVisible(true);
+      } else {
+        // Nothing to ask for: settle it now so a permission revoked later does
+        // not raise this in front of a class.
+        await StorageService.savePermissionWizardShown(true);
+      }
+    } catch {
+      // Never hold up the kiosk for this.
+    }
+  }, []);
+  const closePermissionWizard = useCallback(() => {
+    setWizardVisible(false);
+    StorageService.savePermissionWizardShown(true).catch(() => {});
+  }, []);
+
   // Cloud sync: start heartbeat loop on mount, reload settings on config push
   useEffect(() => {
     DeviceControlService.registerWebViewCallbacks(
@@ -349,11 +382,12 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
       () => currentWebViewUrlRef.current || url,
     );
     if (CLOUD_ENABLED) {
-      // Auto-enroll first if a Device Owner provisioning QR left us a token,
-      // then start the heartbeat loop.
+      // Auto-enroll first if provisioning left us a token — the setup-wizard QR
+      // and enroll.py both write the same one — then start the heartbeat loop.
       (async () => {
         await CloudSyncService.consumePendingProvisioningEnrollment();
         CloudSyncService.start();
+        maybeOfferPermissionWizard();
       })();
     }
 
@@ -2688,6 +2722,7 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
+      <PermissionWizard visible={wizardVisible} onClose={closePermissionWizard} />
       {displayMode === 'webview' ? (
         <>
           {(statusBarEnabled || dashboardModeEnabled) && (
