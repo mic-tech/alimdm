@@ -71,7 +71,7 @@ function ManagedAppsControl({ value, onChange }) {
       {apps.length > 0 && (
         <div style={{ border: "1px solid var(--border)", borderRadius: "calc(var(--radius) - 2px)", overflow: "hidden", marginBottom: 10 }}>
           <div className="table-scroll">
-            <table>
+            <table className="stacked">
               <thead>
                 <tr>
                   <th>Package</th>
@@ -83,27 +83,27 @@ function ManagedAppsControl({ value, onChange }) {
               <tbody>
                 {apps.map((a, i) => (
                   <tr key={a.packageName}>
-                    <td>
+                    <td data-label="Package">
                       <div className="mono strong">{a.packageName}</div>
                       {a.displayName && a.displayName !== a.packageName && (
                         <div className="small muted">{a.displayName}</div>
                       )}
                     </td>
-                    <td style={{ textAlign: "center" }}>
+                    <td style={{ textAlign: "center" }} data-label="Home screen">
                       <label className="toggle sm">
                         <input type="checkbox" checked={!!a.showOnHomeScreen}
                           onChange={(e) => setFlag(i, "showOnHomeScreen", e.target.checked)} />
                         <span className="track" />
                       </label>
                     </td>
-                    <td style={{ textAlign: "center" }}>
+                    <td style={{ textAlign: "center" }} data-label="Auto-install">
                       <label className="toggle sm">
                         <input type="checkbox" checked={!!a.autoInstall}
                           onChange={(e) => setFlag(i, "autoInstall", e.target.checked)} />
                         <span className="track" />
                       </label>
                     </td>
-                    <td style={{ textAlign: "right" }}>
+                    <td style={{ textAlign: "right" }} className="cell-actions">
                       <button className="btn danger-outline sm icon" title="Remove app"
                         onClick={() => removeApp(i)}><IconTrash /></button>
                     </td>

@@ -570,13 +570,23 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; bac
   color: var(--foreground);
 }
 .form-desc { font-size: 0.75rem; font-weight: 400; color: var(--secondary-foreground); }
-.field { display: flex; flex-direction: column; gap: 8px; }
-.field-grid { display: grid; gap: 20px; }
+/* min-width:0 because a grid item's automatic minimum size is its content, so
+   it refuses to shrink below it. The policy editor puts a scrollable
+   managed-apps table in a field; without this the field held itself open at the
+   table's full width and dragged the whole page wider than a phone, instead of
+   letting the table scroll inside its own box. */
+.field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.field-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
 
 /* Horizontal label/control row — Metronic's settings-form layout */
 .form-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .form-row > .form-label { flex: 0 0 224px; }
-.form-row > .form-control { display: flex; flex: 1 1 260px; flex-wrap: wrap; align-items: center; gap: 10px; }
+/* min-width:0 because a flex item defaults to min-width:auto, which means it
+   refuses to shrink below its content. The policy editor puts a managed-apps
+   table in here; on a phone its intrinsic width held the row — and so the whole
+   page — open at 635px instead of letting the table scroll in its own box. */
+.form-row > .form-control { display: flex; flex: 1 1 260px; min-width: 0; flex-wrap: wrap; align-items: center; gap: 10px; }
+.form-row > .form-control > * { max-width: 100%; }
 .form-row > .form-control > .form-desc { flex-basis: 100%; }
 @media (max-width: 48rem) {
   .form-row > .form-label { flex: 1 1 100%; }
@@ -585,7 +595,11 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; bac
      column that matters, and the columns off the right edge are invisible —
      there is nothing to say they exist. Below this width each row becomes its
      own block and every value carries its column name. */
-  .table-scroll { overflow-x: visible; }
+  /* Note: .table-scroll keeps overflow-x:auto here. Making it visible let the
+     policy editor's managed-apps table — which is not stacked, because it sits
+     inside a form rather than being a page-level list — push the whole page
+     wider than the phone instead of scrolling inside its own box. A stacked
+     table never overflows, so auto costs it nothing. */
   table.stacked thead { display: none; }
   table.stacked, table.stacked tbody, table.stacked tr, table.stacked td { display: block; width: 100%; }
   /* The inset goes on the row, which is a block here, so each stacked row is
