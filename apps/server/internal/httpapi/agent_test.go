@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -149,5 +150,78 @@ func TestResultWithoutAVersionIsStillAccepted(t *testing.T) {
 	up, _ := e.st.GetAgentUpdate("tablet-1")
 	if up.Status != store.AgentSuccess {
 		t.Errorf("status = %q, want success for a versionless report from an old build", up.Status)
+	}
+}
+
+// The console has to be able to see what a tablet is actually running, not
+// only what it was told to install. Without this a device can sit on an old
+// build with its rollout recorded as a success and nothing shows it.
+func TestHeartbeatRecordsTheRunningBuild(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	key := e.newDeviceKey(t, "tablet-1")
+	_ = e.st.SaveAgentRelease(&store.AgentRelease{VersionCode: 56, VersionName: "1.2.31", FileName: "b.apk", SHA256: "y", Size: 1})
+
+	e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{
+		"system": map[string]any{
+			"android_version": "15", "model": "TB330FU",
+			"app_version_code": 55, "app_version_name": "1.2.30",
+		},
+	})
+
+	rec, _ := e.do("GET", "/api/v1/devices", tok, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list devices: status %d", rec.Code)
+	}
+	var devs []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &devs); err != nil {
+		t.Fatal(err)
+	}
+	if len(devs) != 1 {
+		t.Fatalf("expected one device, got %d", len(devs))
+	}
+	if devs[0]["app_version_code"] != float64(55) {
+		t.Errorf("app_version_code = %v, want 55", devs[0]["app_version_code"])
+	}
+	if devs[0]["app_version_name"] != "1.2.30" {
+		t.Errorf("app_version_name = %v, want 1.2.30", devs[0]["app_version_name"])
+	}
+	// 55 < the staged 56: exactly the case that was previously invisible.
+	if devs[0]["stale"] != true {
+		t.Errorf("stale = %v for a tablet on 55 while 56 is staged, want true", devs[0]["stale"])
+	}
+}
+
+// A build too old to report a version must not blank the last known one, and
+// must not be labelled stale on the strength of knowing nothing about it.
+func TestOlderBuildDoesNotBlankOrMislabelTheVersion(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	key := e.newDeviceKey(t, "tablet-1")
+	_ = e.st.SaveAgentRelease(&store.AgentRelease{VersionCode: 56, VersionName: "1.2.31", FileName: "b.apk", SHA256: "y", Size: 1})
+
+	// It reports a version once...
+	e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{
+		"system": map[string]any{"app_version_code": 56, "app_version_name": "1.2.31"},
+	})
+	// ...then a heartbeat arrives without one, as an older build would send.
+	e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{
+		"system": map[string]any{"android_version": "15"},
+	})
+
+	rec, _ := e.do("GET", "/api/v1/devices", tok, nil)
+	var devs []map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &devs)
+	if devs[0]["app_version_code"] != float64(56) {
+		t.Errorf("app_version_code = %v after a versionless heartbeat, want the last known 56", devs[0]["app_version_code"])
+	}
+	if devs[0]["stale"] != false {
+		t.Errorf("stale = %v for a device on the staged build, want false", devs[0]["stale"])
 	}
 }

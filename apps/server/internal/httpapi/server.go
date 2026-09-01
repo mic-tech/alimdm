@@ -444,6 +444,11 @@ type heartbeatRequest struct {
 	System struct {
 		AndroidVersion string `json:"android_version"`
 		Model          string `json:"model"`
+		// The Ali MDM build the tablet is actually running. Absent from builds
+		// older than v57, where the last known value is kept rather than
+		// overwritten with nothing.
+		AppVersionCode int    `json:"app_version_code"`
+		AppVersionName string `json:"app_version_name"`
 	} `json:"system"`
 }
 
@@ -469,6 +474,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	lastSeen := time.Now().UTC().Format(time.RFC3339)
 	_ = s.st.UpdateHeartbeat(dev.ID, group.ConfigHash, req.Battery.Level, 0,
 		req.System.AndroidVersion, req.System.Model, lastSeen)
+	_ = s.st.SetDeviceAppVersion(dev.ID, req.System.AppVersionCode, req.System.AppVersionName)
 
 	resp := map[string]any{
 		"status":           "ok",
@@ -730,8 +736,20 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		Battery       int    `json:"battery"`
 		AndroidVer    string `json:"android_ver"`
 		Model         string `json:"model"`
-		LastSeen      string `json:"last_seen"`
-		Online        bool   `json:"online"`
+		// What the tablet says it is running, and whether that matches the
+		// build that has been staged for the fleet. Reporting only the rollout
+		// status hid a tablet sitting on an old build with its update recorded
+		// as successful.
+		AppVersionCode int    `json:"app_version_code"`
+		AppVersionName string `json:"app_version_name"`
+		Stale          bool   `json:"stale"`
+		LastSeen       string `json:"last_seen"`
+		Online         bool   `json:"online"`
+	}
+	// The staged release is what every tablet is expected to converge on.
+	staged := 0
+	if rel, err := s.st.GetAgentRelease(); err == nil {
+		staged = rel.VersionCode
 	}
 	out := make([]pub, 0, len(devs))
 	for _, d := range devs {
@@ -739,7 +757,11 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		if t, err := time.Parse(time.RFC3339, d.LastSeen); err == nil {
 			online = time.Since(t) < 3*time.Minute
 		}
-		out = append(out, pub{d.ID, d.Name, d.GroupID, d.ConfigVersion, d.Battery, d.AndroidVer, d.Model, d.LastSeen, online})
+		// Only call a device stale once it has actually reported a version:
+		// a tablet on a build too old to report one is unknown, not behind.
+		stale := staged > 0 && d.AppVersionCode > 0 && d.AppVersionCode < staged
+		out = append(out, pub{d.ID, d.Name, d.GroupID, d.ConfigVersion, d.Battery, d.AndroidVer, d.Model,
+			d.AppVersionCode, d.AppVersionName, stale, d.LastSeen, online})
 	}
 	json.NewEncoder(w).Encode(out)
 }

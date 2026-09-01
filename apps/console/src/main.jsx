@@ -604,7 +604,7 @@ function Devices({ onErr }) {
           <thead>
             <tr>
               <th>Device</th><th>Status</th><th>Battery</th><th>Android</th>
-              <th>Last seen</th><th>Group</th>
+              <th>Build</th><th>Last seen</th><th>Group</th>
               <th style={{ textAlign: "right" }}>Actions</th>
             </tr>
           </thead>
@@ -633,6 +633,17 @@ function Devices({ onErr }) {
                 </td>
                 <td className="nowrap">{d.battery != null ? d.battery + "%" : <span className="muted">—</span>}</td>
                 <td className="nowrap">{d.android_ver || <span className="muted">—</span>}</td>
+                <td className="nowrap small">
+                  {!d.app_version_code ? (
+                    <span className="muted" title="This build is too old to report which version it is">—</span>
+                  ) : d.stale ? (
+                    <span className="badge warning" title="Behind the build staged for the fleet">
+                      {d.app_version_name || d.app_version_code}
+                    </span>
+                  ) : (
+                    <span className="muted">{d.app_version_name || d.app_version_code}</span>
+                  )}
+                </td>
                 <td className="small subtle nowrap"
                   title={d.last_seen ? new Date(d.last_seen).toLocaleString() : ""}>
                   {d.last_seen ? timeAgo(d.last_seen) : <span className="muted">Never</span>}
@@ -663,19 +674,19 @@ function Devices({ onErr }) {
                 </td>
               </tr>
               {liveFor === d.id && (
-                <tr><td colSpan="7" style={{ padding: 0 }}>
+                <tr><td colSpan="8" style={{ padding: 0 }}>
                   <LiveView device={d} onErr={onErr} onClose={() => setLiveFor(null)} />
                 </td></tr>
               )}
               {inboxFor === d.id && (
-                <tr><td colSpan="7" style={{ padding: 0 }}>
+                <tr><td colSpan="8" style={{ padding: 0 }}>
                   <DeviceInbox device={d} onErr={onErr} />
                 </td></tr>
               )}
               </React.Fragment>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan="7" style={{ padding: 0 }}>
+              <tr><td colSpan="8" style={{ padding: 0 }}>
                 <Empty
                   icon={IconDevices}
                   title={devices.length === 0 ? "No devices enrolled yet" : "No devices match that search"}

@@ -241,6 +241,12 @@ class CloudSyncServiceClass {
           },
           system: {
             app_version: status.device.version,
+            // The build this tablet is actually running. app_version above has
+            // always been sent but the server never read it, and a name alone
+            // cannot be compared with a staged release anyway — the numeric
+            // code is what says whether a device is behind.
+            app_version_code: await AgentUpdateService.getVersionCode(),
+            app_version_name: status.device.version,
             model: status.device.model,
             manufacturer: status.device.manufacturer,
             android_version: status.device.androidVersion,
