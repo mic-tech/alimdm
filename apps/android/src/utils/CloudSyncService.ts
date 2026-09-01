@@ -360,7 +360,7 @@ class CloudSyncServiceClass {
     try {
       const settled = await AgentUpdateService.reconcile();
       if (settled) {
-        await this._reportAgentUpdate(c, settled.status, settled.error ?? '');
+        await this._reportAgentUpdate(c, settled.status, settled.error ?? '', settled.targetVersionCode);
         // The offer in *this* response was computed before that report landed,
         // so a just-completed update still looks outstanding. Acting on it would
         // start a second attempt, immediately find the device already on the
@@ -378,7 +378,7 @@ class CloudSyncServiceClass {
       // complete and the tablet is re-offered it on every heartbeat.
       const current = await AgentUpdateService.getVersionCode();
       if (current >= offer.version_code) {
-        await this._reportAgentUpdate(c, 'success', '');
+        await this._reportAgentUpdate(c, 'success', '', offer.version_code);
         return;
       }
 
@@ -394,9 +394,9 @@ class CloudSyncServiceClass {
       // what makes the attempt counter trustworthy: if the download or install
       // wedges the device hard enough that it never reports again, the attempt
       // is still on record and the server's cap will retire the rollout.
-      await this._reportAgentUpdate(c, 'installing', '');
+      await this._reportAgentUpdate(c, 'installing', '', offer.version_code);
       await AgentUpdateService.apply(offer, async (msg) => {
-        await this._reportAgentUpdate(c, 'failed', msg);
+        await this._reportAgentUpdate(c, 'failed', msg, offer.version_code);
       });
     } catch (error) {
       console.error('[CloudSync] Agent update error:', error);
@@ -407,6 +407,10 @@ class CloudSyncServiceClass {
     c: CloudCredentials,
     status: 'installing' | 'success' | 'failed',
     error: string,
+    // Which rollout this result belongs to. Without it the server cannot tell a
+    // late report from an old attempt apart from one about the current rollout,
+    // and a stale success marks a newer, untried rollout complete.
+    versionCode: number,
   ): Promise<void> {
     try {
       await fetch(`${c.cloudUrl}/api/v1/devices/${c.deviceId}/agent-update/`, {
@@ -415,7 +419,7 @@ class CloudSyncServiceClass {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${c.apiKey}`,
         },
-        body: JSON.stringify({ status, error }),
+        body: JSON.stringify({ status, error, version_code: versionCode }),
       });
     } catch {
       // Best-effort: the server re-offers the update on the next heartbeat, and

@@ -22,6 +22,7 @@ package httpapi
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -193,6 +194,9 @@ func (s *Server) agentUpdateResult(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Status string `json:"status"`
 		Error  string `json:"error"`
+		// Which rollout this result is about. Absent from builds older than
+		// v56, which is why a mismatch is only enforced when it is present.
+		VersionCode int `json:"version_code"`
 	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil {
 		http.Error(w, "bad body", http.StatusBadRequest)
@@ -203,6 +207,24 @@ func (s *Server) agentUpdateResult(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "bad status", http.StatusBadRequest)
 		return
+	}
+	// Drop a result that belongs to an earlier rollout.
+	//
+	// A tablet that goes offline mid-install finishes it on the next boot and
+	// reports success then. If a newer rollout was queued while it was away,
+	// that success used to land on the new row and mark it complete — and
+	// because success is terminal, the tablet was never offered the new build
+	// again. Seen in the field: a tablet reported success for a version it had
+	// never been sent, and sat on the old build with the console calling it
+	// up to date.
+	if req.VersionCode > 0 {
+		if up, err := s.st.GetAgentUpdate(dev.ID); err == nil && up.TargetVersionCode != req.VersionCode {
+			log.Printf("agent update: ignoring %s for v%d from %s, which is queued for v%d",
+				req.Status, req.VersionCode, dev.ID, up.TargetVersionCode)
+			// Acknowledged so the device stops retrying a report we do not want.
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 	}
 	if err := s.st.SetAgentUpdateStatus(dev.ID, req.Status, req.Error); err != nil {
 		http.Error(w, "update failed", http.StatusInternalServerError)

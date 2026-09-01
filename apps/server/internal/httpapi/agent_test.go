@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"net/http"
 	"testing"
 
 	"ali-mdm/server/internal/store"
@@ -67,5 +68,86 @@ func TestQueuedUpdateIsInertWhenTheReleaseMovedOn(t *testing.T) {
 	_, body := e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{})
 	if body["agent_update"] != nil {
 		t.Errorf("expected no offer once the release moved on, got %v", body["agent_update"])
+	}
+}
+
+// A result from an earlier attempt must not settle a newer rollout.
+//
+// The sequence that hit the fleet: a tablet went offline mid-install of v54,
+// finished it on the next boot, and reported success — by which time v55 had
+// been queued. That success landed on the v55 row and, because success is
+// terminal, the tablet was never offered v55 again. It sat on v54 while the
+// console said the v55 rollout had succeeded.
+func TestStaleResultDoesNotSettleANewerRollout(t *testing.T) {
+	e := newTestEnv(t)
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	key := e.newDeviceKey(t, "tablet-1")
+
+	_ = e.st.SaveAgentRelease(&store.AgentRelease{VersionCode: 55, VersionName: "1.2.30", FileName: "b.apk", SHA256: "y", Size: 1})
+	_ = e.st.QueueAgentUpdate("tablet-1", 55)
+
+	// The tablet reports success for the *previous* rollout, v54.
+	rec, _ := e.do("POST", "/api/v1/devices/tablet-1/agent-update", key, map[string]any{
+		"status": "success", "version_code": 54,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stale report: status %d", rec.Code)
+	}
+
+	up, err := e.st.GetAgentUpdate("tablet-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up.Status == store.AgentSuccess {
+		t.Fatal("a v54 result marked the v55 rollout complete; the tablet would never be offered v55 again")
+	}
+
+	// And the tablet must still be offered v55 on its next heartbeat.
+	_, body := e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{})
+	offer, ok := body["agent_update"].(map[string]any)
+	if !ok || offer == nil {
+		t.Fatalf("no offer after a stale result: %v", body["agent_update"])
+	}
+	if offer["version_code"] != float64(55) {
+		t.Errorf("offered %v, want 55", offer["version_code"])
+	}
+}
+
+// A result about the current rollout must still be applied.
+func TestMatchingResultStillSettles(t *testing.T) {
+	e := newTestEnv(t)
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	key := e.newDeviceKey(t, "tablet-1")
+	_ = e.st.SaveAgentRelease(&store.AgentRelease{VersionCode: 55, VersionName: "1.2.30", FileName: "b.apk", SHA256: "y", Size: 1})
+	_ = e.st.QueueAgentUpdate("tablet-1", 55)
+
+	e.do("POST", "/api/v1/devices/tablet-1/agent-update", key, map[string]any{
+		"status": "success", "version_code": 55,
+	})
+	up, _ := e.st.GetAgentUpdate("tablet-1")
+	if up.Status != store.AgentSuccess {
+		t.Errorf("status = %q, want success", up.Status)
+	}
+}
+
+// Builds older than v56 send no version. Those must keep working as before,
+// or upgrading the server would strand every tablet still on an old build.
+func TestResultWithoutAVersionIsStillAccepted(t *testing.T) {
+	e := newTestEnv(t)
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	key := e.newDeviceKey(t, "tablet-1")
+	_ = e.st.SaveAgentRelease(&store.AgentRelease{VersionCode: 55, VersionName: "1.2.30", FileName: "b.apk", SHA256: "y", Size: 1})
+	_ = e.st.QueueAgentUpdate("tablet-1", 55)
+
+	e.do("POST", "/api/v1/devices/tablet-1/agent-update", key, map[string]any{"status": "success"})
+	up, _ := e.st.GetAgentUpdate("tablet-1")
+	if up.Status != store.AgentSuccess {
+		t.Errorf("status = %q, want success for a versionless report from an old build", up.Status)
 	}
 }
