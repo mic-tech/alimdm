@@ -1767,6 +1767,10 @@ function QrEnrollCard({ onErr }) {
             <img src={png} width="320" height="320" alt="Provisioning QR code"
               style={{ background: "#fff", padding: 8, borderRadius: 8 }} />
             <div className="small subtle">
+              {/* Which build a tablet scanning this will end up on. It is the
+                  release staged on the App update page, so it cannot drift
+                  behind the fleet the way a hand-copied file did. */}
+              Installs: <span className="mono">{info.build || "the APK configured on the server"}</span><br />
               APK: <span className="mono">{info.apk_url}</span><br />
               Signing checksum: <span className="mono">{info.checksum}</span>
             </div>

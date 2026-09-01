@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -725,17 +726,42 @@ func (s *Server) downloadAPK(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, f)
 }
 
+// provisionAPK opens the build a QR-provisioned tablet should install.
+//
+// The release staged in the console wins over the file in FK_PROVISION_APK.
+// They used to be unrelated: one is uploaded on the App update page and rolled
+// out to the fleet, the other is a file someone copies onto the server by hand,
+// and nobody remembers the second. A tablet enrolled by QR therefore installed
+// whatever had last been copied there — in the field, a build four days and
+// nine versions behind the one every other tablet was running.
+//
+// Safe to swap: the QR carries the SHA-256 of the signing *certificate*, not of
+// the file, and every build is signed with the same key.
+func (s *Server) openProvisionAPK() (io.ReadCloser, string, error) {
+	if s.agentAPKs != nil {
+		if rel, err := s.st.GetAgentRelease(); err == nil && rel.FileName != "" {
+			if f, err := s.agentAPKs.Open(rel.FileName); err == nil {
+				return f, rel.FileName, nil
+			}
+		}
+	}
+	if s.provisionAPK == "" {
+		return nil, "", errors.New("no provisioning apk")
+	}
+	f, err := os.Open(s.provisionAPK)
+	if err != nil {
+		return nil, "", err
+	}
+	return f, "alimdm.apk", nil
+}
+
 // provisionAPKHandler serves the Ali MDM APK for zero-touch QR provisioning.
 // The Android setup wizard fetches this URL (from the QR's
 // PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION) and installs it as the
 // Device Owner. It must be open (no auth) because it runs before the device is
-// enrolled. If no APK is configured (FK_PROVISION_APK empty) it returns 404.
+// enrolled.
 func (s *Server) provisionAPKHandler(w http.ResponseWriter, r *http.Request) {
-	if s.provisionAPK == "" {
-		http.Error(w, "provisioning apk not configured", http.StatusNotFound)
-		return
-	}
-	f, err := os.Open(s.provisionAPK)
+	f, _, err := s.openProvisionAPK()
 	if err != nil {
 		http.Error(w, "provisioning apk not available", http.StatusNotFound)
 		return

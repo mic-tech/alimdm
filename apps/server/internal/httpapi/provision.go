@@ -38,10 +38,17 @@ func env(name string) string {
 func (s *Server) provisionQR(w http.ResponseWriter, r *http.Request) {
 	var problems []string
 
-	if s.provisionAPK == "" {
-		problems = append(problems, "No provisioning APK configured. Set ALIMDM_PROVISION_APK to the release APK the wizard should install.")
-	} else if st, err := os.Stat(s.provisionAPK); err != nil || st.IsDir() {
-		problems = append(problems, "The configured provisioning APK is missing on the server: "+s.provisionAPK)
+	// A staged release is enough on its own — it is what the wizard will serve.
+	staged := ""
+	if rel, err := s.st.GetAgentRelease(); err == nil && rel.VersionCode > 0 {
+		staged = rel.VersionName
+	}
+	if staged == "" {
+		if s.provisionAPK == "" {
+			problems = append(problems, "No build to install. Upload one on the App update page, or set ALIMDM_PROVISION_APK to a release APK on the server.")
+		} else if st, err := os.Stat(s.provisionAPK); err != nil || st.IsDir() {
+			problems = append(problems, "The configured provisioning APK is missing on the server: "+s.provisionAPK)
+		}
 	}
 
 	// The checksum is the SHA-256 of the *signing certificate*, url-safe base64
@@ -115,5 +122,10 @@ func (s *Server) provisionQR(w http.ResponseWriter, r *http.Request) {
 		"checksum": checksum,
 		"ready":    len(problems) == 0,
 		"problems": problems,
+		// What a tablet scanning this will actually install. Worth saying out
+		// loud: it used to be a file on the server nobody had touched in days,
+		// so a new tablet could arrive nine versions behind the fleet with
+		// nothing on screen to suggest it.
+		"build": staged,
 	})
 }

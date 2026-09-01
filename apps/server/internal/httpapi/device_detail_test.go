@@ -5,11 +5,17 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"ali-mdm/server/internal/apk"
+	"ali-mdm/server/internal/auth"
+	"ali-mdm/server/internal/blob"
 	"ali-mdm/server/internal/store"
 )
 
@@ -243,5 +249,58 @@ func TestWakeOnlyPokesDoNotBecomeCommands(t *testing.T) {
 		if c.Type == "start_stream" {
 			t.Fatalf("a start_stream command was queued; live view is carried by the heartbeat's own flag")
 		}
+	}
+}
+
+// A tablet enrolled by QR must get the build the console has staged, not a file
+// someone copied onto the server once. They were unrelated: the fleet was on
+// build 65 while a newly provisioned tablet installed a four-day-old APK and
+// arrived reporting no version at all.
+func TestQRProvisioningServesTheStagedRelease(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	hash, _ := auth.HashPassword("adminpassword")
+	st.UpsertOperator(&store.Operator{
+		Email: "admin@x.com", Name: "Admin", Role: store.RoleAdmin,
+		PasswordHash: hash, CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+
+	// A stale file, standing in for the one on the server.
+	stale := filepath.Join(t.TempDir(), "old.apk")
+	if err := os.WriteFile(stale, []byte("an old build"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentRoot := t.TempDir()
+	agents := apk.NewStore(agentRoot)
+	files := blob.NewStore(filepath.Join(t.TempDir(), "files"))
+	srv := New(st, auth.NewSigner("test-secret"), nil, agents, files, NewPokeQueue(),
+		"enroll", "http://x", "", stale)
+	mux := srv.Routes()
+
+	// Nothing staged yet: the configured file is what a tablet gets.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/provision/apk", nil))
+	if rec.Body.String() != "an old build" {
+		t.Fatalf("with no staged release, served %q", rec.Body.String())
+	}
+
+	// Stage one, as the App update page does.
+	if err := os.WriteFile(filepath.Join(agentRoot, "app-release.apk"), []byte("the current build"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveAgentRelease(&store.AgentRelease{
+		VersionCode: 65, VersionName: "1.2.34", FileName: "app-release.apk",
+		SHA256: "x", Size: 17, CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/provision/apk", nil))
+	if got := rec.Body.String(); got != "the current build" {
+		t.Errorf("served %q, want the staged release — a new tablet would arrive behind the fleet", got)
 	}
 }
