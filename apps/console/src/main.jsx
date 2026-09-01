@@ -449,6 +449,7 @@ function DeviceInbox({ device, onErr }) {
 }
 
 function Devices({ onErr }) {
+  const [renaming, setRenaming] = useState(null);
   const [inboxFor, setInboxFor] = useState(null);
   const [liveFor, setLiveFor] = useState(null);
   const [devices, setDevices] = useState(null);
@@ -613,17 +614,36 @@ function Devices({ onErr }) {
               <React.Fragment key={d.id}>
               <tr>
                 <td className="nowrap">
-                  <input
-                    defaultValue={d.name || ""}
-                    placeholder="Add a label…"
-                    maxLength={64}
-                    disabled={busy}
-                    title="Shown in the corner of this tablet's kiosk screen"
-                    style={{ width: 180, height: 28, marginBottom: 4 }}
-                    onBlur={(e) => renameDevice(d.id, e.target.value, d.name)}
-                    onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
-                  />
-                  <div className="mono small subtle">{d.id}</div>
+                  {renaming === d.id ? (
+                    <input
+                      autoFocus
+                      defaultValue={d.name || ""}
+                      // Empty shows the id, so the placeholder is what clearing
+                      // the field will leave behind.
+                      placeholder={d.id}
+                      maxLength={64}
+                      disabled={busy}
+                      title="Shown in the corner of this tablet's kiosk screen"
+                      style={{ width: 200, height: 28 }}
+                      onBlur={(e) => { renameDevice(d.id, e.target.value, d.name); setRenaming(null); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.target.blur();
+                        if (e.key === "Escape") { e.target.value = d.name || ""; e.target.blur(); }
+                      }}
+                    />
+                  ) : (
+                    <span className="device-label">
+                      {/* Falls back to the id, so a tablet nobody has named is
+                          still identifiable now the id has its own tooltip
+                          rather than a line of its own. */}
+                      <span className="strong" title={d.id}>{d.name || d.id}</span>
+                      <button className="label-edit" title="Rename this tablet"
+                        aria-label={`Rename ${d.name || d.id}`}
+                        disabled={busy} onClick={() => setRenaming(d.id)}>
+                        <IconEdit />
+                      </button>
+                    </span>
+                  )}
                   {d.model && <div className="small muted">{d.model}</div>}
                 </td>
                 <td>

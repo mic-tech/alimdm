@@ -790,6 +790,23 @@ code.code, .code {
 .subtle { color: var(--secondary-foreground); }
 .small { font-size: 0.75rem; }
 .strong { font-weight: 600; color: var(--mono); }
+
+/* Device label: the name reads as text, with the pen only asserting itself on
+   hover so a list of twelve tablets is not a row of buttons. */
+.device-label { display: inline-flex; align-items: center; gap: 6px; }
+.label-edit {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; flex-shrink: 0;
+  border: none; border-radius: calc(var(--radius) - 4px);
+  background: transparent; color: var(--muted-foreground);
+  cursor: pointer; opacity: 0.45;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.device-label:hover .label-edit { opacity: 1; }
+.label-edit:hover { background: var(--accent); color: var(--foreground); }
+.label-edit:focus-visible { opacity: 1; outline: 2px solid var(--ring); outline-offset: 1px; }
+.label-edit svg { width: 13px; height: 13px; }
+.label-edit:disabled { cursor: default; opacity: 0.25; }
 .nowrap { white-space: nowrap; }
 .flex { display: flex; align-items: center; gap: 10px; }
 .flex.between { justify-content: space-between; }
