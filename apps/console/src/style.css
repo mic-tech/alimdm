@@ -950,12 +950,21 @@ code.code, .code {
 .label-edit svg { width: 13px; height: 13px; }
 .label-edit:disabled { cursor: default; opacity: 0.25; }
 .nowrap { white-space: nowrap; }
-.flex { display: flex; align-items: center; gap: 10px; }
+/* Wrapping is the default because not wrapping is what keeps going wrong: a row
+   of two buttons and a badge fits on a laptop and overlaps on a phone, and the
+   failure is silent — the squeezed item just renders on top of its neighbour.
+   Rows that genuinely must stay on one line opt out with .nowrap. */
+.flex { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+/* Named oneline, not nowrap: .nowrap already means white-space:nowrap, and
+   reusing it stopped the text inside these rows wrapping too. */
+.flex.oneline { flex-wrap: nowrap; }
 .flex.between { justify-content: space-between; }
-.flex.wrap { flex-wrap: wrap; }
 .flex.col { flex-direction: column; align-items: stretch; }
 .flex.end { justify-content: flex-end; }
-.grow { flex-grow: 1; }
+/* min-width:0 because a flex item will not shrink below its content by
+   default, so a growing child holds its row — and the page — open at the width
+   of the longest thing inside it. The enrolment command did exactly that. */
+.grow { flex-grow: 1; min-width: 0; }
 .stack { display: flex; flex-direction: column; gap: 20px; }
 .stack.tight { gap: 10px; }
 .divider { height: 1px; background: var(--border); border: 0; margin: 0; }

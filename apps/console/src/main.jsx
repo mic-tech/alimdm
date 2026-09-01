@@ -639,7 +639,7 @@ function Notifications({ me, onErr }) {
         </table>
       </CardTable>
 
-      <div className="flex wrap" style={{ justifyContent: "center", gap: 12, alignItems: "center" }}>
+      <div className="flex" style={{ justifyContent: "center", gap: 12, alignItems: "center" }}>
         <span className="small muted">
           Showing {events.length} of {total}{severity ? " matching" : ""}
         </span>
@@ -1042,7 +1042,7 @@ function AppUpdate({ onErr }) {
       >
         <div style={{ padding: 16 }}>
           {release ? (
-            <div className="flex" style={{ gap: 24, flexWrap: "wrap", marginBottom: 16 }}>
+            <div className="flex" style={{ gap: 24, marginBottom: 16 }}>
               <div><div className="small subtle">Version</div>
                 <div className="mono strong">{release.version_name || "—"} ({release.version_code})</div></div>
               <div><div className="small subtle">File</div>
@@ -1058,7 +1058,7 @@ function AppUpdate({ onErr }) {
             </p>
           )}
 
-          <div className="flex" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div className="flex" style={{ gap: 8, alignItems: "flex-end" }}>
             <div>
               <label className="small subtle" htmlFor="agent-file">APK</label>
               <input id="agent-file" type="file" accept=".apk" disabled={busy}
@@ -1370,7 +1370,7 @@ function QrEnrollCard({ onErr }) {
           for every tablet.
         </Alert>
 
-        <div className="flex" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div className="flex" style={{ gap: 12, alignItems: "flex-end" }}>
           <div>
             <label className="small subtle" htmlFor="qr-group">Enroll into group</label>
             <select id="qr-group" value={group} onChange={(e) => setGroup(e.target.value)}
@@ -1680,7 +1680,7 @@ function Enroll({ onErr }) {
 
           <div className="stack tight">
             {steps.map((s, i) => (
-              <div key={s.title} className="flex" style={{ alignItems: "flex-start", gap: 14, padding: "14px 0", borderTop: i === 0 ? "none" : "1px solid var(--border)" }}>
+              <div key={s.title} className="flex oneline" style={{ alignItems: "flex-start", gap: 14, padding: "14px 0", borderTop: i === 0 ? "none" : "1px solid var(--border)" }}>
                 <span className="avatar" style={{ width: 28, height: 28, fontSize: "0.75rem" }}>{i + 1}</span>
                 <div className="grow" style={{ minWidth: 0 }}>
                   <div className="strong" style={{ fontSize: "0.875rem", marginBottom: 4 }}>{s.title}</div>
@@ -1786,7 +1786,7 @@ function OfflineAlertSettings({ onErr }) {
           {/* wrap: on a phone the two buttons and the status badge do not fit on
               one line, and without it the badge was squeezed to 24px with its
               text running under the button beside it. */}
-          <div className="flex wrap" style={{ gap: 8 }}>
+          <div className="flex" style={{ gap: 8 }}>
             <button className="btn" onClick={save} disabled={busy}>
               <IconSave />{busy ? "Saving…" : "Save"}
             </button>
@@ -2040,7 +2040,7 @@ function Users({ me, onErr, onMeChange }) {
               return (
                 <tr key={u.email}>
                   <td data-label="User">
-                    <div className="flex" style={{ gap: 10 }}>
+                    <div className="flex oneline" style={{ gap: 10 }}>
                       <span className="avatar">{(u.name || u.email).slice(0, 1)}</span>
                       <span>
                         <span className="strong" style={{ display: "block" }}>

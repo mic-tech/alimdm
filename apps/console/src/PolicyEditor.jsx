@@ -114,7 +114,7 @@ function ManagedAppsControl({ value, onChange }) {
           </div>
         </div>
       )}
-      <div className="flex wrap">
+      <div className="flex">
         <input placeholder="com.example.app" value={newPkg}
           onChange={(e) => setNewPkg(e.target.value)} style={{ flex: 2, minWidth: 180 }} />
         <input placeholder="Display name (optional)" value={newName}
