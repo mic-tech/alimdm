@@ -64,19 +64,40 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	events, err := s.st.ListEvents(limit)
+	// Cursor, not offset: ids only increase, so a page cannot skip or repeat an
+	// entry because new ones arrived while the operator was reading.
+	var before int64
+	if v := r.URL.Query().Get("before"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			before = n
+		}
+	}
+	severity := r.URL.Query().Get("severity")
+
+	// One extra row answers "is there more?" without a second count query.
+	events, err := s.st.ListEventsPage(before, limit+1, severity)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not read events")
 		return
 	}
+	hasMore := len(events) > limit
+	if hasMore {
+		events = events[:limit]
+	}
+
 	marker := s.st.EventsReadMarker(op.Email)
 	unread, err := s.st.CountEventsAfter(marker)
 	if err != nil {
 		unread = 0
 	}
 	writeJSON(w, map[string]any{
-		"events": events,
-		"unread": unread,
+		"events":   events,
+		"unread":   unread,
+		"has_more": hasMore,
+		// So the page can say how much history exists at all, and why anything
+		// older than the cap is simply not there.
+		"total": s.st.CountEvents(),
+		"kept":  store.MaxEventsKept(),
 	})
 }
 

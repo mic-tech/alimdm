@@ -532,6 +532,123 @@ function DeviceInbox({ device, onErr }) {
   );
 }
 
+/* The full notification history.
+   The bell is a peek at what just happened; this is the record. It pages by
+   cursor rather than offset so a page cannot skip or repeat an entry when new
+   events arrive while it is being read, and it says how much history exists so
+   a gap reads as retention rather than as something lost. */
+const SEVERITY_LABEL = { info: "Info", warn: "Attention", error: "Failure" };
+
+function Notifications({ onErr }) {
+  useNarrowFlag();
+  const [events, setEvents] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [kept, setKept] = useState(0);
+  const [severity, setSeverity] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const PAGE = 50;
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api.listEventsPage({ limit: PAGE, severity });
+      setEvents(r.events || []);
+      setHasMore(!!r.has_more);
+      setTotal(r.total || 0);
+      setKept(r.kept || 0);
+    } catch (e) { onErr(e.message); }
+  }, [onErr, severity]);
+  useEffect(() => { load(); }, [load]);
+
+  async function loadOlder() {
+    if (!events || events.length === 0) return;
+    setBusy(true);
+    try {
+      const r = await api.listEventsPage({
+        limit: PAGE, before: events[events.length - 1].id, severity,
+      });
+      setEvents((prev) => [...prev, ...(r.events || [])]);
+      setHasMore(!!r.has_more);
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  async function markAllRead() {
+    setBusy(true);
+    try { await api.markEventsRead(0); toast("Marked everything read"); }
+    catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  if (!events) return <Loading label="Loading notifications…" />;
+
+  return (
+    <div className="stack">
+      <CardTable
+        title="Notifications"
+        actions={<>
+          <select value={severity} onChange={(e) => setSeverity(e.target.value)}
+            title="Narrow to the entries worth chasing" style={{ height: 32 }}>
+            <option value="">Everything</option>
+            <option value="warn">Needs attention</option>
+            <option value="error">Failures only</option>
+          </select>
+          <button className="btn outline sm" disabled={busy} onClick={markAllRead}>Mark all read</button>
+          <button className="btn outline sm" onClick={load}><IconRefresh />Refresh</button>
+        </>}
+        note={
+          <Alert>
+            Everything the fleet and its operators have done, newest first. The most recent{" "}
+            {kept || 500} entries are kept — anything older is discarded, so a gap here is
+            retention rather than something gone missing.
+          </Alert>
+        }
+      >
+        <table className="stacked">
+          <thead>
+            <tr><th>When</th><th>Level</th><th>Who</th><th>What happened</th></tr>
+          </thead>
+          <tbody>
+            {events.length === 0 && (
+              <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: "24px 0" }}>
+                {severity ? "Nothing at this level." : "Nothing has happened yet."}
+              </td></tr>
+            )}
+            {events.map((ev) => (
+              <tr key={ev.id}>
+                <td className="small subtle nowrap" data-label="When"
+                  title={new Date(ev.at).toLocaleString()}>
+                  {timeAgo(ev.at) || "just now"}
+                </td>
+                <td className="nowrap" data-label="Level">
+                  <span className={"badge " + (ev.severity === "error" ? "off"
+                    : ev.severity === "warn" ? "warning" : "")}>
+                    {SEVERITY_LABEL[ev.severity] || ev.severity}
+                  </span>
+                </td>
+                <td className="small nowrap" data-label="Who">{ev.actor || "\u2014"}</td>
+                <td className="small" data-label="What happened">{ev.summary}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardTable>
+
+      <div className="flex" style={{ justifyContent: "center", gap: 12, alignItems: "center" }}>
+        <span className="small muted">
+          Showing {events.length} of {total}{severity ? " matching" : ""}
+        </span>
+        {hasMore && (
+          <button className="btn outline sm" disabled={busy} onClick={loadOlder}>
+            {busy ? "Loading\u2026" : "Load older"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Devices({ onErr }) {
   useNarrowFlag();
   const [view, setView] = useState(() => {
@@ -2118,6 +2235,8 @@ const NAV = [
     desc: "Define one policy and apply it to a whole set of devices" },
   { id: "alerts", icon: IconWarning, txt: "Alerts", title: "Offline alerts",
     adminOnly: true, desc: "Get told when a tablet stops checking in" },
+  { id: "notifications", icon: IconBell, txt: "Activity", title: "Notifications",
+    desc: "Everything the fleet and its operators have done" },
   { id: "enroll", icon: IconEnroll, txt: "Enroll", title: "Enroll a tablet",
     desc: "Bring a new device under management over ADB" },
   { id: "apks", icon: IconPackage, txt: "Packages", title: "App packages",
@@ -2366,6 +2485,7 @@ function Shell({ onSignOut }) {
             {view === "appupdate" && <AppUpdate onErr={onErr} />}
             {view === "profile" && <Profile me={me} onErr={onErr} onMeChange={setMe} />}
             {view === "alerts" && me.role === "admin" && <Alerts onErr={onErr} />}
+            {view === "notifications" && <Notifications onErr={onErr} />}
             {view === "users" && me.role === "admin" && <Users me={me} onErr={onErr} onMeChange={setMe} />}
           </div>
         </main>

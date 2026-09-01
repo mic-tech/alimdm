@@ -908,12 +908,41 @@ func (s *Store) RecordEvent(e *Event) error {
 
 // ListEvents returns the most recent entries, newest first.
 func (s *Store) ListEvents(limit int) ([]Event, error) {
+	return s.ListEventsPage(0, limit, "")
+}
+
+// ListEventsPage walks the feed backwards from a cursor.
+//
+// Paging is by id rather than offset: ids only ever increase, so a page cannot
+// skip or repeat an entry because something arrived while the operator was
+// reading — which an OFFSET would do on a feed that grows from the top.
+//
+// beforeID of 0 starts at the newest. severity, when given, narrows to one
+// level, which is how an operator finds the failures among the routine traffic.
+func (s *Store) ListEventsPage(beforeID int64, limit int, severity string) ([]Event, error) {
 	if limit <= 0 || limit > maxEvents {
 		limit = 50
 	}
-	rows, err := s.db.Query(
-		`SELECT id, at, kind, severity, actor, device_id, summary
-		 FROM events ORDER BY id DESC LIMIT ?`, limit)
+	q := `SELECT id, at, kind, severity, actor, device_id, summary FROM events WHERE 1=1`
+	args := []any{}
+	if beforeID > 0 {
+		q += ` AND id < ?`
+		args = append(args, beforeID)
+	}
+	switch severity {
+	case EventWarn:
+		// "Needs attention" means warnings and errors together: an operator
+		// looking for trouble does not care which label it landed under.
+		q += ` AND severity IN (?, ?)`
+		args = append(args, EventWarn, EventError)
+	case EventError:
+		q += ` AND severity = ?`
+		args = append(args, EventError)
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -928,6 +957,18 @@ func (s *Store) ListEvents(limit int) ([]Event, error) {
 	}
 	return out, rows.Err()
 }
+
+// CountEvents reports how many entries are held, so the console can say how
+// much history there is rather than only how much it has fetched.
+func (s *Store) CountEvents() int {
+	var n int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n)
+	return n
+}
+
+// MaxEventsKept is the retention cap, surfaced so the console can explain why
+// older entries are not there rather than looking like it lost them.
+func MaxEventsKept() int { return maxEvents }
 
 // CountEventsAfter reports how many entries are newer than the given id, which
 // is what the console's unread badge shows.
