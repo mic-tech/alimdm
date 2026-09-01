@@ -80,24 +80,43 @@ class AliMdmAccessibilityService : AccessibilityService() {
          * WRITE_SECURE_SETTINGS (granted once over ADB at enrolment) only the
          * user can enable it, from Android's accessibility settings.
          */
-        fun ensureRunning(context: Context, timeoutMs: Long = 4000): Boolean {
-            if (isRunning()) return true
-            if (!enableViaSecureSettings(context)) return false
+        fun ensureRunning(context: Context, timeoutMs: Long = 4000): Boolean =
+            ensureRunningOrReason(context, timeoutMs) == null
+
+        /**
+         * As [ensureRunning], but returns why it could not be turned on — the
+         * two failures need different things done about them, and an operator
+         * reading a screenshot error in the console cannot tell them apart from
+         * "not enabled".
+         *
+         * Returns null on success.
+         */
+        fun ensureRunningOrReason(context: Context, timeoutMs: Long = 4000): String? {
+            if (isRunning()) return null
+            if (!enableViaSecureSettings(context)) {
+                return "the app does not hold WRITE_SECURE_SETTINGS, so only a person on the " +
+                    "device can enable it. Grant it once over ADB: adb shell pm grant " +
+                    "${context.packageName} android.permission.WRITE_SECURE_SETTINGS"
+            }
             // Binding is asynchronous: the platform starts the service after the
             // setting is written, so returning immediately would report a
             // failure that is only a few hundred milliseconds away.
             val deadline = SystemClock.uptimeMillis() + timeoutMs
             while (SystemClock.uptimeMillis() < deadline) {
-                if (isRunning()) return true
+                if (isRunning()) return null
                 try {
                     Thread.sleep(100)
                 } catch (e: InterruptedException) {
                     Thread.currentThread().interrupt()
-                    return false
+                    return "interrupted while waiting for the service to start"
                 }
             }
             Log.w(TAG, "Accessibility service did not bind within ${timeoutMs}ms of being enabled")
-            return false
+            // The setting took, but Android did not start the service. On 13+
+            // this is usually the restricted-settings block on an app installed
+            // outside the Play Store, which only a person on the device can lift.
+            return "the setting was accepted but Android did not start the service within " +
+                "${timeoutMs}ms. Enable Ali MDM once by hand in Settings → Accessibility"
         }
 
         /** Adds this service to the enabled list. False if we may not write it. */

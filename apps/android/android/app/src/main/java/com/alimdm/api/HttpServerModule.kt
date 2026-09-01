@@ -2140,10 +2140,10 @@ class HttpServerModule(private val reactContext: ReactApplicationContext) :
         // Turn it on rather than reporting that it is off: it is only ever
         // needed here and in live view, and a fleet that has not rebooted since
         // enrolment would otherwise never capture anything but its own window.
-        if (!AliMdmAccessibilityService.ensureRunning(reactContext)) {
-            lastScreenshotError = "Accessibility service is off and could not be enabled " +
-                "(required to capture another app). Grant it once over ADB: " +
-                "adb shell pm grant ${reactContext.packageName} android.permission.WRITE_SECURE_SETTINGS"
+        val a11yReason = AliMdmAccessibilityService.ensureRunningOrReason(reactContext)
+        if (a11yReason != null) {
+            lastScreenshotError = "Cannot capture another app: the accessibility service is off and " +
+                a11yReason
             return null
         }
         if (!AliMdmAccessibilityService.canTakeScreenshot()) {

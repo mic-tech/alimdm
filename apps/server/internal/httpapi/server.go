@@ -586,22 +586,20 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// Drain any MQTT-poked commands into the queue so pending_commands reflects them.
-	// install_apk pokes are wake-only: the APK itself is delivered via the /updates/
-	// channel (see deviceUpdates), and the app's command dispatcher does not handle
-	// install_apk, so enqueuing it here would surface as "Unsupported command type".
-	// We still let it bump pending_commands (via CountPendingAPKUpdates) so the device
-	// wakes and polls /updates/.
-	for _, p := range s.pokes.Drain(dev.ID) {
-		if p.Type == "install_apk" {
-			continue
-		}
-		_ = s.st.EnqueueCommand(&store.Command{
-			ID: "cmd-" + shortHash(dev.ID+lastSeen+p.Type), DeviceID: dev.ID, Type: p.Type,
-			Params: store.MustJSON(map[string]any{"package": p.Package}),
-			Status: "pending", CreatedAt: lastSeen,
-		})
-	}
+	// Pokes are a wake signal and nothing more. Every one of them accompanies
+	// something the device finds by itself: a command already sitting in the
+	// queue, an APK update in /updates/, or a flag in this very response
+	// (stream_requested, pending_files).
+	//
+	// This used to turn each drained poke back into a command, which ran every
+	// console command on the device twice — once correctly, and once from a
+	// poke that carries no parameters. On the fleet that showed up as pairs of
+	// rows: "launch_app success" beside "launch_app error: Missing package
+	// name", and manufactured rows for types the app has no handler for,
+	// settling as "Unsupported command type: start_stream".
+	//
+	// Still drained, so the queue does not grow for a device with no MQTT.
+	s.pokes.Drain(dev.ID)
 	resp["pending_commands"] = s.st.CountPendingCommands(dev.ID) + s.st.CountPendingAPKUpdates(dev.ID)
 	resp["pending_files"] = s.st.CountPendingFileDeliveries(dev.ID)
 	w.Header().Set("Content-Type", "application/json")

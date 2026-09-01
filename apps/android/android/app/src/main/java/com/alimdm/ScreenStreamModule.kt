@@ -181,9 +181,10 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
                     // not coming.
                     if (!AliMdmAccessibilityService.isRunning() && !triedEnablingAccessibility) {
                         triedEnablingAccessibility = true
-                        if (!AliMdmAccessibilityService.ensureRunning(reactContext)) {
-                            Log.w(TAG, "Accessibility service is off and could not be enabled; " +
-                                "live view will go blank behind an external app")
+                        val reason = AliMdmAccessibilityService.ensureRunningOrReason(reactContext)
+                        if (reason != null) {
+                            Log.w(TAG, "Live view will be blank behind an external app: " +
+                                "the accessibility service is off and $reason")
                         }
                     }
                     lastAccessibilityAt = System.currentTimeMillis()

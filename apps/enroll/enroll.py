@@ -149,7 +149,8 @@ def set_device_owner(serial):
 
 
 def grant_permissions(serial):
-    print("[2/4] Granting required permissions...")
+    """Runs after install_apk: pm grant needs the package to exist."""
+    print("[3/4] Granting required permissions...")
     # Usage stats (foreground monitoring), secure settings (auto-enable a11y),
     # and appear-over-other-apps (keep external app locked on top).
     adb_shell(serial, f"appops set {PKG} android:get_usage_stats allow", check=False)
@@ -161,7 +162,7 @@ def grant_permissions(serial):
 def install_apk(serial, apk_path):
     if not apk_path:
         return
-    print(f"[3/4] Installing Ali MDM APK ({os.path.basename(apk_path)})...")
+    print(f"[2/4] Installing Ali MDM APK ({os.path.basename(apk_path)})...")
     adb(serial, "install", "-r", "-t", apk_path)
     print("  ✓ installed")
 
@@ -261,8 +262,13 @@ def main():
 
         if not args.skip_owner:
             set_device_owner(args.serial)
-        grant_permissions(args.serial)
+        # Install first: "pm grant" fails on a package that is not there yet, and
+        # it fails quietly (check=False). A fresh tablet therefore came up
+        # without WRITE_SECURE_SETTINGS, which is what the app needs to turn its
+        # own accessibility service on — and without that service it can only
+        # ever screenshot its own window, never the app a pupil is using.
         install_apk(args.serial, args.apk)
+        grant_permissions(args.serial)
         push_enrollment(args.serial, args.cloud, args.token, args.org)
 
     print()

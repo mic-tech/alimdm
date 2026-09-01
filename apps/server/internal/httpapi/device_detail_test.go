@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,5 +182,66 @@ func TestCommandListSpeaksSnakeCase(t *testing.T) {
 	}
 	if cmds[0]["type"] != "reboot" || cmds[0]["status"] != "pending" {
 		t.Errorf("command reads %v", cmds[0])
+	}
+}
+
+// A command an operator sends must run once, with the parameters they gave.
+//
+// The heartbeat used to turn the accompanying wake poke back into a second
+// command, so every console command reached the device twice: once correctly,
+// and once with empty parameters. On the fleet that was a "launch_app success"
+// next to a "launch_app error: Missing package name" for every launch.
+func TestACommandIsQueuedOnceWithItsParameters(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	key := e.newDeviceKey(t, "tablet-1")
+
+	if rec, _ := e.do("POST", "/api/v1/devices/tablet-1/commands", tok,
+		map[string]any{"type": "launch_app", "params": map[string]any{"package_name": "com.example"}}); rec.Code != http.StatusOK {
+		t.Fatalf("enqueue: status %d", rec.Code)
+	}
+	// Two heartbeats: the poke is drained on the first, and a second would have
+	// shown any repeat.
+	e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{})
+	e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{})
+
+	cmds, err := e.st.ListCommands("tablet-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cmds) != 1 {
+		for _, c := range cmds {
+			t.Logf("  %s %s params=%s", c.ID, c.Type, c.Params)
+		}
+		t.Fatalf("got %d commands, want 1 — the device would act on it more than once", len(cmds))
+	}
+	if !strings.Contains(cmds[0].Params, "com.example") {
+		t.Errorf("params = %s, want the package the operator sent", cmds[0].Params)
+	}
+}
+
+// A wake-only poke must not become a command at all: the app has no handler for
+// these, so the row could only ever settle as "Unsupported command type".
+func TestWakeOnlyPokesDoNotBecomeCommands(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	key := e.newDeviceKey(t, "tablet-1")
+
+	if rec, _ := e.do("POST", "/api/v1/devices/tablet-1/stream/start", tok, nil); rec.Code != http.StatusOK {
+		t.Fatalf("start stream: status %d", rec.Code)
+	}
+	e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{})
+
+	cmds, _ := e.st.ListCommands("tablet-1")
+	for _, c := range cmds {
+		if c.Type == "start_stream" {
+			t.Fatalf("a start_stream command was queued; live view is carried by the heartbeat's own flag")
+		}
 	}
 }

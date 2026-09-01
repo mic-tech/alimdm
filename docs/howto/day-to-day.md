@@ -107,6 +107,38 @@ The new tablet inherits the same group config automatically.
 
 ---
 
+## Seeing a device's screen
+
+The Devices page shows a still of each screen, and a device's own page can hold
+a live view. Both need to be able to capture whatever is on screen.
+
+Ali MDM can always capture **its own kiosk**. To capture **another app** — which
+is what you want when a pupil is in Chrome or the Quran app — it needs its
+accessibility service, and Android only lets the app switch that on if it holds
+`WRITE_SECURE_SETTINGS`. That is granted once, over ADB, at enrolment:
+
+```
+adb shell pm grant com.alimdm android.permission.WRITE_SECURE_SETTINGS
+```
+
+`enroll.py` does this for you. On a tablet enrolled before September 2026 the
+grant ran before the app was installed and quietly did nothing, so it has to be
+run by hand once — plug the tablet in, run the command, and that is the end of
+it. The app enables the service by itself from then on, including after a
+reboot.
+
+Two ways to tell whether a tablet is in this state:
+
+- Its **Commands** tab shows `screenshot` rows that failed, and the reason.
+- Its screen still shows the Ali MDM kiosk but never anything else.
+
+Capture of another app also requires **Allow remote screenshots** in the policy
+(Security → Lock Mode). Lock Mode blacks out screen capture; that setting lets
+the device lift the block for the fraction of a second the picture takes, which
+also re-enables the pupil's own Power+Volume Down screenshot for that moment.
+
+---
+
 ## Security reminders
 
 - **Keep your enroll token secret** — anyone with it can enroll a device.
