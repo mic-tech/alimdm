@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"ali-mdm/server/internal/apk"
+	"ali-mdm/server/internal/blob"
 	"ali-mdm/server/internal/auth"
 	"ali-mdm/server/internal/config"
 	"ali-mdm/server/internal/device"
@@ -26,6 +27,9 @@ type Server struct {
 	// the managed-app catalogue so an agent build can never be auto-queued as a
 	// managed app (or deleted from the Packages page) by accident.
 	agentAPKs    *apk.Store
+	// files holds operator-uploaded documents pushed to device inboxes, kept in
+	// its own root so a worksheet can never be mistaken for an installable APK.
+	files        *blob.Store
 	pokes        *PokeQueue
 	enrollToken  string
 	baseURL      string
@@ -33,8 +37,8 @@ type Server struct {
 	provisionAPK string // path to the Ali MDM APK served for zero-touch QR provisioning
 }
 
-func New(st *store.Store, signer *auth.Signer, apks, agentAPKs *apk.Store, pokes *PokeQueue, enrollToken, baseURL, consoleDir, provisionAPK string) *Server {
-	return &Server{st: st, signer: signer, apks: apks, agentAPKs: agentAPKs, pokes: pokes, enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir, provisionAPK: provisionAPK}
+func New(st *store.Store, signer *auth.Signer, apks, agentAPKs *apk.Store, files *blob.Store, pokes *PokeQueue, enrollToken, baseURL, consoleDir, provisionAPK string) *Server {
+	return &Server{st: st, signer: signer, apks: apks, agentAPKs: agentAPKs, files: files, pokes: pokes, enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir, provisionAPK: provisionAPK}
 }
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -163,6 +167,17 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/me/password", s.requireOperator(s.changeMyPassword))
 
 	// Server-wide alerting settings (admins only: the webhook is infrastructure).
+	// File library: upload once, push to a group, land in every tablet's inbox.
+	mux.HandleFunc("POST /api/v1/files", s.requireOperator(s.uploadFile))
+	mux.HandleFunc("GET /api/v1/files", s.requireOperator(s.listFiles))
+	mux.HandleFunc("DELETE /api/v1/files/{name}", s.requireOperator(s.deleteFile))
+	mux.HandleFunc("POST /api/v1/files/{name}/push", s.requireOperator(s.pushFile))
+	mux.HandleFunc("GET /api/v1/files/{name}/deliveries", s.requireOperator(s.fileDeliveries))
+	// Device-facing: the tablet fetches its own inbox and reports what it did.
+	mux.HandleFunc("GET /api/v1/devices/{id}/files", s.requireDevice(s.devicePendingFiles))
+	mux.HandleFunc("POST /api/v1/devices/{id}/files/{name}/result", s.requireDevice(s.fileDeliveryResult))
+	mux.HandleFunc("GET /api/v1/files/{name}/download", s.requireDevice(s.downloadFile))
+
 	// The notification feed is readable by any signed-in operator: it is how
 	// they see what the fleet and their colleagues have been doing.
 	mux.HandleFunc("GET /api/v1/events", s.requireOperator(s.listEvents))
@@ -441,6 +456,10 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"status":           "ok",
 		"pending_commands": s.st.CountPendingCommands(dev.ID) + s.st.CountPendingAPKUpdates(dev.ID),
+		// Files waiting for this tablet's inbox. Separate from pending_commands
+		// so the app fetches them on their own channel and a stuck command
+		// cannot hold up a worksheet.
+		"pending_files": s.st.CountPendingFileDeliveries(dev.ID),
 		"server_time":      lastSeen,
 		"sync_action":      "none",
 		"config":           nil,
@@ -505,6 +524,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	resp["pending_commands"] = s.st.CountPendingCommands(dev.ID) + s.st.CountPendingAPKUpdates(dev.ID)
+	resp["pending_files"] = s.st.CountPendingFileDeliveries(dev.ID)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }

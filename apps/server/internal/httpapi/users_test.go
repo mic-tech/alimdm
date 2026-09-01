@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ali-mdm/server/internal/auth"
+	"ali-mdm/server/internal/blob"
 	"ali-mdm/server/internal/store"
 )
 
@@ -35,7 +36,10 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 
-	srv := New(st, auth.NewSigner("test-secret"), nil, nil, NewPokeQueue(), "enroll", "http://x", "", "")
+	// A real file store: the inbox tests move actual bytes, and a nil store
+	// would make them pass by refusing every upload.
+	files := blob.NewStore(filepath.Join(t.TempDir(), "files"))
+	srv := New(st, auth.NewSigner("test-secret"), nil, nil, files, NewPokeQueue(), "enroll", "http://x", "", "")
 	return &testEnv{t: t, mux: srv.Routes(), st: st}
 }
 

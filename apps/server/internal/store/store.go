@@ -1,7 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -173,6 +175,27 @@ func migrate(db *sql.DB) error {
 		state TEXT NOT NULL DEFAULT 'ok',
 		notified_at TEXT NOT NULL DEFAULT ''
 	);
+	-- Files pushed from the console to every tablet's inbox folder.
+	CREATE TABLE IF NOT EXISTS files(
+		name TEXT PRIMARY KEY,
+		sha256 TEXT NOT NULL,
+		size INTEGER NOT NULL,
+		content_type TEXT NOT NULL DEFAULT '',
+		path TEXT NOT NULL,
+		uploaded_at TEXT NOT NULL DEFAULT ''
+	);
+	-- One row per (file, device). Delivery is per-device so the console can show
+	-- which tablets actually took the file rather than assuming a push worked.
+	CREATE TABLE IF NOT EXISTS file_deliveries(
+		id TEXT PRIMARY KEY,
+		device_id TEXT NOT NULL,
+		file_name TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending',
+		attempts INTEGER NOT NULL DEFAULT 0,
+		last_error TEXT NOT NULL DEFAULT '',
+		updated_at TEXT NOT NULL DEFAULT ''
+	);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_file_delivery ON file_deliveries(device_id, file_name);
 	CREATE TABLE IF NOT EXISTS events(
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		at TEXT NOT NULL,
@@ -918,4 +941,185 @@ func (s *Store) SetDeviceEventState(deviceID, state string) error {
 		`INSERT INTO device_event_state(device_id, state) VALUES(?,?)
 		 ON CONFLICT(device_id) DO UPDATE SET state=excluded.state`, deviceID, state)
 	return err
+}
+
+// ── Console → device file inbox ──────────────────────────────────────────────
+//
+// A file uploaded once in the console and pushed to a whole group, so sending a
+// PDF to twelve tablets is one action rather than twelve. Delivery is tracked
+// per device: a push that silently missed half the fleet would be worse than no
+// push at all, because nobody would go and check.
+
+// Delivery states. A row goes pending → sent → done, or → failed with a reason.
+const (
+	FileDeliveryPending = "pending"
+	FileDeliverySent    = "sent"
+	FileDeliveryDone    = "done"
+	FileDeliveryFailed  = "failed"
+
+	// maxFileDeliveryAttempts stops a file the device cannot store — wrong type,
+	// no space — from being retried on every heartbeat forever.
+	maxFileDeliveryAttempts = 3
+)
+
+type File struct {
+	Name        string `json:"name"`
+	SHA256      string `json:"sha256"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type"`
+	Path        string `json:"-"`
+	UploadedAt  string `json:"uploaded_at"`
+}
+
+type FileDelivery struct {
+	ID        string `json:"id"`
+	DeviceID  string `json:"device_id"`
+	FileName  string `json:"file_name"`
+	Status    string `json:"status"`
+	Attempts  int    `json:"attempts"`
+	LastError string `json:"last_error"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// shortID keeps delivery ids deterministic per (device, file), so re-pushing
+// the same file updates the existing row instead of piling up duplicates.
+func shortID(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+func (s *Store) SaveFile(f *File) error {
+	_, err := s.db.Exec(
+		`INSERT INTO files(name,sha256,size,content_type,path,uploaded_at) VALUES(?,?,?,?,?,?)
+		 ON CONFLICT(name) DO UPDATE SET sha256=excluded.sha256, size=excluded.size,
+		   content_type=excluded.content_type, path=excluded.path, uploaded_at=excluded.uploaded_at`,
+		f.Name, f.SHA256, f.Size, f.ContentType, f.Path, nowISO())
+	return err
+}
+
+func (s *Store) ListFiles() ([]File, error) {
+	rows, err := s.db.Query(`SELECT name,sha256,size,content_type,path,uploaded_at FROM files ORDER BY uploaded_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []File{}
+	for rows.Next() {
+		var f File
+		if err := rows.Scan(&f.Name, &f.SHA256, &f.Size, &f.ContentType, &f.Path, &f.UploadedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetFile(name string) (*File, error) {
+	var f File
+	err := s.db.QueryRow(
+		`SELECT name,sha256,size,content_type,path,uploaded_at FROM files WHERE name=?`, name).
+		Scan(&f.Name, &f.SHA256, &f.Size, &f.ContentType, &f.Path, &f.UploadedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+// DeleteFile drops the catalogue row and every delivery for it. Files already
+// on a tablet stay there: the inbox is the pupil's folder, not a mirror.
+func (s *Store) DeleteFile(name string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM file_deliveries WHERE file_name=?`, name); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM files WHERE name=?`, name); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// QueueFileDelivery targets one device. Re-pushing a file to a device that
+// already has it resets the row, which is what an operator means by "send it
+// again" after a failure.
+func (s *Store) QueueFileDelivery(deviceID, fileName string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO file_deliveries(id,device_id,file_name,status,attempts,last_error,updated_at)
+		 VALUES(?,?,?,?,0,'',?)
+		 ON CONFLICT(device_id, file_name) DO UPDATE SET
+		   status=excluded.status, attempts=0, last_error='', updated_at=excluded.updated_at`,
+		"fd-"+shortID(deviceID+fileName), deviceID, fileName, FileDeliveryPending, nowISO())
+	return err
+}
+
+// ClaimPendingFileDeliveries hands the device its outstanding files and marks
+// them sent, so a slow download is not handed out again on the next heartbeat.
+func (s *Store) ClaimPendingFileDeliveries(deviceID string) ([]FileDelivery, error) {
+	rows, err := s.db.Query(
+		`SELECT id,device_id,file_name,status,attempts,last_error,updated_at
+		 FROM file_deliveries WHERE device_id=? AND status=? AND attempts < ?`,
+		deviceID, FileDeliveryPending, maxFileDeliveryAttempts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []FileDelivery{}
+	for rows.Next() {
+		var d FileDelivery
+		if err := rows.Scan(&d.ID, &d.DeviceID, &d.FileName, &d.Status, &d.Attempts, &d.LastError, &d.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, d := range out {
+		_, _ = s.db.Exec(
+			`UPDATE file_deliveries SET status=?, attempts=attempts+1, updated_at=? WHERE id=?`,
+			FileDeliverySent, nowISO(), d.ID)
+	}
+	return out, nil
+}
+
+// SetFileDeliveryStatus records what the device did with a file. Success is
+// terminal: a device that reports done must not be walked back by a late retry.
+func (s *Store) SetFileDeliveryStatus(deviceID, fileName, status, errText string) error {
+	_, err := s.db.Exec(
+		`UPDATE file_deliveries SET status=?, last_error=?, updated_at=?
+		 WHERE device_id=? AND file_name=? AND status<>?`,
+		status, errText, nowISO(), deviceID, fileName, FileDeliveryDone)
+	return err
+}
+
+// CountPendingFileDeliveries drives the heartbeat's "go and fetch" hint.
+func (s *Store) CountPendingFileDeliveries(deviceID string) int {
+	var n int
+	_ = s.db.QueryRow(
+		`SELECT COUNT(*) FROM file_deliveries WHERE device_id=? AND status=? AND attempts < ?`,
+		deviceID, FileDeliveryPending, maxFileDeliveryAttempts).Scan(&n)
+	return n
+}
+
+// FileDeliveries reports where a push got to, per device.
+func (s *Store) FileDeliveries(fileName string) ([]FileDelivery, error) {
+	rows, err := s.db.Query(
+		`SELECT id,device_id,file_name,status,attempts,last_error,updated_at
+		 FROM file_deliveries WHERE file_name=? ORDER BY device_id`, fileName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []FileDelivery{}
+	for rows.Next() {
+		var d FileDelivery
+		if err := rows.Scan(&d.ID, &d.DeviceID, &d.FileName, &d.Status, &d.Attempts, &d.LastError, &d.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }

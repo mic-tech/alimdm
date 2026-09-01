@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"ali-mdm/server/internal/apk"
+	"ali-mdm/server/internal/blob"
 	"ali-mdm/server/internal/auth"
 	"ali-mdm/server/internal/httpapi"
 	"ali-mdm/server/internal/store"
@@ -52,6 +53,11 @@ func main() {
 	// Agent builds live beside the managed catalogue, never inside it.
 	agentRoot := envOr("AGENT_APK_ROOT", filepath.Join(filepath.Dir(apkRoot), "agent"))
 	agentAPKs := apk.NewStore(agentRoot)
+
+	// Operator-uploaded documents pushed to device inboxes. Its own root so a
+	// worksheet can never be picked up as an installable package.
+	fileRoot := envOr("FILE_ROOT", filepath.Join(filepath.Dir(apkRoot), "files"))
+	files := blob.NewStore(fileRoot)
 	pokes := httpapi.NewPokeQueue()
 
 	if mqttURL != "" {
@@ -73,7 +79,7 @@ func main() {
 	}
 	httpapi.NewAlertWatcher(st, baseURL).Start(context.Background())
 
-	srv := httpapi.New(st, signer, apks, agentAPKs, pokes, enrollToken, baseURL, consoleDir, provisionAPK)
+	srv := httpapi.New(st, signer, apks, agentAPKs, files, pokes, enrollToken, baseURL, consoleDir, provisionAPK)
 	if provisionAPK != "" {
 		log.Printf("zero-touch provisioning APK: %s", provisionAPK)
 	}
