@@ -1408,6 +1408,7 @@ class KioskModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
             val result = com.facebook.react.bridge.Arguments.createMap()
             result.putString("enroll_token", token)
             result.putString("cloud_url", prefs.getString(DeviceAdminReceiver.KEY_CLOUD_URL, "") ?: "")
+            result.putString("device_label", prefs.getString(DeviceAdminReceiver.KEY_DEVICE_LABEL, "") ?: "")
             result.putString("org_id", prefs.getString(DeviceAdminReceiver.KEY_ORG_ID, "") ?: "")
             val group = prefs.getString(DeviceAdminReceiver.KEY_GROUP_ID, "") ?: ""
             if (group.isNotBlank()) result.putString("group_id", group)

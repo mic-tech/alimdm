@@ -467,6 +467,9 @@ class CloudSyncServiceClass {
     token: string,
     deviceInfo: Record<string, string>,
     groupId?: string,
+    // Optional label, given at provisioning so the tablet appears in the
+    // console already named rather than as a bare device id.
+    deviceLabel?: string,
   ): Promise<{ success: boolean; error?: string; organizationName?: string }> {
     const url = cloudUrl.replace(/\/$/, '');
     try {
@@ -476,7 +479,12 @@ class CloudSyncServiceClass {
       const response = await fetch(`${url}/api/v1/devices/enroll/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, device_info: { ...deviceInfo, capabilities }, group_id: groupId || undefined }),
+        body: JSON.stringify({
+          token,
+          device_info: { ...deviceInfo, capabilities },
+          group_id: groupId || undefined,
+          device_label: deviceLabel || undefined,
+        }),
       });
 
       const data = await response.json();
@@ -538,7 +546,7 @@ class CloudSyncServiceClass {
         android_version: PC?.Release ?? '',
         app_version: PC?.appVersion ?? '',
         serial_number: await getDeviceSerial(),
-      }, (pending as any).group_id);
+      }, (pending as any).group_id, (pending as any).device_label);
       if (result.success) {
         // A device provisioned via the setup-wizard QR is a Device Owner kiosk:
         // pin Ali MDM as the persistent Home launcher so the "choose launcher"

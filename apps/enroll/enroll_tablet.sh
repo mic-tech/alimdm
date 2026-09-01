@@ -24,11 +24,16 @@
 # ============================================================
 set -e
 
-SERIAL="${1:?Usage: $0 <adb-serial> [--group <id>]   (run 'adb devices' to see serials)}"
+SERIAL="${1:?Usage: $0 <adb-serial> [--group <id>] [--label \"Library tablet\"]   (run 'adb devices' to see serials)}"
 GROUP_ID=""
+DEVICE_LABEL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --group) GROUP_ID="${2:?--group needs a value}"; shift 2 ;;
+    # Names the tablet in the console from the moment it enrols. Without it the
+    # device shows as its id, which is hard to match to a tablet in your hand
+    # when a trolley of them all look identical.
+    --label) DEVICE_LABEL="${2:?--label needs a value}"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -52,7 +57,7 @@ ADMIN="com.alimdm/.DeviceAdminReceiver"
 
 ADB="adb -s $SERIAL"
 
-echo "==> Target tablet: $SERIAL"
+echo "==> Target tablet: $SERIAL${DEVICE_LABEL:+  (label: $DEVICE_LABEL)}"
 $ADB wait-for-device
 echo "    device online"
 
@@ -72,7 +77,8 @@ $ADB shell am start -n "$PKG/.MainActivity" \
   --es cloud_url "$CLOUD_URL" \
   --es enroll_token "$ENROLL_TOKEN" \
   --es org_id "$ORG_ID" \
-  ${GROUP_ID:+--es group_id "$GROUP_ID"} >/dev/null
+  ${GROUP_ID:+--es group_id "$GROUP_ID"} \
+  ${DEVICE_LABEL:+--es device_label "$DEVICE_LABEL"} >/dev/null
 sleep 2
 echo "    enrolment staged"
 

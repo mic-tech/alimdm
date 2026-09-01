@@ -26,6 +26,8 @@ class DeviceAdminReceiver : DeviceAdminReceiver() {
         const val KEY_CLOUD_URL = "cloud_url"
         const val KEY_ORG_ID = "org_id"
         const val KEY_GROUP_ID = "group_id"
+        /** Label to give this tablet in the console, set at provisioning time. */
+        const val KEY_DEVICE_LABEL = "device_label"
 
         /**
          * Pin AliMDM as the persistent Home launcher (Device Owner only).
@@ -79,6 +81,7 @@ class DeviceAdminReceiver : DeviceAdminReceiver() {
             .putString(KEY_TOKEN, token)
             .putString(KEY_CLOUD_URL, extras.getString(KEY_CLOUD_URL) ?: "")
             .putString(KEY_ORG_ID, extras.getString(KEY_ORG_ID) ?: "")
+            .putString(KEY_DEVICE_LABEL, extras.getString(KEY_DEVICE_LABEL) ?: "")
             .commit()
     }
 }

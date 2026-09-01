@@ -1387,8 +1387,8 @@ function Enroll({ onErr }) {
     { title: "Connect the tablet to the enrollment machine",
       body: "Plug in a USB cable (or use Wi-Fi debugging). Accept the “Allow USB debugging?” prompt on the tablet." },
     { title: "Run the enrollment command",
-      body: "On the enrollment machine, run the command below. It installs Ali MDM, sets it as Device Owner, and enrolls the tablet to the cloud — which then auto-installs the managed apps.",
-      code: "cd /path/to/ali-mdm && ./apps/enroll/enroll_tablet.sh <SERIAL>", copyKey: "cmd" },
+      body: "On the enrollment machine, run the command below. It installs Ali MDM, sets it as Device Owner, and enrolls the tablet to the cloud — which then auto-installs the managed apps. --label names the tablet straight away (drop it and the device shows as its id until you rename it); add --group <id> to put it in a policy group other than the default.",
+      code: "cd /path/to/ali-mdm && ./apps/enroll/enroll_tablet.sh <SERIAL> --label \"Library tablet\"", copyKey: "cmd" },
     { title: "Reboot the tablet",
       body: "After enrollment completes, reboot the tablet. On boot it comes up in the kiosk with the managed apps installed and ready." },
   ];

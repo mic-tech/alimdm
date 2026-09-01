@@ -1353,7 +1353,7 @@ class MainActivity : ReactActivity() {
       "mqtt_allow_control", "mqtt_device_name",
       "external_app_mode", "managed_apps",
       // Cloud enrolment over ADB (release-build friendly; see applyAdbCloudEnrollment)
-      "cloud_url", "enroll_token", "org_id", "group_id"
+      "cloud_url", "enroll_token", "org_id", "group_id", "device_label"
     )
     if (adbConfigKeys.none { intent.hasExtra(it) }) return false
     
@@ -1873,6 +1873,10 @@ class MainActivity : ReactActivity() {
       .putString(DeviceAdminReceiver.KEY_CLOUD_URL, cloudUrl.trimEnd('/'))
       .putString(DeviceAdminReceiver.KEY_ORG_ID, intent.getStringExtra("org_id")?.trim() ?: "")
       .putString(DeviceAdminReceiver.KEY_GROUP_ID, intent.getStringExtra("group_id")?.trim() ?: "")
+      // Optional: names the tablet in the console from the moment it enrols,
+      // so a trolley of identical devices does not have to be matched up by
+      // serial afterwards.
+      .putString(DeviceAdminReceiver.KEY_DEVICE_LABEL, intent.getStringExtra("device_label")?.trim()?.take(64) ?: "")
       // Synchronous: the app restarts right after this returns.
       .commit()
 

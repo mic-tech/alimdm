@@ -92,3 +92,43 @@ func TestEnrollRejectsBadToken(t *testing.T) {
 		t.Fatalf("want 401 for a bad enrolment token, got %d", rec.Code)
 	}
 }
+
+// A tablet can arrive already named, so it does not have to be matched up by
+// serial after the fact.
+func TestEnrolmentAcceptsALabel(t *testing.T) {
+	e := newTestEnv(t)
+	rec, body := e.do("POST", "/api/v1/devices/enroll", "", map[string]any{
+		"token":        "enroll",
+		"device_label": "Library tablet",
+		"device_info":  map[string]any{"serial_number": "tablet-1", "model": "TB330FU"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enrol: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	_ = body
+	d, err := e.st.GetDevice("tablet-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Name != "Library tablet" {
+		t.Errorf("name = %q, want the label given at enrolment", d.Name)
+	}
+}
+
+// Without a label the device is genuinely unnamed, so the console and the kiosk
+// both fall back to the id. It used to be named after the model, which meant
+// that fallback never happened and every new tablet read as "TB330FU".
+func TestEnrolmentWithoutALabelLeavesTheDeviceUnnamed(t *testing.T) {
+	e := newTestEnv(t)
+	e.do("POST", "/api/v1/devices/enroll", "", map[string]any{
+		"token":       "enroll",
+		"device_info": map[string]any{"serial_number": "tablet-1", "model": "TB330FU"},
+	})
+	d, err := e.st.GetDevice("tablet-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Name != "" {
+		t.Errorf("name = %q for an unlabelled enrolment, want empty so it falls back to the id", d.Name)
+	}
+}

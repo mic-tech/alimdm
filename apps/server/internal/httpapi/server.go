@@ -245,6 +245,9 @@ type enrollRequest struct {
 	Token      string         `json:"token"`
 	DeviceInfo map[string]any `json:"device_info"`
 	GroupID    string         `json:"group_id"`
+	// Optional label, set when provisioning so a tablet arrives in the console
+	// already identified rather than needing to be matched up by serial later.
+	DeviceLabel string `json:"device_label"`
 }
 
 // deviceDispatcher routes the /api/v1/devices/ subtree by method + path segment.
@@ -347,8 +350,16 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 			groupID = req.GroupID
 		}
 	}
+	// The label given at provisioning, if any. It used to default to the model,
+	// which duplicated a column the console already shows and meant a tablet
+	// nobody had named still counted as named — so the fall back to the id
+	// never happened. No label now means no label.
+	label := strings.TrimSpace(req.DeviceLabel)
+	if len(label) > 64 {
+		label = label[:64]
+	}
 	d := &store.Device{
-		ID: id, Name: strVal(req.DeviceInfo["model"]), GroupID: groupID,
+		ID: id, Name: label, GroupID: groupID,
 		APIKeyHash: auth.HashAPIKey(key), CreatedAt: now,
 	}
 	if err := s.st.CreateDevice(d); err != nil {
