@@ -21,6 +21,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -97,6 +98,8 @@ func (s *Server) uploadAgentRelease(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
+	s.record(r, "agent_release_uploaded", store.EventInfo, "",
+		fmt.Sprintf("Uploaded Ali MDM %s (build %d) as the agent release", rel.VersionName, rel.VersionCode))
 	writeJSON(w, rel)
 }
 
@@ -163,6 +166,8 @@ func (s *Server) rolloutAgentUpdate(w http.ResponseWriter, r *http.Request) {
 			queued++
 		}
 	}
+	s.record(r, "agent_update_queued", store.EventWarn, "",
+		fmt.Sprintf("Rolling out Ali MDM %s to %s over the air", rel.VersionName, plural(queued, "device", "devices")))
 	writeJSON(w, map[string]any{"queued": queued, "targets": len(targets), "version_code": rel.VersionCode})
 }
 
@@ -202,6 +207,17 @@ func (s *Server) agentUpdateResult(w http.ResponseWriter, r *http.Request) {
 	if err := s.st.SetAgentUpdateStatus(dev.ID, req.Status, req.Error); err != nil {
 		http.Error(w, "update failed", http.StatusInternalServerError)
 		return
+	}
+	label := deviceLabel(dev.ID, dev.Name)
+	switch req.Status {
+	case store.AgentSuccess:
+		s.recordAs("device", "agent_update_result", store.EventInfo, dev.ID,
+			"Ali MDM updated itself on "+label)
+	case store.AgentFailed:
+		// The one an operator most needs to see: the tablet is still running the
+		// old build and nothing in the room will show it.
+		s.recordAs("device", "agent_update_result", store.EventError, dev.ID,
+			"Ali MDM update failed on "+label+": "+strings.TrimSpace(req.Error))
 	}
 	w.WriteHeader(http.StatusOK)
 }

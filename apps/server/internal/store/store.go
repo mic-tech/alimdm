@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -170,6 +172,23 @@ func migrate(db *sql.DB) error {
 		device_id TEXT PRIMARY KEY,
 		state TEXT NOT NULL DEFAULT 'ok',
 		notified_at TEXT NOT NULL DEFAULT ''
+	);
+	CREATE TABLE IF NOT EXISTS events(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		at TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		severity TEXT NOT NULL DEFAULT 'info',
+		actor TEXT NOT NULL DEFAULT '',
+		device_id TEXT NOT NULL DEFAULT '',
+		summary TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_events_id ON events(id DESC);
+	-- Transition state for the event log, kept apart from device_alerts on
+	-- purpose: that one only advances when a webhook delivery succeeds, so
+	-- reusing it would drop events whenever alerting was unconfigured or down.
+	CREATE TABLE IF NOT EXISTS device_event_state(
+		device_id TEXT PRIMARY KEY,
+		state TEXT NOT NULL DEFAULT 'ok'
 	);
 	CREATE TABLE IF NOT EXISTS agent_updates(
 		device_id TEXT PRIMARY KEY,
@@ -763,4 +782,140 @@ func nowISO() string { return time.Now().UTC().Format(time.RFC3339) }
 func MustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// ── Event log ────────────────────────────────────────────────────────────────
+//
+// A record of what happened to the fleet and who did it. The console's bell
+// reads this, and because it is server-side it shows an operator what someone
+// else changed, and what the server itself noticed while nobody was looking.
+//
+// Retention is capped: this is a notification feed, not an audit archive, and
+// an unbounded table on a small server would be a slow leak.
+
+const (
+	EventInfo  = "info"
+	EventWarn  = "warn"
+	EventError = "error"
+
+	// maxEvents is how many are kept. At this fleet's volume that is months.
+	maxEvents = 500
+)
+
+type Event struct {
+	ID       int64  `json:"id"`
+	At       string `json:"at"`
+	Kind     string `json:"kind"`
+	Severity string `json:"severity"`
+	Actor    string `json:"actor"`
+	DeviceID string `json:"device_id"`
+	Summary  string `json:"summary"`
+}
+
+// RecordEvent appends one entry and trims the tail. Callers treat this as
+// best-effort: failing to log must never fail the action being logged.
+func (s *Store) RecordEvent(e *Event) error {
+	if e.Severity == "" {
+		e.Severity = EventInfo
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO events(at, kind, severity, actor, device_id, summary) VALUES(?,?,?,?,?,?)`,
+		nowISO(), e.Kind, e.Severity, e.Actor, e.DeviceID, e.Summary)
+	if err != nil {
+		return err
+	}
+	if id, err := res.LastInsertId(); err == nil {
+		e.ID = id
+		// Trim well past the cap rather than on every insert, so the common
+		// path is a single INSERT.
+		if id%50 == 0 {
+			_, _ = s.db.Exec(`DELETE FROM events WHERE id <= ?`, id-maxEvents)
+		}
+	}
+	return nil
+}
+
+// ListEvents returns the most recent entries, newest first.
+func (s *Store) ListEvents(limit int) ([]Event, error) {
+	if limit <= 0 || limit > maxEvents {
+		limit = 50
+	}
+	rows, err := s.db.Query(
+		`SELECT id, at, kind, severity, actor, device_id, summary
+		 FROM events ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Event{}
+	for rows.Next() {
+		var e Event
+		if err := rows.Scan(&e.ID, &e.At, &e.Kind, &e.Severity, &e.Actor, &e.DeviceID, &e.Summary); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// CountEventsAfter reports how many entries are newer than the given id, which
+// is what the console's unread badge shows.
+func (s *Store) CountEventsAfter(id int64) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM events WHERE id > ?`, id).Scan(&n)
+	return n, err
+}
+
+// LatestEventID is the marker an operator's "seen everything" points at.
+func (s *Store) LatestEventID() (int64, error) {
+	var id sql.NullInt64
+	if err := s.db.QueryRow(`SELECT MAX(id) FROM events`).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id.Int64, nil
+}
+
+// Per-operator read marker. Keyed by email so two operators do not clear each
+// other's badge.
+func eventReadKey(email string) string { return "events_read:" + strings.ToLower(email) }
+
+func (s *Store) EventsReadMarker(email string) int64 {
+	v, err := s.GetSetting(eventReadKey(email))
+	if err != nil || v == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func (s *Store) SetEventsReadMarker(email string, id int64) error {
+	return s.SetSetting(eventReadKey(email), strconv.FormatInt(id, 10))
+}
+
+// DeviceEventStates is the event log's own view of which devices are silent.
+func (s *Store) DeviceEventStates() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT device_id, state FROM device_event_state`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, st string
+		if err := rows.Scan(&id, &st); err != nil {
+			return nil, err
+		}
+		out[id] = st
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetDeviceEventState(deviceID, state string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO device_event_state(device_id, state) VALUES(?,?)
+		 ON CONFLICT(device_id) DO UPDATE SET state=excluded.state`, deviceID, state)
+	return err
 }

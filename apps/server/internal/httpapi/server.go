@@ -163,6 +163,11 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/me/password", s.requireOperator(s.changeMyPassword))
 
 	// Server-wide alerting settings (admins only: the webhook is infrastructure).
+	// The notification feed is readable by any signed-in operator: it is how
+	// they see what the fleet and their colleagues have been doing.
+	mux.HandleFunc("GET /api/v1/events", s.requireOperator(s.listEvents))
+	mux.HandleFunc("POST /api/v1/events/read", s.requireOperator(s.markEventsRead))
+
 	mux.HandleFunc("GET /api/v1/settings/alerts", s.requireAdmin(s.getAlertSettings))
 	mux.HandleFunc("PUT /api/v1/settings/alerts", s.requireAdmin(s.updateAlertSettings))
 	mux.HandleFunc("POST /api/v1/settings/alerts/test", s.requireAdmin(s.testAlertWebhook))
@@ -323,6 +328,8 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	// tablet enrolls, the config syncs (grid appears), and the apps start
 	// downloading + installing immediately — no manual "Install to devices" click.
 	autoQueued := s.autoQueueInstalls(d.ID, d.GroupID, now)
+	s.recordAs("device", "device_enrolled", store.EventInfo, id,
+		"Enrolled "+id+" into "+groupID)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"device_id":         id,
@@ -577,6 +584,8 @@ func (s *Server) unenroll(w http.ResponseWriter, r *http.Request) {
 	}
 	// Mark the device for wipe by clearing its group + key. The client wipes itself.
 	_ = s.st.UpdateHeartbeat(dev.ID, "", 0, 0, "", "", "")
+	s.recordAs("device", "device_unenrolled", store.EventWarn, dev.ID,
+		deviceLabel(dev.ID, dev.Name)+" unenrolled itself")
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -607,6 +616,7 @@ func (s *Server) forceUnenroll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unenroll failed", http.StatusInternalServerError)
 		return
 	}
+	s.record(r, "device_removed", store.EventWarn, id, "Removed "+id+" from the console")
 	writeJSON(w, map[string]any{"id": id, "unenrolled": true})
 }
 
@@ -720,6 +730,7 @@ func (s *Server) enqueueCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	// Poke the device over MQTT so it polls immediately instead of waiting for its tick.
 	s.pokes.Enqueue(id, device.Poke{Type: req.Type, Package: ""})
+	s.record(r, "command_sent", store.EventInfo, id, "Sent "+req.Type+" to "+id)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"id": c.ID, "status": "pending"})
 }
@@ -801,13 +812,17 @@ func (s *Server) updateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Invalidate every device in the group so they re-sync on next heartbeat.
+	affected := 0
 	if devs, _ := s.st.ListDevices(); devs != nil {
 		for _, d := range devs {
 			if d.GroupID == id {
 				_ = s.st.UpdateHeartbeat(d.ID, "", d.Battery, 0, d.AndroidVer, d.Model, d.LastSeen)
+				affected++
 			}
 		}
 	}
+	s.record(r, "policy_updated", store.EventInfo, "",
+		fmt.Sprintf("Saved policy %q (v%d) — %s will re-sync", g.Name, g.ConfigVersion, plural(affected, "device", "devices")))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"id": g.ID, "config_hash": g.ConfigHash, "config_version": g.ConfigVersion})
 }
@@ -956,6 +971,11 @@ func (s *Server) renameDevice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rename failed", http.StatusInternalServerError)
 		return
 	}
+	if name == "" {
+		s.record(r, "device_renamed", store.EventInfo, id, "Cleared the label on "+id)
+	} else {
+		s.record(r, "device_renamed", store.EventInfo, id, "Labelled "+id+" \u201c"+name+"\u201d")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"id": id, "name": name})
 }
@@ -981,6 +1001,7 @@ func (s *Server) uploadAPK(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.st.SaveAPK(&store.APK{Name: baseName(path), SHA256: sha, Size: size, Path: path})
+	s.record(r, "apk_uploaded", store.EventInfo, "", "Uploaded package "+baseName(path))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"name": baseName(path), "sha256": sha, "size": size})
 }
@@ -1012,6 +1033,7 @@ func (s *Server) deleteAPK(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "delete failed", http.StatusInternalServerError)
 		return
 	}
+	s.record(r, "apk_deleted", store.EventWarn, "", "Deleted package "+name)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"name": name, "deleted": true})
 }
@@ -1058,6 +1080,8 @@ func (s *Server) installAPK(w http.ResponseWriter, r *http.Request) {
 		queued++
 		s.pokes.Enqueue(devID, device.Poke{Type: "install_apk", Package: req.PackageName})
 	}
+	s.record(r, "apk_install_queued", store.EventInfo, "",
+		fmt.Sprintf("Queued %s for install on %s", req.PackageName, plural(queued, "device", "devices")))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"package_name": req.PackageName, "apk": name, "queued": queued, "targets": len(targets),

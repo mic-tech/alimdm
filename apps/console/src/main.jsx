@@ -6,7 +6,7 @@ import QRCode from "qrcode";
 import logoLockup from "./assets/ali-mdm-lockup-h.svg";
 import logoMark from "./assets/ali-mdm-logo.svg";
 import {
-  IconDevices, IconGroups, IconEnroll, IconPackage, IconSignOut, IconChevronLeft,
+  IconDevices, IconGroups, IconEnroll, IconPackage, IconSignOut, IconChevronLeft, IconBell,
   IconRefresh, IconPlus, IconTrash, IconEdit, IconPower, IconLock, IconUnlock,
   IconEject, IconCopy, IconCheck, IconUpload, IconInfo, IconWarning,
   IconUser, IconUsers, IconKey, IconSave, IconShield,
@@ -1608,6 +1608,10 @@ function Shell({ onSignOut }) {
   const [me, setMe] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const accountRef = useRef(null);
+  const [bellOpen, setBellOpen] = useState(false);
+  const bellRef = useRef(null);
+  const [events, setEvents] = useState([]);
+  const [unread, setUnread] = useState(0);
   const onErr = useCallback((m) => toast(m, false), []);
 
   // The signed-in account comes from the server rather than the token so the
@@ -1646,20 +1650,50 @@ function Shell({ onSignOut }) {
   useEffect(() => { window.scrollTo(0, 0); }, [view]);
 
   // A dropdown that can only be dismissed by its own button is a trap, so close
-  // on any click outside it and on Escape. Listeners exist only while it is open.
+  // on any click outside it and on Escape. Listeners exist only while one is open.
   useEffect(() => {
-    if (!menuOpen) return undefined;
+    if (!menuOpen && !bellOpen) return undefined;
     const onDown = (e) => {
-      if (accountRef.current && !accountRef.current.contains(e.target)) setMenuOpen(false);
+      if (menuOpen && accountRef.current && !accountRef.current.contains(e.target)) setMenuOpen(false);
+      if (bellOpen && bellRef.current && !bellRef.current.contains(e.target)) setBellOpen(false);
     };
-    const onKey = (e) => { if (e.key === "Escape") setMenuOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") { setMenuOpen(false); setBellOpen(false); } };
     document.addEventListener("pointerdown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [menuOpen]);
+  }, [menuOpen, bellOpen]);
+
+  // The feed is polled rather than pushed: at this fleet's volume a 30s poll is
+  // indistinguishable from live, and it needs no second transport to keep alive.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => api.listEvents(50)
+      .then((r) => {
+        if (cancelled) return;
+        setEvents(r.events || []);
+        setUnread(r.unread || 0);
+      })
+      .catch(() => {/* the feed is not worth interrupting anyone over */});
+    poll();
+    const t = setInterval(poll, 30000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  // Opening the bell clears the badge, marking read only as far as the newest
+  // entry actually rendered — anything arriving mid-request stays unread.
+  const openBell = () => {
+    const next = !bellOpen;
+    setBellOpen(next);
+    setMenuOpen(false);
+    if (next && events.length > 0 && unread > 0) {
+      const newest = events[0].id;
+      setUnread(0);
+      api.markEventsRead(newest).catch(() => setUnread(unread));
+    }
+  };
 
   if (!me) {
     return (
@@ -1713,6 +1747,36 @@ function Shell({ onSignOut }) {
         <header className="header">
           <div className="container-fixed header-inner">
             <div className="header-title">{active.title}</div>
+            <div className="header-tools">
+            <div className="header-bell" ref={bellRef}>
+              <button className="bell-btn" aria-haspopup="menu" aria-expanded={bellOpen}
+                aria-label={unread > 0 ? `Notifications (${unread} unread)` : "Notifications"}
+                title="Notifications" onClick={openBell}>
+                <IconBell />
+                {unread > 0 && <span className="bell-dot">{unread > 99 ? "99+" : unread}</span>}
+              </button>
+              {bellOpen && (
+                <div className="bell-panel" role="menu">
+                  <div className="bell-panel-head">Notifications</div>
+                  <div className="bell-list">
+                    {events.length === 0 ? (
+                      <div className="bell-empty">Nothing has happened yet.</div>
+                    ) : events.map((ev) => (
+                      <div key={ev.id} className={"bell-item sev-" + (ev.severity || "info")}>
+                        <span className="bell-item-dot" />
+                        <span className="bell-item-body">
+                          <span className="bell-item-summary">{ev.summary}</span>
+                          <span className="bell-item-meta">
+                            {ev.actor} · {timeAgo(ev.at) || "just now"}
+                          </span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="header-account" ref={accountRef}>
               <button className="avatar header-avatar" aria-haspopup="menu"
                 aria-expanded={menuOpen} aria-label="Account menu"
@@ -1747,6 +1811,7 @@ function Shell({ onSignOut }) {
                   </button>
                 </div>
               )}
+            </div>
             </div>
           </div>
         </header>

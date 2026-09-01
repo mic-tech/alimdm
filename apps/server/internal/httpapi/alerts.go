@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -91,14 +92,21 @@ func (a *AlertWatcher) Start(ctx context.Context) {
 
 func (a *AlertWatcher) check() {
 	webhookURL, threshold := a.config()
-	if webhookURL == "" {
-		return // alerting not configured
-	}
+	// Note there is no early return when the webhook is unset. Detection still
+	// runs, because the console's notification feed shows these transitions and
+	// must not depend on whether anyone has configured a webhook.
 	devices, err := a.st.ListDevices()
 	if err != nil {
 		return
 	}
 	states, err := a.st.AlertStates()
+	if err != nil {
+		return
+	}
+	// The feed keeps its own transition state. device_alerts only advances when a
+	// webhook delivery succeeds, so sharing it would drop feed entries whenever
+	// alerting was off or the endpoint was down.
+	eventStates, err := a.st.DeviceEventStates()
 	if err != nil {
 		return
 	}
@@ -119,6 +127,25 @@ func (a *AlertWatcher) check() {
 			was = store.AlertOK
 		}
 
+		// Feed first, and independently of delivery.
+		wasLogged := eventStates[d.ID]
+		if wasLogged == "" {
+			wasLogged = store.AlertOK
+		}
+		label := deviceLabel(d.ID, d.Name)
+		switch {
+		case silent > threshold && wasLogged != store.AlertOffline:
+			a.onEvent("device_offline", store.EventWarn, d.ID,
+				fmt.Sprintf("%s stopped checking in (%s ago)", label, roundDuration(silent)))
+			_ = a.st.SetDeviceEventState(d.ID, store.AlertOffline)
+		case silent <= threshold && wasLogged == store.AlertOffline:
+			a.onEvent("device_recovered", store.EventInfo, d.ID, label+" is checking in again")
+			_ = a.st.SetDeviceEventState(d.ID, store.AlertOK)
+		}
+
+		if webhookURL == "" {
+			continue
+		}
 		switch {
 		case silent > threshold && was != store.AlertOffline:
 			if a.notify(webhookURL, "device_offline", d, silent) {
@@ -256,4 +283,28 @@ func (s *Server) testAlertWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"sent": true})
+}
+
+// onEvent writes a transition into the console's notification feed. Like every
+// other event write this is best-effort: a feed that cannot be written must not
+// stop alerting from running.
+func (a *AlertWatcher) onEvent(kind, severity, deviceID, summary string) {
+	if err := a.st.RecordEvent(&store.Event{
+		Kind: kind, Severity: severity, Actor: "system",
+		DeviceID: deviceID, Summary: summary,
+	}); err != nil {
+		log.Printf("events: could not record %s: %v", kind, err)
+	}
+}
+
+// roundDuration renders a silence the way someone reading the feed would say
+// it, rather than as 17m43.019s.
+func roundDuration(d time.Duration) string {
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	return fmt.Sprintf("%dd%dh", int(d.Hours())/24, int(d.Hours())%24)
 }

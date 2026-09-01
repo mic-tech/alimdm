@@ -26,6 +26,8 @@ export const api = {
   login: (email, password) => req("POST", "/operator/login", { email, password }),
   logout: () => setToken(""),
   listDevices: () => req("GET", "/devices"),
+  listEvents: (limit = 50) => req("GET", "/events?limit=" + limit),
+  markEventsRead: (upTo) => req("POST", "/events/read", { up_to: upTo }),
   getDevice: (id) => req("GET", "/devices/" + id),
   sendCommand: (id, type, params = {}) => req("POST", "/devices/" + id + "/commands", { type, params }),
   // Forced unenrolment: deletes the device server-side, revoking its API key.

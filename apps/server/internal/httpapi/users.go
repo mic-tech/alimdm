@@ -192,6 +192,8 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "that email is already in use")
 		return
 	}
+	s.record(r, "user_created", store.EventWarn, "",
+		"Added "+op.Email+" as "+string(op.Role))
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, publicUser(op))
 }
@@ -295,6 +297,7 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not save password")
 		return
 	}
+	s.record(r, "user_password_reset", store.EventWarn, "", "Reset the password for "+target.Email)
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -325,5 +328,6 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not delete user")
 		return
 	}
+	s.record(r, "user_deleted", store.EventWarn, "", "Deleted the account "+target.Email)
 	writeJSON(w, map[string]string{"status": "deleted"})
 }
