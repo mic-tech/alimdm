@@ -74,6 +74,15 @@ func (s *Server) provisionQR(w http.ResponseWriter, r *http.Request) {
 		}
 		extras["group_id"] = g
 	}
+	// Naming the tablet as it provisions. One code carries one label, so a
+	// per-tablet name means generating a code per tablet; a shared code simply
+	// leaves them unnamed, showing as their ids until someone renames them.
+	if l := strings.TrimSpace(r.URL.Query().Get("label")); l != "" {
+		if len(l) > 64 {
+			l = l[:64]
+		}
+		extras["device_label"] = l
+	}
 
 	payload := map[string]any{
 		"android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME":            "com.alimdm/.DeviceAdminReceiver",

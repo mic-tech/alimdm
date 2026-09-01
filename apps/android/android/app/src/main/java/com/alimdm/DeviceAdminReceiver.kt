@@ -81,6 +81,10 @@ class DeviceAdminReceiver : DeviceAdminReceiver() {
             .putString(KEY_TOKEN, token)
             .putString(KEY_CLOUD_URL, extras.getString(KEY_CLOUD_URL) ?: "")
             .putString(KEY_ORG_ID, extras.getString(KEY_ORG_ID) ?: "")
+            // The QR payload has always carried group_id, but this never stored
+            // it, so a tablet provisioned by QR landed in the default group
+            // whatever was chosen when the code was generated — silently.
+            .putString(KEY_GROUP_ID, extras.getString(KEY_GROUP_ID) ?: "")
             .putString(KEY_DEVICE_LABEL, extras.getString(KEY_DEVICE_LABEL) ?: "")
             .commit()
     }

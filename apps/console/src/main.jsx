@@ -1077,6 +1077,7 @@ function APKs({ onErr }) {
 function QrEnrollCard({ onErr }) {
   const [groups, setGroups] = useState([]);
   const [group, setGroup] = useState("");
+  const [label, setLabel] = useState("");
   const [ssid, setSsid] = useState("");
   const [wifiPassword, setWifiPassword] = useState("");
   const [info, setInfo] = useState(null);
@@ -1085,13 +1086,14 @@ function QrEnrollCard({ onErr }) {
 
   useEffect(() => { api.listGroups().then(setGroups).catch(() => {/* optional */}); }, []);
   // Any change to what the QR would encode invalidates the one on screen.
-  useEffect(() => { setInfo(null); setPng(""); }, [group, ssid, wifiPassword]);
+  useEffect(() => { setInfo(null); setPng(""); }, [group, label, ssid, wifiPassword]);
 
   async function generate() {
     setBusy(true);
     try {
       const q = new URLSearchParams();
       if (group) q.set("group", group);
+      if (label.trim()) q.set("label", label.trim());
       if (ssid) {
         q.set("ssid", ssid);
         if (wifiPassword) q.set("wifi_password", wifiPassword);
@@ -1126,6 +1128,13 @@ function QrEnrollCard({ onErr }) {
               <option value="">(server default)</option>
               {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
             </select>
+          </div>
+          <div>
+            <label className="small subtle" htmlFor="qr-label">Tablet label (optional)</label>
+            <input id="qr-label" value={label} onChange={(e) => setLabel(e.target.value)}
+              maxLength={64} placeholder="e.g. Library tablet"
+              title="One code carries one label, so name a code per tablet. Left blank, the tablet shows as its id until renamed."
+              style={{ display: "block", minWidth: 180, height: 34 }} />
           </div>
           <div>
             <label className="small subtle" htmlFor="qr-ssid">Wi-Fi SSID (optional)</label>
