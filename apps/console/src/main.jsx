@@ -713,14 +713,15 @@ function Devices({ onErr }) {
               onClick={() => setViewMode("cards")} title="Cards, with a screen snapshot"><IconGrid />Cards</button>
           </span>
           {view === "cards" && (
-            <select value={snapEvery} onChange={(e) => setSnapInterval(Number(e.target.value))}
-              title="How often each card asks its tablet for a fresh screen. Every refresh wakes the tablet, so slower is kinder to a fleet you are not actively watching."
-              style={{ height: 32, minWidth: 132 }}>
-              <option value={0}>Screens: manual</option>
-              <option value={15000}>Screens: every 15s</option>
-              <option value={30000}>Screens: every 30s</option>
-              <option value={60000}>Screens: every minute</option>
-              <option value={300000}>Screens: every 5 min</option>
+            <select className="snap-every" value={snapEvery}
+              onChange={(e) => setSnapInterval(Number(e.target.value))}
+              aria-label="Screen refresh"
+              title="How often each card asks its tablet for a fresh screen. Every refresh wakes the tablet, so slower is kinder to a fleet you are not actively watching. Click a screen to refresh it on demand.">
+              <option value={0}>Manual</option>
+              <option value={15000}>Every 15s</option>
+              <option value={30000}>Every 30s</option>
+              <option value={60000}>Every 1 min</option>
+              <option value={300000}>Every 5 min</option>
             </select>
           )}
           <button className="btn outline sm" onClick={load}><IconRefresh />Refresh</button>

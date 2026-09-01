@@ -374,7 +374,11 @@ a { color: inherit; text-decoration: none; }
   font-size: 1rem; font-weight: 600; line-height: 1;
   letter-spacing: -0.025em; color: var(--mono);
 }
-.card-toolbar { display: flex; align-items: center; gap: 10px; }
+/* wrap, and let the search box be the part that gives way: with nowrap the
+   toolbar simply overflowed its card once the view switcher and the refresh
+   interval joined it, pushing Refresh past the card's edge. */
+.card-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+.card-toolbar > .search-input { flex: 1 1 110px; min-width: 90px; }
 .card-content { flex-grow: 1; padding: 20px; }
 .card-content.flush { padding: 0; }
 .card-footer {
@@ -489,7 +493,10 @@ table.stacked.cards tbody tr:has(td[colspan]) { grid-column: 1 / -1; border: non
 .is-narrow table.stacked.cards tbody tr { border: none; border-bottom: 1px solid var(--border); border-radius: 0; }
 
 /* View switcher */
-.view-switch { display: inline-flex; border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px); overflow: hidden; }
+/* flex-shrink:0 because the toolbar lets its children shrink so the search box
+   can give way; without it the switcher was squeezed to 58px against buttons
+   needing 138, and overflow:hidden simply cut "Cards" off. */
+.view-switch { display: inline-flex; flex-shrink: 0; border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px); overflow: hidden; }
 .view-switch button {
   display: inline-flex; align-items: center; gap: 6px;
   height: 32px; padding-inline: 10px;
@@ -499,6 +506,9 @@ table.stacked.cards tbody tr:has(td[colspan]) { grid-column: 1 / -1; border: non
 .view-switch button + button { border-inline-start: 1px solid var(--input); }
 .view-switch button.on { background: var(--accent); color: var(--foreground); font-weight: 500; }
 .view-switch svg { width: 14px; height: 14px; }
+/* A select is as wide as its longest option, so the labels are kept short and
+   the explanation lives in the tooltip. */
+.snap-every { flex-shrink: 0; height: 32px; max-width: 170px; }
 
 /* Snapshot on a device card */
 .snap {
