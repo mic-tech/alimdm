@@ -210,7 +210,7 @@ function Groups({ onErr }) {
           </Alert>
         }
       >
-        <table>
+        <table className="stacked">
           <thead>
             <tr>
               <th>Group</th><th>ID</th><th>Devices</th><th>Config version</th>
@@ -220,11 +220,11 @@ function Groups({ onErr }) {
           <tbody>
             {groups.map((g) => (
               <tr key={g.id}>
-                <td><span className="strong">{g.name}</span></td>
-                <td className="mono muted">{g.id}</td>
-                <td><span className="badge off">{countFor(g.id)}</span></td>
-                <td className="subtle">v{g.config_version}</td>
-                <td>
+                <td data-label="Group"><span className="strong">{g.name}</span></td>
+                <td className="mono muted" data-label="ID">{g.id}</td>
+                <td data-label="Devices"><span className="badge off">{countFor(g.id)}</span></td>
+                <td className="subtle" data-label="Config version">v{g.config_version}</td>
+                <td className="cell-actions">
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
                     <button className="btn outline sm" disabled={busy}
                       onClick={() => setEditing(editing === g.id ? "" : g.id)}>
@@ -596,12 +596,12 @@ function Devices({ onErr }) {
       <CardTable
         title="Devices"
         actions={<>
-          <input placeholder="Search devices…" value={q} onChange={(e) => setQ(e.target.value)}
-            style={{ width: 200, height: 34 }} />
+          <input className="search-input" placeholder="Search devices…" value={q}
+            onChange={(e) => setQ(e.target.value)} />
           <button className="btn outline sm" onClick={load}><IconRefresh />Refresh</button>
         </>}
       >
-        <table>
+        <table className="stacked">
           <thead>
             <tr>
               <th>Device</th><th>Status</th><th>Battery</th><th>Android</th>
@@ -613,7 +613,7 @@ function Devices({ onErr }) {
             {filtered.map((d) => (
               <React.Fragment key={d.id}>
               <tr>
-                <td className="nowrap">
+                <td className="nowrap" data-label="Device">
                   {renaming === d.id ? (
                     <input
                       autoFocus
@@ -646,14 +646,14 @@ function Devices({ onErr }) {
                   )}
                   {d.model && <div className="small muted">{d.model}</div>}
                 </td>
-                <td>
+                <td data-label="Status">
                   <span className={"badge " + (d.online ? "on" : "off")}>
                     <span className="dot" />{d.online ? "Online" : "Offline"}
                   </span>
                 </td>
-                <td className="nowrap">{d.battery != null ? d.battery + "%" : <span className="muted">—</span>}</td>
-                <td className="nowrap">{d.android_ver || <span className="muted">—</span>}</td>
-                <td className="nowrap small">
+                <td className="nowrap" data-label="Battery">{d.battery != null ? d.battery + "%" : <span className="muted">—</span>}</td>
+                <td className="nowrap" data-label="Android">{d.android_ver || <span className="muted">—</span>}</td>
+                <td className="nowrap small" data-label="Build">
                   {!d.app_version_code ? (
                     <span className="muted" title="This build is too old to report which version it is">—</span>
                   ) : d.stale ? (
@@ -664,17 +664,17 @@ function Devices({ onErr }) {
                     <span className="muted">{d.app_version_name || d.app_version_code}</span>
                   )}
                 </td>
-                <td className="small subtle nowrap"
+                <td className="small subtle nowrap" data-label="Last seen"
                   title={d.last_seen ? new Date(d.last_seen).toLocaleString() : ""}>
                   {d.last_seen ? timeAgo(d.last_seen) : <span className="muted">Never</span>}
                 </td>
-                <td>
+                <td data-label="Group">
                   <select value={d.group_id || ""} onChange={(e) => moveGroup(d.id, e.target.value)}
                     style={{ minWidth: 140, maxWidth: 180 }}>
                     {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                   </select>
                 </td>
-                <td>
+                <td className="cell-actions">
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
                     <button className="btn outline sm icon" title="Live view of this tablet"
                       onClick={() => setLiveFor(liveFor === d.id ? null : d.id)}><IconEye /></button>
@@ -834,7 +834,7 @@ function AppUpdate({ onErr }) {
             <button className="btn sm" disabled={busy} onClick={() => rollout([])}>Update all</button>
           </>}
         >
-          <table>
+          <table className="stacked">
             <thead>
               <tr>
                 <th style={{ width: 32 }} />
@@ -853,19 +853,19 @@ function AppUpdate({ onErr }) {
                           const n = { ...p }; n[d.id] ? delete n[d.id] : (n[d.id] = true); return n;
                         })} />
                     </td>
-                    <td className="nowrap">
+                    <td className="nowrap" data-label="Device">
                       <div className="strong">{d.name || d.id}</div>
                       {d.name && <div className="mono small subtle">{d.id}</div>}
                     </td>
-                    <td>
+                    <td data-label="Status">
                       {u ? (
                         <span className={"badge " + (AGENT_STATUS_BADGE[u.status] || "off")}>
                           <span className="dot" />{u.status}
                         </span>
                       ) : <span className="muted small">never updated</span>}
                     </td>
-                    <td className="nowrap">{u ? u.attempts : <span className="muted">—</span>}</td>
-                    <td className="nowrap mono small">
+                    <td className="nowrap" data-label="Attempts">{u ? u.attempts : <span className="muted">—</span>}</td>
+                    <td className="nowrap mono small" data-label="Target">
                       {u ? u.target_version_code : <span className="muted">—</span>}
                       {upToDate && release.version_code === u.target_version_code &&
                         <span className="small subtle"> (current)</span>}
@@ -974,17 +974,17 @@ function APKs({ onErr }) {
           </Alert>
         }
       >
-        <table>
+        <table className="stacked">
           <thead>
             <tr><th>File</th><th>Size</th><th>SHA-256</th><th style={{ textAlign: "right" }}>Actions</th></tr>
           </thead>
           <tbody>
             {apks.map((a) => (
               <tr key={a.name}>
-                <td className="mono strong">{a.name}</td>
-                <td className="nowrap">{(a.size / 1024 / 1024).toFixed(1)} MB</td>
-                <td className="mono small muted">{a.sha256.slice(0, 16)}…</td>
-                <td>
+                <td className="mono strong" data-label="File">{a.name}</td>
+                <td className="nowrap" data-label="Size">{(a.size / 1024 / 1024).toFixed(1)} MB</td>
+                <td className="mono small muted" data-label="SHA-256">{a.sha256.slice(0, 16)}…</td>
+                <td className="cell-actions">
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
                     {installName === a.name ? (
                       <button className="btn outline sm" onClick={() => setInstallName("")}>Close</button>
@@ -1268,7 +1268,7 @@ function Files({ onErr }) {
           </Alert>
         }
       >
-        <table>
+        <table className="stacked">
           <thead>
             <tr>
               <th>File</th><th>Size</th><th>Delivery</th>
@@ -1284,9 +1284,9 @@ function Files({ onErr }) {
             {files.map((f) => (
               <React.Fragment key={f.name}>
                 <tr>
-                  <td className="strong">{f.name}</td>
-                  <td className="nowrap">{fmtSize(f.size)}</td>
-                  <td className="nowrap">
+                  <td className="strong" data-label="File">{f.name}</td>
+                  <td className="nowrap" data-label="Size">{fmtSize(f.size)}</td>
+                  <td className="nowrap" data-label="Delivery">
                     {f.targets === 0 ? <span className="muted small">Not sent yet</span> : (
                       <span className="small">
                         <span className="badge success">{f.delivered} delivered</span>
@@ -1295,7 +1295,7 @@ function Files({ onErr }) {
                       </span>
                     )}
                   </td>
-                  <td>
+                  <td className="cell-actions">
                     <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
                       {f.targets > 0 && (
                         <button className="btn outline sm" onClick={() => setDetail(detail === f.name ? null : f.name)}>
@@ -1775,7 +1775,7 @@ function Users({ me, onErr, onMeChange }) {
           </Alert>
         }
       >
-        <table>
+        <table className="stacked">
           <thead>
             <tr>
               <th>User</th><th>Role</th><th>Added</th>
@@ -1788,7 +1788,7 @@ function Users({ me, onErr, onMeChange }) {
               const lastAdmin = u.role === "admin" && adminCount <= 1;
               return (
                 <tr key={u.email}>
-                  <td>
+                  <td data-label="User">
                     <div className="flex" style={{ gap: 10 }}>
                       <span className="avatar">{(u.name || u.email).slice(0, 1)}</span>
                       <span>
@@ -1800,11 +1800,11 @@ function Users({ me, onErr, onMeChange }) {
                       </span>
                     </div>
                   </td>
-                  <td><RoleBadge role={u.role} /></td>
-                  <td className="small subtle nowrap">
+                  <td data-label="Role"><RoleBadge role={u.role} /></td>
+                  <td className="small subtle nowrap" data-label="Added">
                     {u.created_at ? new Date(u.created_at).toLocaleDateString() : <span className="muted">—</span>}
                   </td>
-                  <td>
+                  <td className="cell-actions">
                     <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
                       <button className="btn outline sm" disabled={busy}
                         onClick={() => { setEditing({ ...u, original: u.email }); setAdding(false); setResetting(null); }}>
