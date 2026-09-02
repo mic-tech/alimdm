@@ -284,10 +284,18 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
                         )
                     }
                 }
-                "key" -> when (e.optString("key")) {
-                    "back" -> AliMdmAccessibilityService.sendKey(KeyEvent.KEYCODE_BACK)
-                    "home" -> AliMdmAccessibilityService.sendKey(KeyEvent.KEYCODE_HOME)
-                    else -> false
+                "key" -> {
+                    val code = when (e.optString("key")) {
+                        "back" -> KeyEvent.KEYCODE_BACK
+                        "home" -> KeyEvent.KEYCODE_HOME
+                        "enter" -> KeyEvent.KEYCODE_ENTER
+                        "up" -> KeyEvent.KEYCODE_DPAD_UP
+                        "down" -> KeyEvent.KEYCODE_DPAD_DOWN
+                        "left" -> KeyEvent.KEYCODE_DPAD_LEFT
+                        "right" -> KeyEvent.KEYCODE_DPAD_RIGHT
+                        else -> 0
+                    }
+                    code != 0 && AliMdmAccessibilityService.sendKey(code)
                 }
                 "text" -> AliMdmAccessibilityService.sendText(e.optString("text"))
                 else -> false

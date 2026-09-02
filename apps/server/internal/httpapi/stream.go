@@ -65,6 +65,16 @@ type inputEvent struct {
 	Text string  `json:"text,omitempty"` // typed into whatever has focus
 }
 
+// controlKeys is what an operator may press. A short list on purpose: these are
+// the keys that move around a screen and commit what is on it, which is what
+// remote control of a kiosk is for. Anything that needs a real keyboard goes as
+// text, and anything that changes the device rather than the app on it is a
+// command with a confirmation attached, not a keypress.
+var controlKeys = map[string]bool{
+	"back": true, "home": true, "enter": true,
+	"up": true, "down": true, "left": true, "right": true,
+}
+
 // maxQueuedInput bounds what one device can have waiting. Input is only useful
 // while it is fresh: a tap that arrives four seconds late lands on a screen
 // that has moved on, so the oldest is dropped rather than the newest refused.
@@ -265,8 +275,8 @@ func (s *Server) sendInput(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "key":
-		if e.Key != "back" && e.Key != "home" {
-			writeErr(w, http.StatusBadRequest, "key must be back or home")
+		if !controlKeys[e.Key] {
+			writeErr(w, http.StatusBadRequest, "unknown key")
 			return
 		}
 	case "text":

@@ -43,11 +43,17 @@ func TestATapReachesTheTabletOnTheNextFrame(t *testing.T) {
 	if code, _ := e.sendInput(tok, "tablet-1", map[string]any{"type": "key", "key": "back"}); code != http.StatusOK {
 		t.Fatalf("key: status %d", code)
 	}
+	// Arrows and Enter drive a screen without a mouse; all of them are allowed.
+	for _, k := range []string{"home", "enter", "up", "down", "left", "right"} {
+		if code, _ := e.sendInput(tok, "tablet-1", map[string]any{"type": "key", "key": k}); code != http.StatusOK {
+			t.Errorf("key %q: status %d, want 200", k, code)
+		}
+	}
 
 	_, body := e.postFrame(t, "tablet-1", key, []byte("\xff\xd8jpeg"))
 	in, _ := body["input"].([]any)
-	if len(in) != 2 {
-		t.Fatalf("the frame reply carried %d events, want 2", len(in))
+	if len(in) != 8 {
+		t.Fatalf("the frame reply carried %d events, want 8", len(in))
 	}
 	first := in[0].(map[string]any)
 	if first["type"] != "tap" || first["x"] != 0.25 || first["y"] != 0.75 {
@@ -95,7 +101,8 @@ func TestNonsenseInputIsRefused(t *testing.T) {
 	for _, bad := range []map[string]any{
 		{"type": "tap", "x": 1.5, "y": 0.5},   // off the screen
 		{"type": "tap", "x": 0.5, "y": -0.1},  // off the screen
-		{"type": "key", "key": "power"},       // not one of ours
+		{"type": "key", "key": "power"},       // not one of ours: it changes the device, not the app on it
+		{"type": "key", "key": ""},            // nothing pressed
 		{"type": "text", "text": ""},          // nothing to type
 		{"type": "swipe", "x": 0.1, "y": 0.1}, // not built yet
 	} {

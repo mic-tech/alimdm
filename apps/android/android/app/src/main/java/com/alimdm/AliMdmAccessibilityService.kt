@@ -231,7 +231,7 @@ class AliMdmAccessibilityService : AccessibilityService() {
             val globalAction = mapToGlobalAction(keyCode)
             if (globalAction != null) {
                 val ok = service.performGlobalAction(globalAction)
-                Log.d(TAG, "Global action: keyCode=$keyCode, action=$globalAction, ok=$ok")
+                DebugLog.i(TAG, "Global action: keyCode=$keyCode, action=$globalAction, ok=$ok")
                 return ok
             }
             
@@ -243,7 +243,7 @@ class AliMdmAccessibilityService : AccessibilityService() {
                         val now = SystemClock.uptimeMillis()
                         connection.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0))
                         connection.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0))
-                        Log.d(TAG, "Key via InputMethod: keyCode=$keyCode")
+                        DebugLog.i(TAG, "Key via InputMethod: keyCode=$keyCode")
                         return true
                     }
                 } catch (e: Exception) {
@@ -332,7 +332,7 @@ class AliMdmAccessibilityService : AccessibilityService() {
                     val connection = service.inputMethod?.currentInputConnection
                     if (connection != null) {
                         connection.commitText(text, 1, null)
-                        Log.d(TAG, "Text via InputMethod.commitText: '${text.take(50)}'")
+                        DebugLog.i(TAG, "Text via InputMethod.commitText: '${text.take(50)}'")
                         return true
                     }
                 } catch (e: Exception) {

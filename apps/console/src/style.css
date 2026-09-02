@@ -585,6 +585,11 @@ table.stacked.cards tbody tr:has(td[colspan]) { grid-column: 1 / -1; border: non
   color: var(--foreground);
 }
 
+/* Arrow keys, kept together so they read as one control rather than four
+   buttons that happen to be adjacent. */
+.keypad { display: inline-flex; gap: 2px; flex-shrink: 0; }
+.keypad .btn { font-size: 0.875rem; line-height: 1; }
+
 /* A button that reads as a link, for a value that is also a shortcut. */
 .linkish {
   padding: 0; border: 0; background: none; font: inherit; color: var(--primary);

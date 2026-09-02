@@ -10,7 +10,7 @@ import {
   IconRefresh, IconPlus, IconTrash, IconEdit, IconPower, IconLock, IconUnlock,
   IconEject, IconCopy, IconCheck, IconUpload, IconInfo, IconWarning,
   IconUser, IconUsers, IconKey, IconSave, IconShield, IconFile, IconEye, IconRows, IconGrid,
-  IconSliders,
+  IconSliders, IconMonitor,
 } from "./icons.jsx";
 
 // Compact "time ago" so the Last seen column stays narrow; the cell keeps the
@@ -416,6 +416,17 @@ function LiveView({ device, onErr }) {
           <>
             <button className="btn outline sm" onClick={() => send({ type: "key", key: "back" })}>Back</button>
             <button className="btn outline sm" onClick={() => send({ type: "key", key: "home" })}>Home</button>
+            {/* Arrows and Enter move around a screen and commit what is on it —
+                between them and a tap, most of a kiosk can be driven. Grouped
+                like keys on a keyboard rather than spread along the toolbar. */}
+            <span className="keypad" role="group" aria-label="Arrow keys">
+              {[["left", "←"], ["up", "↑"], ["down", "↓"], ["right", "→"]].map(([key, glyph]) => (
+                <button key={key} className="btn outline sm icon" aria-label={key}
+                  title={key} onClick={() => send({ type: "key", key })}>{glyph}</button>
+              ))}
+            </span>
+            <button className="btn outline sm" title="Send the Enter key on its own"
+              onClick={() => send({ type: "key", key: "enter" })}>Enter</button>
             <input className="grow" placeholder="Type into the device…" value={typing}
               style={{ minWidth: 120 }}
               onChange={(e) => setTyping(e.target.value)}
@@ -930,7 +941,9 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
   useEffect(() => { api.listGroups().then(setGroups).catch(() => {/* the group row just shows its id */}); }, []);
 
   async function cmd(type, label) {
-    if (!confirm(`${label} ${d.label}?`)) return;
+    // Waking a screen is not worth a dialog; the rest interrupt whoever is
+    // holding the tablet.
+    if (type !== "screen_on" && !confirm(`${label} ${d.label}?`)) return;
     setBusy(true);
     try { await api.sendCommand(d.id, type); toast(`Sent ${type} to ${d.label}`); load(); }
     catch (e) { onErr(e.message); }
@@ -1040,6 +1053,12 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
 
         <Card title="Details" footer={
           <div className="btn-group">
+            {/* screen_on, not wake: wake only clears the screensaver overlay and
+                resets the inactivity timer, while screen_on is what actually
+                turns the display on. */}
+            <button className="btn outline sm" disabled={busy} onClick={() => cmd("screen_on", "Wake")}>
+              <IconMonitor />Wake
+            </button>
             <button className="btn outline sm" disabled={busy} onClick={() => cmd("reboot", "Reboot")}>
               <IconPower />Reboot
             </button>
@@ -1549,6 +1568,8 @@ function Devices({ onErr, navigate }) {
                       second control for it was a button saying what the link
                       next to it already did. */}
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
+                    <button className="btn outline sm icon" title="Wake the screen" disabled={busy}
+                      onClick={() => cmd(d.id, "screen_on")}><IconMonitor /></button>
                     <button className="btn outline sm icon" title="Reboot" disabled={busy}
                       onClick={() => cmd(d.id, "reboot")}><IconPower /></button>
                     <button className="btn outline sm icon" title="Lock" disabled={busy}
