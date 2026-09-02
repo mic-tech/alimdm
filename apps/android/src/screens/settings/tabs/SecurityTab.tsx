@@ -611,6 +611,12 @@ const SecurityTab: React.FC<SecurityTabProps> = ({
                   icon: 'timer',
                   hint: 'Wait X seconds then relaunch app automatically',
                 },
+                {
+                  value: 'ignore',
+                  label: 'Ignore',
+                  icon: 'block-helper',
+                  hint: 'Back does nothing at all',
+                },
               ]}
               value={backButtonMode}
               onValueChange={onBackButtonModeChange}

@@ -1107,6 +1107,13 @@ class MainActivity : ReactActivity() {
         android.util.Log.i("AliMDM", "Back button: $backButtonMode mode - allowing back for JS handling")
         super.onBackPressed()
       }
+      "ignore" -> {
+        // Mode ignore: swallow the press. Same outcome as the unknown-mode branch
+        // below, but named, because the console offers this as a choice and a
+        // chosen behaviour should not rest on a fallback that a later refactor
+        // could reasonably change.
+        android.util.Log.i("AliMDM", "Back button: ignore mode - swallowing")
+      }
       else -> {
         // Unknown mode: block back button for safety
         android.util.Log.i("AliMDM", "Back button: unknown mode '$backButtonMode' - blocking")
@@ -1483,7 +1490,8 @@ class MainActivity : ReactActivity() {
       }
     }
     
-    // back_button_mode: "test" = stay on AliMDM, "timer" = countdown then relaunch, "immediate" = relaunch immediately
+    // back_button_mode: "test" = stay on AliMDM, "timer" = countdown then relaunch,
+    // "immediate" = relaunch immediately, "ignore" = swallow the press
     intent.getStringExtra("back_button_mode")?.let {
       editor.putString("@kiosk_back_button_mode", it)
     }

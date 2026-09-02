@@ -61,6 +61,15 @@
  * @property {string} [help]        helper text under the field
  * @property {boolean} [danger]     render a warning (powerful/sensitive setting)
  * @property {*} [default]          what the device does when the field is absent
+ * @property {*} [newGroup]         what a NEW group is created with, when that
+ *                                  differs from the app default. Kept separate
+ *                                  from `default` on purpose: `default`
+ *                                  describes the app and must stay true, since
+ *                                  it is what the editor promises an untouched
+ *                                  field will do. `newGroup` is this fleet's
+ *                                  starting point, which is a different
+ *                                  question and a different answer (the app
+ *                                  starts unlocked; these devices start locked).
  * @property {{path:string,value:*}|{path:string,value:*}[]} [showIf]
  * @typedef {Object} PolicyTab
  * @property {string} id
@@ -94,7 +103,7 @@ export const POLICY_TABS = [
 // ── Fields ───────────────────────────────────────────────────────────────────
 export const POLICY_FIELDS = [
   // ══ GENERAL ══════════════════════════════════════════════════════════════
-  { path: "general.displayMode", label: "Display mode", type: "select", tab: "general", section: "Display Mode",
+  { path: "general.displayMode", newGroup: "external_app", label: "Display mode", type: "select", tab: "general", section: "Display Mode",
     options: [
       { value: "webview", label: "Website" },
       { value: "media_player", label: "Media" },
@@ -163,14 +172,14 @@ export const POLICY_FIELDS = [
     help: "Hex colour behind the media, seen wherever Contain leaves the screen uncovered." },
 
   // App Mode / Application / Applications
-  { path: "general.externalApp.mode", label: "App layout", type: "select", tab: "general", section: "App Mode",
+  { path: "general.externalApp.mode", newGroup: "multi", label: "App layout", type: "select", tab: "general", section: "App Mode",
     options: [
       { value: "single", label: "Single app" },
       { value: "multi", label: "Multi-app grid" },
     ],
     default: "single",
     help: "Single locks the device into one app. Multi shows a home-screen grid of the managed apps below — the app marks this one BETA." },
-  { path: "general.externalApp.testMode", label: "Test mode", type: "bool", tab: "general", section: "App Mode",
+  { path: "general.externalApp.testMode", newGroup: false, label: "Test mode", type: "bool", tab: "general", section: "App Mode",
     default: true,
     help: "Leaves the Back button working normally so you can get out of the app while setting a device up. Turn this OFF before handing devices to pupils, or Back is an escape hatch. The Back button behaviour on the Security tab takes over once it is off." },
   { path: "general.externalApp.package", label: "Primary app package", type: "text", tab: "general", section: "Application",
@@ -181,7 +190,7 @@ export const POLICY_FIELDS = [
     help: "Apps managed on the device. Those with Kiosk on appear in the home-screen grid; the rest are still installed and kept alive in the background — the app splits these into Applications and Additional Managed Apps." },
 
   // Password
-  { path: "sensitive.pin", label: "Kiosk PIN", type: "text", tab: "general", section: "Password",
+  { path: "sensitive.pin", newGroup: "1234", label: "Kiosk PIN", type: "text", tab: "general", section: "Password",
     placeholder: "e.g. 1234", danger: true,
     help: "PIN required to leave the kiosk and open the device's own settings. Stored hashed on the device. Leave blank to keep the PIN each device already has — sending a blank value does not clear it." },
   { path: "security.pinMode", label: "Password mode", type: "select", tab: "general", section: "Password",
@@ -268,7 +277,7 @@ export const POLICY_FIELDS = [
     help: "How often the light sensor is read. Longer intervals react more slowly but use less battery." },
 
   // Screen Always On
-  { path: "display.keepScreenOn", label: "Keep screen on", type: "bool", tab: "display", section: "Screen Always On",
+  { path: "display.keepScreenOn", newGroup: false, label: "Keep screen on", type: "bool", tab: "display", section: "Screen Always On",
     default: true,
     help: "Never let the screen sleep while the kiosk is in front. Devices left on mains power all day should keep this on; consider the sleep schedule below instead if they run on battery." },
   { path: "display.autoWakeOnScreenOff", label: "Auto-wake on screen off", type: "bool", tab: "display", section: "Screen Always On",
@@ -391,7 +400,7 @@ export const POLICY_FIELDS = [
     help: "Default respects what the website asks for and is the right choice for nearly every site. Force numeric puts a number pad on every field. Smart detection converts only the fields that look numeric." },
 
   // ══ SECURITY ═════════════════════════════════════════════════════════════
-  { path: "security.kioskEnabled", label: "Lock mode", type: "bool", tab: "security", section: "Lock Mode",
+  { path: "security.kioskEnabled", newGroup: true, label: "Lock mode", type: "bool", tab: "security", section: "Lock Mode",
     default: false,
     help: "Pin the device to Ali MDM so a pupil cannot leave it — exiting needs the kiosk PIN. This is the setting the device's own Security tab shows, and the one the console's Lock and Unlock buttons change." },
   { path: "security.allowPowerButton", label: "Allow power menu", type: "bool", tab: "security", section: "Lock Mode",
@@ -409,7 +418,7 @@ export const POLICY_FIELDS = [
   { path: "security.defaultLauncher", label: "Set as default launcher", type: "bool", tab: "security", section: "Lock Mode",
     default: false,
     help: "Make Ali MDM the home screen, so the launcher chooser never appears and Home returns to the kiosk. Requires Device Owner." },
-  { path: "security.allowRemoteScreenshot", label: "Allow remote screenshots", type: "bool", tab: "security", section: "Lock Mode",
+  { path: "security.allowRemoteScreenshot", newGroup: true, label: "Allow remote screenshots", type: "bool", tab: "security", section: "Lock Mode",
     default: false,
     help: "Lock mode blocks screen capture device-wide, which also blocks the console's screenshot and live view from capturing anything other than Ali MDM itself. Enable this to let the device lift the block for the fraction of a second a capture takes — which also re-enables the pupil's own Power+Volume Down screenshot for that moment. Needs the accessibility service and Android 11+." },
   { path: "security.screenLockCompat", label: "System screen-lock compatibility", type: "bool", tab: "security", section: "Lock Mode",
@@ -423,7 +432,7 @@ export const POLICY_FIELDS = [
     default: true, help: "Bring the app back if it closes or crashes." },
 
   // Return to Settings
-  { path: "security.returnMode", label: "Return gesture", type: "select", tab: "security", section: "Return to Settings",
+  { path: "security.returnMode", newGroup: "button", label: "Return gesture", type: "select", tab: "security", section: "Return to Settings",
     options: [
       { value: "tap_anywhere", label: "Tap anywhere" },
       { value: "button", label: "On-screen button" },
@@ -480,9 +489,10 @@ export const POLICY_FIELDS = [
       { value: "test", label: "Test mode" },
       { value: "immediate", label: "Immediate return" },
       { value: "timer", label: "Delayed return" },
+      { value: "ignore", label: "Ignore" },
     ],
-    default: "test",
-    help: "What happens when Back is pressed inside an external app. Test mode leaves it working normally and is for setup only. Immediate relaunches the kiosk at once. Delayed waits the time below, so a pupil can still use Back inside the app." },
+    default: "test", newGroup: "ignore",
+    help: "What happens when Back is pressed. Test mode leaves it working normally and is for setup only. Immediate relaunches the kiosk at once. Delayed waits the time below, so a pupil can still use Back inside the app. Ignore swallows the press entirely, which is what a locked classroom device usually wants." },
   { path: "security.backButtonTimerDelay", label: "Return delay", type: "number", tab: "security", section: "Back Button Behavior",
     min: 1, max: 3600, step: 1, unit: "s", default: 10,
     help: "Seconds to wait before relaunching the kiosk.", showIf: { path: "security.backButtonMode", value: "timer" } },
@@ -560,13 +570,19 @@ export const POLICY_FIELDS = [
  * is the worst of both — the URL, the app package and the various lists are
  * things an administrator fills in, not things a new group should blank.
  *
+ * Where a field declares `newGroup`, that wins over `default`. The two answer
+ * different questions: `default` is what the app does with a setting nobody
+ * touched, which the editor shows and which must stay true to the app;
+ * `newGroup` is where this fleet chooses to start, and for school devices that
+ * is locked down rather than open.
+ *
  * Not used when a group is created with "Start from": copying an existing
  * policy is a deliberate choice to inherit it, defaults included.
  */
 export function defaultPolicyConfig() {
   const cfg = {};
   for (const f of POLICY_FIELDS) {
-    const d = f.default;
+    const d = f.newGroup !== undefined ? f.newGroup : f.default;
     if (d === undefined || d === "" || (Array.isArray(d) && d.length === 0)) continue;
     const parts = f.path.split(".");
     let node = cfg;

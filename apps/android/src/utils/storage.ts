@@ -1331,7 +1331,7 @@ export const StorageService = {
     }
   },
 
-  // Back Button Mode: 'test' | 'immediate' | 'timer'
+  // Back Button Mode: 'test' | 'immediate' | 'timer' | 'ignore'
   saveBackButtonMode: async (mode: string): Promise<void> => {
     try {
       await AsyncStorage.setItem(KEYS.BACK_BUTTON_MODE, mode);
