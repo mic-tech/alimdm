@@ -1099,3 +1099,24 @@ code.code, .code {
   .container-fixed { padding-inline: 16px; }
   .toolbar { padding-bottom: 20px; }
 }
+
+/* ── Policy editor: units and device defaults ────────────────────────────────
+   A control and its unit belong together, so they get their own flex line
+   inside .form-control — otherwise the row's 10px gap pushes the "s" away from
+   the number it belongs to, and it reads as a separate element. */
+.form-row > .form-control > .control-line {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 8px; flex: 1 1 auto; min-width: 0;
+}
+.form-row > .form-control > .control-line > * { max-width: 100%; }
+.unit-suffix { font-size: 0.75rem; color: var(--secondary-foreground); }
+
+/* "Not set — devices use X". Quieter than the help text: it describes what
+   happens if you do nothing, so it should never compete with the setting's own
+   description for attention. */
+.default-note { color: var(--muted-foreground); }
+.default-note strong { font-weight: 600; color: var(--secondary-foreground); }
+.toggle-help.default-note { display: block; margin-top: 2px; }
+
+/* The option a device falls back to, marked only while nothing is chosen. */
+.pill.is-default { border-color: var(--border); border-style: dashed; }

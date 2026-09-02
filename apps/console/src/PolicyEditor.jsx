@@ -125,10 +125,54 @@ function ManagedAppsControl({ value, onChange }) {
   );
 }
 
+/**
+ * Unit conversion between what an administrator types and what the app stores.
+ *
+ * `scale` is the multiplier from displayed to stored, so brightness can be a
+ * percentage here while the device keeps a 0..1 float, and a delay can be
+ * minutes here while the device keeps milliseconds. Both directions are
+ * rounded: 35 * 0.01 is 0.35000000000000003 in binary floating point, and that
+ * is not a number to write into a device policy.
+ */
+const round = (n, places) => Number(n.toFixed(places));
+const toStored = (v, field) => (field.scale ? round(v * field.scale, 6) : v);
+const toDisplay = (v, field) => (field.scale ? round(v / field.scale, 3) : v);
+
+/**
+ * How the field behaves when it is absent from the policy.
+ *
+ * Absent is not the same as off: importConfig skips undefined values, so a
+ * field left alone here keeps whatever the device already has, and a device
+ * that has never been told uses this. Worth stating plainly — otherwise the
+ * only way to know what an untouched setting does is to read the app.
+ */
+function defaultLabel(field) {
+  const d = field.default;
+  if (d === undefined) return null;
+  if (field.type === "bool") return d ? "On" : "Off";
+  if (Array.isArray(d)) return d.length === 0 ? "empty" : JSON.stringify(d);
+  if (d === "") return "empty";
+  if (field.type === "select") {
+    const opt = (field.options || []).find((o) => o.value === d);
+    return opt ? opt.label : String(d);
+  }
+  const shown = toDisplay(d, field);
+  return field.unit ? shown + " " + field.unit : String(shown);
+}
+
+/* Shown only while a field is unset — once it has a value, the note is noise. */
+function DefaultNote({ field, value }) {
+  if (value !== undefined && value !== null && value !== "") return null;
+  const label = defaultLabel(field);
+  if (label === null) return null;
+  return <div className="form-desc default-note">Not set — devices use <strong>{label}</strong></div>;
+}
+
 /* One field, rendered as a Metronic settings row: label column + control column. */
 function FieldControl({ field, value, onChange }) {
   const label = <label className="form-label">{field.label}</label>;
   const help = field.help ? <div className="form-desc">{field.help}</div> : null;
+  const unset = value === undefined || value === null || value === "";
 
   // Booleans read best as a full-width switch row with the help text inline.
   if (field.type === "bool") {
@@ -137,6 +181,11 @@ function FieldControl({ field, value, onChange }) {
         <div className="toggle-text">
           <span className="toggle-label">{field.label}</span>
           {field.help && <span className="toggle-help">{field.help}</span>}
+          {unset && defaultLabel(field) && (
+            <span className="toggle-help default-note">
+              Not set — devices use <strong>{defaultLabel(field)}</strong>
+            </span>
+          )}
         </div>
         <label className="toggle">
           <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} />
@@ -148,23 +197,33 @@ function FieldControl({ field, value, onChange }) {
 
   let control;
   switch (field.type) {
-    case "slider":
+    case "slider": {
+      const shown = unset
+        ? toDisplay(field.default ?? field.min ?? 0, field)
+        : toDisplay(value, field);
       control = (
         <>
           <input type="range" min={field.min ?? 0} max={field.max ?? 100} step={field.step ?? 1}
-            value={value ?? field.min ?? 0} onChange={(e) => onChange(Number(e.target.value))}
+            value={shown} onChange={(e) => onChange(toStored(Number(e.target.value), field))}
             style={{ flex: 1, minWidth: 160, maxWidth: 320 }} />
-          <span className="badge off mono">{value ?? field.min ?? 0}</span>
+          <span className={"badge mono " + (unset ? "off" : "")}>
+            {shown}{field.unit || ""}
+          </span>
         </>
       );
       break;
+    }
 
     case "number":
       control = (
-        <input type="number" min={field.min} max={field.max} step={field.step}
-          value={value ?? ""} placeholder={field.placeholder || ""}
-          onChange={(e) => onChange(e.target.value === "" ? undefined : Number(e.target.value))}
-          style={{ width: 140 }} />
+        <>
+          <input type="number" min={field.min} max={field.max} step={field.step}
+            value={unset ? "" : toDisplay(value, field)}
+            placeholder={field.placeholder || (field.default !== undefined ? String(toDisplay(field.default, field)) : "")}
+            onChange={(e) => onChange(e.target.value === "" ? undefined : toStored(Number(e.target.value), field))}
+            style={{ width: 140 }} />
+          {field.unit && <span className="unit-suffix">{field.unit}</span>}
+        </>
       );
       break;
 
@@ -174,7 +233,9 @@ function FieldControl({ field, value, onChange }) {
         <div className="pill-group">
           {opts.map((o) => (
             <button key={o.value} type="button"
-              className={"pill" + (value === o.value ? " active" : "")}
+              className={"pill" + (value === o.value ? " active" : "")
+                + (unset && o.value === field.default ? " is-default" : "")}
+              title={o.value === field.default ? "Device default" : undefined}
               onClick={() => onChange(o.value)}>{o.label}</button>
           ))}
         </div>
@@ -182,7 +243,11 @@ function FieldControl({ field, value, onChange }) {
         <select value={value ?? ""} onChange={(e) => onChange(e.target.value || undefined)}
           style={{ maxWidth: 320 }}>
           <option value="" disabled>— Select —</option>
-          {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          {opts.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}{o.value === field.default ? " (default)" : ""}
+            </option>
+          ))}
         </select>
       );
       break;
@@ -190,7 +255,8 @@ function FieldControl({ field, value, onChange }) {
 
     case "textarea":
       control = (
-        <textarea value={value ?? ""} placeholder={field.placeholder || ""} rows={3}
+        <textarea value={value ?? ""} rows={3}
+          placeholder={field.placeholder || (typeof field.default === "string" ? field.default : "")}
           onChange={(e) => onChange(e.target.value)} style={{ width: "100%", maxWidth: 480 }} />
       );
       break;
@@ -224,7 +290,7 @@ function FieldControl({ field, value, onChange }) {
     default:
       control = (
         <input type={field.danger ? "password" : "text"} value={value ?? ""}
-          placeholder={field.placeholder || ""}
+          placeholder={field.placeholder || (typeof field.default === "string" ? field.default : "")}
           onChange={(e) => onChange(e.target.value || undefined)}
           style={{ flex: 1, maxWidth: 380 }} />
       );
@@ -238,6 +304,7 @@ function FieldControl({ field, value, onChange }) {
         {label}
         {control}
         {help}
+        <DefaultNote field={field} value={value} />
         {field.danger && <DangerNote />}
       </div>
     );
@@ -246,8 +313,9 @@ function FieldControl({ field, value, onChange }) {
     <div className="form-row">
       {label}
       <div className="form-control">
-        {control}
+        <div className="control-line">{control}</div>
         {help}
+        <DefaultNote field={field} value={value} />
         {field.danger && <DangerNote />}
       </div>
     </div>
@@ -334,11 +402,9 @@ const SHOW_IF = {
   "general.externalApp.testMode":        { path: "general.displayMode", value: "external_app" },
   "general.inactivityReturn.scrollTop":  [{ path: "general.displayMode", value: "webview" }, { path: "general.inactivityReturn.enabled", value: true }],
   "general.mediaPlayer.transition":         { path: "general.displayMode", value: "media_player" },
-  "general.mediaPlayer.transitionDuration": [{ path: "general.displayMode", value: "media_player" }, { path: "general.mediaPlayer.transition", value: ["fade", "slide"] }],
   "general.urlPlanner.events":           [{ path: "general.displayMode", value: "webview" }, { path: "general.urlPlanner.enabled", value: true }],
   "display.zoom.mode":                   { path: "general.displayMode", value: "webview" },
   "display.autoBrightness.updateInterval": { path: "display.autoBrightness.enabled", value: true },
-  "display.screensaver.delay":           { path: "display.screensaver.enabled", value: true },
   "display.screensaver.videoItems":      [{ path: "display.screensaver.enabled", value: true }, { path: "display.screensaver.type", value: "video" }],
   "display.screensaver.videoLoop":       [{ path: "display.screensaver.enabled", value: true }, { path: "display.screensaver.type", value: "video" }],
   "display.screensaver.url":             [{ path: "display.screensaver.enabled", value: true }, { path: "display.screensaver.type", value: "url" }],
@@ -350,11 +416,9 @@ const SHOW_IF = {
   "display.statusBar.showVolume":        { path: "display.statusBar.enabled", value: true },
   "display.motionDetection.sensitivity":      { path: "display.motionDetection.enabled", value: true },
   "display.motionDetection.cameraPosition":   { path: "display.motionDetection.enabled", value: true },
-  "display.motionDetection.delay":            { path: "display.motionDetection.enabled", value: true },
   "display.motionDetection.proximityEnabled": { path: "display.motionDetection.enabled", value: true },
   "security.backButtonTimerDelay":       [{ path: "general.displayMode", value: "external_app" }, { path: "security.backButtonMode", value: "timer" }],
   "security.blockingOverlays.regions":   { path: "security.blockingOverlays.enabled", value: true },
-  "security.overlayButtonPosition":      { path: "security.returnMode", value: "button" },
   "security.urlFilter.showFeedback":     [{ path: "general.displayMode", value: "webview" }, { path: "security.urlFilter.enabled", value: true }],
   "security.lockscreen.audio":           { path: "security.lockscreen.enabled", value: true },
   "security.lockscreen.bluetooth":       { path: "security.lockscreen.enabled", value: true },
