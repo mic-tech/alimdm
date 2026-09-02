@@ -338,6 +338,33 @@ function LiveView({ device, onErr }) {
   const [state, setState] = useState("starting");
   const [frames, setFrames] = useState(0);
   const lastUrl = useRef(null);
+  // Control is opt-in per session: watching is the common case, and a stray
+  // click on a picture of a classroom should not press anything.
+  const [control, setControl] = useState(false);
+  const [typing, setTyping] = useState("");
+
+  const send = useCallback(async (event) => {
+    try { await api.sendInput(device.id, event); }
+    catch (e) { onErr(e.message); }
+  }, [device.id, onErr]);
+
+  // A click on the picture becomes a tap on the device. The frame is letterboxed
+  // inside the img, so the fraction is measured against the rendered image
+  // rather than the element — otherwise every tap lands short of where it looked.
+  const tap = (e) => {
+    if (!control) return;
+    const img = e.currentTarget;
+    const box = img.getBoundingClientRect();
+    const nat = img.naturalWidth / img.naturalHeight;
+    const shown = box.width / box.height;
+    let w = box.width, h = box.height, left = 0, top = 0;
+    if (nat > shown) { h = box.width / nat; top = (box.height - h) / 2; }
+    else { w = box.height * nat; left = (box.width - w) / 2; }
+    const x = (e.clientX - box.left - left) / w;
+    const y = (e.clientY - box.top - top) / h;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return;
+    send({ type: "tap", x: Number(x.toFixed(4)), y: Number(y.toFixed(4)) });
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -375,9 +402,37 @@ function LiveView({ device, onErr }) {
 
   return (
     <>
+      <div className="flex" style={{ marginBottom: 10 }}>
+        <span className="view-switch" role="group" aria-label="Watch or control">
+          <button className={!control ? "on" : ""} aria-pressed={!control}
+            onClick={() => setControl(false)}><IconEye />Watch</button>
+          <button className={control ? "on" : ""} aria-pressed={control}
+            onClick={() => setControl(true)}
+            title="Click the screen to tap it. The device shows “Remotely controlled” while you do.">
+            <IconSliders />Control
+          </button>
+        </span>
+        {control && (
+          <>
+            <button className="btn outline sm" onClick={() => send({ type: "key", key: "back" })}>Back</button>
+            <button className="btn outline sm" onClick={() => send({ type: "key", key: "home" })}>Home</button>
+            <input className="grow" placeholder="Type into the device…" value={typing}
+              style={{ minWidth: 120 }}
+              onChange={(e) => setTyping(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || !typing) return;
+                send({ type: "text", text: typing });
+                setTyping("");
+              }} />
+            <button className="btn outline sm" disabled={!typing}
+              onClick={() => { send({ type: "text", text: typing }); setTyping(""); }}>Send</button>
+          </>
+        )}
+      </div>
       <div className="screen-frame">
-        <img ref={imgRef} alt="Live view of the device's screen"
-          style={{ maxWidth: "100%", maxHeight: 460, display: state === "live" ? "block" : "none" }} />
+        <img ref={imgRef} alt="Live view of the device's screen" onClick={tap}
+          style={{ maxWidth: "100%", maxHeight: 460, display: state === "live" ? "block" : "none",
+            cursor: control ? "crosshair" : "default" }} />
         {state !== "live" && (
           <span className="muted small" style={{ padding: 40, textAlign: "center" }}>
             {state === "error" ? "The stream stopped."
@@ -387,9 +442,11 @@ function LiveView({ device, onErr }) {
       </div>
       <div className="muted small" style={{ marginTop: 10 }}>
         {state === "live" && <>{frames} frame{frames === 1 ? "" : "s"}. </>}
-        Smooth while the kiosk is on screen. Inside another app Android limits capture to
-        about one frame a second, and screenshot protection is lifted for the length of the
-        session — so stop this when you are done.
+        {control
+          ? "Click the screen to tap it. Taps reach the device on its next frame, and it shows “Remotely controlled” while you are driving it. "
+          : "Smooth while the kiosk is on screen. Inside another app Android limits capture to about one frame a second, so control there feels slow. "}
+        Screenshot protection is lifted for the length of the session — so stop this when you
+        are done.
       </div>
     </>
   );
@@ -792,6 +849,7 @@ function DeviceLogs({ deviceId, onErr }) {
               <Fact label="Device Owner"><YesNo ok={state.device_owner} /></Fact>
               <Fact label="Lock task"><YesNo ok={state.lock_task} /></Fact>
               <Fact label="Accessibility service"><YesNo ok={state.accessibility_running} /></Fact>
+              <Fact label="Can tap the screen"><YesNo ok={state.can_perform_gestures} /></Fact>
               <Fact label="Secure settings"><YesNo ok={state.can_write_secure_settings} /></Fact>
               <Fact label="Draw over apps"><YesNo ok={state.can_draw_overlays} /></Fact>
               <Fact label="Usage access"><YesNo ok={state.usage_access} /></Fact>

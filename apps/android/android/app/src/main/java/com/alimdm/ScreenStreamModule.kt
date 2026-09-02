@@ -5,10 +5,12 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
+import android.view.KeyEvent
 import android.view.PixelCopy
 import com.facebook.react.bridge.*
 import com.facebook.react.common.LifecycleState
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
@@ -66,6 +68,18 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
 
     /** Whether we turned the screen-capture policy off, and so must put it back. */
     private var liftedCapturePolicy = false
+
+    /**
+     * The part of the display the last frame showed, in screen coordinates.
+     *
+     * A frame is either our own window (PixelCopy) or the whole display
+     * (accessibility), and on these tablets the window is portrait inside a
+     * landscape display. A tap arrives as a fraction of the picture the
+     * operator clicked, so it can only be placed correctly against the
+     * rectangle that picture covered.
+     */
+    @Volatile
+    private var lastFrameRect: android.graphics.Rect? = null
 
     @ReactMethod
     fun isStreaming(promise: Promise) = promise.resolve(running.get())
@@ -189,6 +203,8 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
                     }
                     lastAccessibilityAt = System.currentTimeMillis()
                     bitmap = AliMdmAccessibilityService.captureScreen(3000)
+                    // This path returns the whole display, not our window.
+                    if (bitmap != null) lastFrameRect = fullDisplayRect()
                 }
                 if (bitmap == null) {
                     failures++
@@ -243,6 +259,51 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
         stopInternal("loop ended")
     }
 
+    /**
+     * Carry out what an operator did: taps, Back/Home, and typed text.
+     *
+     * Everything goes through the accessibility service, which is the only way
+     * to reach an app that is not ours — and the same dependency screen capture
+     * of another app already has. Each event puts the "Remotely controlled"
+     * banner on screen: a tablet that starts operating itself should say why.
+     */
+    private fun applyInput(events: org.json.JSONArray) {
+        for (i in 0 until events.length()) {
+            val e = events.optJSONObject(i) ?: continue
+            val handled = when (e.optString("type")) {
+                "tap" -> {
+                    val rect = lastFrameRect ?: fullDisplayRect()
+                    val fx = e.optDouble("x", -1.0)
+                    val fy = e.optDouble("y", -1.0)
+                    if (fx < 0 || fx > 1 || fy < 0 || fy > 1) {
+                        false
+                    } else {
+                        AliMdmAccessibilityService.tapAt(
+                            (rect.left + fx * rect.width()).toFloat(),
+                            (rect.top + fy * rect.height()).toFloat(),
+                        )
+                    }
+                }
+                "key" -> when (e.optString("key")) {
+                    "back" -> AliMdmAccessibilityService.sendKey(KeyEvent.KEYCODE_BACK)
+                    "home" -> AliMdmAccessibilityService.sendKey(KeyEvent.KEYCODE_HOME)
+                    else -> false
+                }
+                "text" -> AliMdmAccessibilityService.sendText(e.optString("text"))
+                else -> false
+            }
+            if (!handled) {
+                Log.w(TAG, "Could not carry out ${e.optString("type")}; is the accessibility service on?")
+            }
+            RemoteControlBanner.show(reactContext)
+        }
+    }
+
+    private fun fullDisplayRect(): android.graphics.Rect {
+        val m = reactContext.resources.displayMetrics
+        return android.graphics.Rect(0, 0, m.widthPixels, m.heightPixels)
+    }
+
     /** PixelCopy of our own window, or null when it is not on screen. */
     private fun capturePixelCopy(): Bitmap? {
         val handler = copyHandler ?: return null
@@ -257,6 +318,11 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
                     latch.countDown()
                     return@runOnUiThread
                 }
+                // Where this window sits on the display, so a tap taken from
+                // the frame lands where it was aimed.
+                val at = IntArray(2).also { decor.getLocationOnScreen(it) }
+                lastFrameRect = android.graphics.Rect(
+                    at[0], at[1], at[0] + decor.width, at[1] + decor.height)
                 val bmp = Bitmap.createBitmap(decor.width, decor.height, Bitmap.Config.ARGB_8888)
                 PixelCopy.request(window, bmp, { code ->
                     if (code == PixelCopy.SUCCESS) {
@@ -311,9 +377,18 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
             val code = conn.responseCode
             if (code !in 200..299) return PostResult.FAILED
             val body = conn.inputStream.bufferedReader().use { it.readText() }
-            // The server answers each frame with whether anyone is still
-            // watching, so the loop needs no second channel to learn to stop.
-            if (body.contains("\"continue\":false")) PostResult.STOP else PostResult.CONTINUE
+            // The reply to a frame is the channel back to the tablet: whether
+            // anyone is still watching, and anything an operator has done since
+            // the last frame. It is already made several times a second while
+            // someone is watching, and never when nobody is.
+            val reply = try {
+                JSONObject(body)
+            } catch (e: Exception) {
+                Log.w(TAG, "Frame reply was not JSON: ${e.message}")
+                null
+            }
+            reply?.optJSONArray("input")?.let { applyInput(it) }
+            if (reply?.optBoolean("continue", true) == false) PostResult.STOP else PostResult.CONTINUE
         } catch (e: Exception) {
             Log.w(TAG, "Frame post failed: ${e.message}")
             PostResult.FAILED

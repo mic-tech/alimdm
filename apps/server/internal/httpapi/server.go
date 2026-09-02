@@ -203,6 +203,8 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/devices/{id}/stream/status", s.requireOperator(s.streamStatus))
 	mux.HandleFunc("GET /api/v1/devices/{id}/stream.mjpeg", s.requireOperator(s.streamMJPEG))
 	mux.HandleFunc("POST /api/v1/devices/{id}/stream/frame", s.requireDevice(s.postFrame))
+	// Control: taps, Back/Home and text, delivered on the frame channel.
+	mux.HandleFunc("POST /api/v1/devices/{id}/input", s.requireOperator(s.sendInput))
 
 	// Snapshots: a still per device, for the console's card view.
 	mux.HandleFunc("GET /api/v1/devices/{id}/snapshot", s.requireOperator(s.deviceSnapshot))

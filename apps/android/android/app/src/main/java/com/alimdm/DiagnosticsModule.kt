@@ -88,6 +88,11 @@ class DiagnosticsModule(private val reactContext: ReactApplicationContext) :
         // The three that are granted outside the app and decide whether screen
         // capture, overlays and foreground detection work at all.
         m.putBoolean("accessibility_running", AliMdmAccessibilityService.isRunning())
+        // Taps need this capability, and it comes from the service's XML config,
+        // which Android reads when it binds the service. A config change that
+        // has not been picked up looks exactly like a tap that goes nowhere, so
+        // it is worth stating rather than inferring.
+        m.putBoolean("can_perform_gestures", AliMdmAccessibilityService.canPerformGestures())
         m.putBoolean(
             "can_write_secure_settings",
             reactContext.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS)

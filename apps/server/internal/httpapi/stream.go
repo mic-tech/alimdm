@@ -16,6 +16,7 @@ package httpapi
 // which keeps a picture of a classroom off the server's disk.
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,9 +45,33 @@ const (
 
 	// maxFrameBytes bounds one frame.
 	maxFrameBytes = 4 << 20
+
+	// controlSessionGap is how long a quiet stretch has to be before the next
+	// tap counts as a new session. Only the start of one is recorded — a line
+	// in the feed per tap would bury everything else in it.
+	controlSessionGap = 2 * time.Minute
 )
 
-// streamHub fans one tablet's frames out to the viewers watching it.
+// inputEvent is one thing an operator did to a tablet: a tap, a key, or text.
+//
+// Coordinates are fractions of the screen, not pixels. The console is clicking a
+// JPEG that has been scaled down for the wire, and knows nothing about the
+// display it came from; the device multiplies by its own size.
+type inputEvent struct {
+	Type string  `json:"type"`           // "tap" | "key" | "text"
+	X    float64 `json:"x,omitempty"`    // 0..1 across
+	Y    float64 `json:"y,omitempty"`    // 0..1 down
+	Key  string  `json:"key,omitempty"`  // "back" | "home"
+	Text string  `json:"text,omitempty"` // typed into whatever has focus
+}
+
+// maxQueuedInput bounds what one device can have waiting. Input is only useful
+// while it is fresh: a tap that arrives four seconds late lands on a screen
+// that has moved on, so the oldest is dropped rather than the newest refused.
+const maxQueuedInput = 16
+
+// streamHub fans one tablet's frames out to the viewers watching it, and
+// carries input back the other way.
 type streamHub struct {
 	mu       sync.Mutex
 	subs     map[int64]chan []byte
@@ -54,6 +79,42 @@ type streamHub struct {
 	wantedTo time.Time // while in the future, the tablet should keep capturing
 	lastAt   time.Time
 	frames   int64
+	// input rides on the reply to the tablet's next frame POST. That request is
+	// already made several times a second while someone is watching, and never
+	// when nobody is — which is exactly when control is wanted and exactly when
+	// it is not. No second connection, and latency of about one frame.
+	input      []inputEvent
+	lastInput  time.Time
+	controlled bool // true from the first event of a session until it lapses
+}
+
+// queueInput adds one event for the tablet's next frame POST. Reports whether
+// this is the start of a control session, so the caller can record it once
+// rather than once per tap.
+func (s *streamHub) queueInput(e inputEvent) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.input) >= maxQueuedInput {
+		s.input = s.input[1:]
+	}
+	s.input = append(s.input, e)
+	now := time.Now()
+	starting := !s.controlled || now.Sub(s.lastInput) > controlSessionGap
+	s.lastInput = now
+	s.controlled = true
+	return starting
+}
+
+// takeInput hands over everything queued and clears it.
+func (s *streamHub) takeInput() []inputEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.input) == 0 {
+		return nil
+	}
+	out := s.input
+	s.input = nil
+	return out
 }
 
 type streamHubs struct {
@@ -180,6 +241,59 @@ func (s *Server) startStream(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"requested": true})
 }
 
+// sendInput hands one operator action to a tablet that is being watched.
+//
+// Only while a live view is running: input travels on the reply to a frame
+// POST, so with nobody watching there is no channel and the event would sit in
+// a queue until it was meaningless.
+func (s *Server) sendInput(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	dev, err := s.st.GetDevice(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "unknown device")
+		return
+	}
+	var e inputEvent
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&e) != nil {
+		writeErr(w, http.StatusBadRequest, "bad input")
+		return
+	}
+	switch e.Type {
+	case "tap":
+		if e.X < 0 || e.X > 1 || e.Y < 0 || e.Y > 1 {
+			writeErr(w, http.StatusBadRequest, "tap must be within the screen")
+			return
+		}
+	case "key":
+		if e.Key != "back" && e.Key != "home" {
+			writeErr(w, http.StatusBadRequest, "key must be back or home")
+			return
+		}
+	case "text":
+		if e.Text == "" {
+			writeErr(w, http.StatusBadRequest, "no text")
+			return
+		}
+		if len(e.Text) > 512 {
+			e.Text = e.Text[:512]
+		}
+	default:
+		writeErr(w, http.StatusBadRequest, "unknown input type")
+		return
+	}
+
+	hub := s.streams.get(id)
+	if !hub.wanted() {
+		writeErr(w, http.StatusConflict, "start live view first: input reaches the device on the same channel as the frames")
+		return
+	}
+	if hub.queueInput(e) {
+		s.record(r, "control_started", store.EventWarn, dev.ID,
+			"Started controlling "+deviceLabel(dev.ID, dev.Name))
+	}
+	writeJSON(w, map[string]any{"queued": true})
+}
+
 func (s *Server) stopStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.streams.get(id).stop()
@@ -290,5 +404,10 @@ func (s *Server) postFrame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hub.publish(frame)
-	writeJSON(w, map[string]any{"continue": true, "viewers": hub.viewers()})
+	resp := map[string]any{"continue": true, "viewers": hub.viewers()}
+	// Anything an operator has done since the last frame goes back in the reply.
+	if in := hub.takeInput(); len(in) > 0 {
+		resp["input"] = in
+	}
+	writeJSON(w, resp)
 }

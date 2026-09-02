@@ -138,6 +138,12 @@ export const api = {
   stopStream: (id) => req("POST", "/devices/" + encodeURIComponent(id) + "/stream/stop", {}),
   streamStatus: (id) => req("GET", "/devices/" + encodeURIComponent(id) + "/stream/status"),
   /**
+   * One operator action, carried to the tablet on the reply to its next frame.
+   * Taps are fractions of the screen, not pixels: the picture on screen is a
+   * scaled JPEG and the device resolves them against its own display.
+   */
+  sendInput: (id, event) => req("POST", "/devices/" + encodeURIComponent(id) + "/input", event),
+  /**
    * Open the MJPEG stream and hand each JPEG to onFrame as a Blob.
    *
    * Read with fetch rather than pointed at with <img src>, because an <img>

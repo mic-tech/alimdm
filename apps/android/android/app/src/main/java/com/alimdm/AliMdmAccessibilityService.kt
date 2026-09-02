@@ -58,6 +58,42 @@ class AliMdmAccessibilityService : AccessibilityService() {
         
         fun isRunning(): Boolean = instance != null
 
+        /** Whether Android has granted this service the gesture capability. */
+        fun canPerformGestures(): Boolean {
+            val info = instance?.serviceInfo ?: return false
+            return (info.capabilities and
+                AccessibilityServiceInfo.CAPABILITY_CAN_PERFORM_GESTURES) != 0
+        }
+
+        /**
+         * Tap a point on the screen, in display pixels.
+         *
+         * Deliberately not fractions: the console clicks a JPEG, and which
+         * rectangle of the display that JPEG covers depends on how it was
+         * captured. PixelCopy returns our own window, which on these tablets is
+         * portrait inside a landscape display; the accessibility path returns
+         * the whole display. Resolving a fraction here, against the display,
+         * would put every tap taken from a window frame in the wrong place —
+         * transposed, not merely off. The capture side knows which rectangle it
+         * sent and does the arithmetic.
+         */
+        fun tapAt(x: Float, y: Float): Boolean {
+            val service = instance ?: return false
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
+            return try {
+                val path = Path().apply { moveTo(x, y) }
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
+                    .build()
+                val ok = service.dispatchGesture(gesture, null, null)
+                DebugLog.i(TAG, "Tap at ($x, $y) dispatched=$ok gesturesAllowed=${canPerformGestures()}")
+                ok
+            } catch (e: Exception) {
+                DebugLog.errorProduction(TAG, "Tap failed: ${e.message}")
+                false
+            }
+        }
+
         /**
          * Make sure the service is actually running, turning it on if we are
          * allowed to, and wait for it to bind.
