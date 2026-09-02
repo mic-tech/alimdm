@@ -4,6 +4,9 @@ interface KioskModuleInterface {
   exitKioskMode(): Promise<boolean>;
   startLockTask(externalAppPackage?: string | null, allowPowerButton?: boolean, allowNotifications?: boolean, allowSystemInfo?: boolean, allowEmergencyCall?: boolean): Promise<boolean>;
   stopLockTask(): Promise<boolean>;
+  /** Relaunch the app and kill this process. An alarm brings it back if the
+   *  direct relaunch is refused, so a failed restart does not lose the tablet. */
+  restartApp(): Promise<boolean>;
   isInLockTaskMode(): Promise<boolean>;
   getLockTaskModeState(): Promise<number>;
   isDeviceOwner(): Promise<boolean>;

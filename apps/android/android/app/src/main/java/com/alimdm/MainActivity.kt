@@ -95,6 +95,10 @@ class MainActivity : ReactActivity() {
     super.onCreate(null)
     hasStarted = true  // #222: tells BootLockActivity the hand-off really happened
 
+    // We are up, so a pending restart backstop has done its job or was never
+    // needed. Disarm it before it fires and restarts the app a second time.
+    KioskModule.cancelRestartBackstop(this)
+
     // Keep screen always on
     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 

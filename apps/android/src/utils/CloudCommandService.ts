@@ -164,7 +164,7 @@ class CloudCommandServiceClass {
       await StorageService.saveInflightCommand({
         commandId: cmd.id,
         type: cmd.type,
-        killsProcess: cmd.type === 'reboot',
+        killsProcess: cmd.type === 'reboot' || cmd.type === 'restart_app',
       } satisfies InflightCommand);
 
       const outcome = await this.runCommand(cmd, c);
@@ -253,6 +253,18 @@ class CloudCommandServiceClass {
         return { ok: true, result: d as unknown as Record<string, unknown> };
       } catch (e: any) {
         return { ok: false, error: e?.message || 'Could not collect diagnostics' };
+      }
+    }
+
+    // Restart the app itself. Not in COMMAND_MAP: it calls the native module
+    // directly, and it is the one command whose own process does not outlive
+    // it — the inflight marker above is what reports it, on the way back up.
+    if (cmd.type === 'restart_app') {
+      try {
+        await KioskModule.restartApp();
+        return { ok: true, result: { restarting: true } };
+      } catch (e: any) {
+        return { ok: false, error: e?.message || 'Could not restart the app' };
       }
     }
 

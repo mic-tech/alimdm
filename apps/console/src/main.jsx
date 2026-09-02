@@ -11,7 +11,7 @@ import {
   IconRefresh, IconPlus, IconTrash, IconEdit, IconPower, IconLock, IconUnlock,
   IconEject, IconCopy, IconCheck, IconUpload, IconInfo, IconWarning,
   IconUser, IconUsers, IconKey, IconSave, IconShield, IconFile, IconEye, IconRows, IconGrid,
-  IconSliders, IconMonitor,
+  IconSliders, IconMonitor, IconAndroid,
 } from "./icons.jsx";
 
 // Compact "time ago" so the Last seen column stays narrow; the cell keeps the
@@ -581,7 +581,23 @@ function commandPrompt(type, who) {
   if (type === "reboot") {
     return `Reboot ${who}?\n\nWhoever is using it loses what is on screen.`;
   }
+  if (type === "restart_app") {
+    return `Restart Ali MDM on ${who}?\n\nOnly the app closes and reopens — about ten seconds, and the tablet stays on. Whatever is on screen is lost. Worth trying before a reboot.`;
+  }
   return `Send "${type}" to ${who}?`;
+}
+
+/* What to call a command in something a person reads. "Sent restart_app to
+   IQRA Tab 1" is the wire talking; a name is what the operator just clicked. */
+const COMMAND_NAMES = {
+  screen_on: "wake",
+  restart_app: "restart app",
+  reboot: "reboot",
+  lock: "lock",
+  unlock: "unlock",
+};
+function commandName(type) {
+  return COMMAND_NAMES[type] || type;
 }
 
 /* What to call a device in something a person reads. The label if it has one,
@@ -986,7 +1002,7 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
     // holding the tablet.
     if (type !== "screen_on" && !confirm(commandPrompt(type, d.label))) return;
     setBusy(true);
-    try { await api.sendCommand(d.id, type); toast(`Sent ${type} to ${d.label}`); load(); }
+    try { await api.sendCommand(d.id, type); toast(`Sent ${commandName(type)} to ${d.label}`); load(); }
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
@@ -1099,6 +1115,10 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
                 turns the display on. */}
             <button className="btn outline sm" disabled={busy} onClick={() => cmd("screen_on")}>
               <IconMonitor />Wake
+            </button>
+            <button className="btn outline sm" disabled={busy} onClick={() => cmd("restart_app")}
+              title="Close and reopen Ali MDM. The tablet stays on — try this before a reboot.">
+              <IconAndroid />Restart app
             </button>
             <button className="btn outline sm" disabled={busy} onClick={() => cmd("reboot")}>
               <IconPower />Reboot
