@@ -1486,6 +1486,14 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
           clearTimeout(appLaunchTimeoutRef.current);
           appLaunchTimeoutRef.current = null;
         }
+
+        // And any Delayed Return countdown, for the same reason: the user is on
+        // their way to the PIN screen and does not want the app back on top of it.
+        if (countdownTimerRef.current) {
+          clearTimeout(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+        }
+        setCountdownActive(false);
         
         // Defer UI work to next tick to avoid CalledFromWrongThreadException
         setTimeout(() => {
@@ -2627,6 +2635,29 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
     }
   };
 
+  /**
+   * Stop a Delayed Return countdown.
+   *
+   * The countdown exists to give an adult a few seconds to reach Settings
+   * before the kiosk restores itself. Every way of taking that offer has to
+   * stop the clock, or the relaunch fires anyway and throws the external app
+   * up over the PIN screen the teacher is standing there typing into — the
+   * mode would actively defeat the thing it is for. The AppState listener
+   * already cancelled it for multi-app mode; the routes out of the screen did
+   * not.
+   */
+  const cancelCountdown = useCallback((): void => {
+    if (countdownTimerRef.current) {
+      clearTimeout(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    // Only the active flag: the effect's "finished" branch keys on
+    // countdownActive && countdownSeconds === 0, and writing a 0 here would be
+    // one batching assumption away from firing the relaunch we are cancelling.
+    // The next countdown sets its own starting value.
+    setCountdownActive(false);
+  }, []);
+
   const handleAppReturned = (event?: { voluntary?: boolean }): void => {
     const isVoluntary = event?.voluntary ?? false;
     setIsAppLaunched(false);
@@ -2649,6 +2680,7 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
     if (tapCountRef.current === returnTapCount) {
       tapCountRef.current = 0;
       clearTimer();
+      cancelCountdown();
       setIsScreensaverActive(false);
       navigation.navigate('Pin');
     }
@@ -2659,6 +2691,7 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
   };
 
   const handleReturnToExternalApp = async (): Promise<void> => {
+    cancelCountdown();
     // Read fresh mode from ref (most up-to-date)
     if (externalAppModeRef.current === 'multi') {
       // Multi-app mode: if only one home screen app, re-launch it directly
@@ -2680,6 +2713,7 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
 
   const handleGoToSettings = (): void => {
     clearTimer();
+    cancelCountdown();
     setIsScreensaverActive(false);
     // Stop background monitor when entering settings — will restart on loadSettings if needed
     AppLauncherModule.stopBackgroundMonitor().catch(() => {});
@@ -2834,6 +2868,7 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
           externalAppMode={externalAppMode}
           isAppLaunched={isAppLaunched}
           backButtonMode={backButtonMode}
+          countdownSeconds={countdownActive ? countdownSeconds : null}
           returnTapCount={returnTapCount}
           returnMode={returnMode}
           returnTapTimeout={returnTapTimeout}

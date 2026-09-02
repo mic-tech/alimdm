@@ -16,6 +16,8 @@ interface ExternalAppOverlayProps {
   externalAppMode?: 'single' | 'multi';
   isAppLaunched: boolean;
   backButtonMode: string;
+  /** Seconds left before Delayed Return relaunches the app; null when not counting */
+  countdownSeconds?: number | null;
   /** Number of taps to return to settings (default 5) */
   returnTapCount?: number;
   /** Return mode: 'tap_anywhere' or 'button' (same as webview) */
@@ -45,6 +47,7 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
   externalAppMode = 'single',
   isAppLaunched,
   backButtonMode,
+  countdownSeconds = null,
   returnTapCount = 5,
   returnMode = 'tap_anywhere',
   returnTapTimeout = 1500,
@@ -404,6 +407,28 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
             </View>
           </View>
 
+          {/* Delayed Return: the countdown is the whole point of this mode. It is
+              the window in which an adult can reach Settings before the kiosk
+              restores itself, and a window nobody can see is not a window —
+              without this the screen looked identical to Test Mode right up
+              until the app reappeared on its own. */}
+          {countdownSeconds !== null && countdownSeconds > 0 && (
+            <View style={styles.warningContainer}>
+              <View style={styles.countdownCard}>
+                <Icon name="timer" size={28} color="#2b7fff" style={styles.warningIcon} />
+                <Text style={styles.countdownSeconds}>{countdownSeconds}</Text>
+                <Text style={styles.warningText}>
+                  {countdownSeconds === 1
+                    ? 'Returning to the application in 1 second'
+                    : `Returning to the application in ${countdownSeconds} seconds`}
+                </Text>
+                <Text style={styles.countdownHint}>
+                  Tap Settings below to stay here.
+                </Text>
+              </View>
+            </View>
+          )}
+
           {/* Mode Info - Only show in test mode */}
           {backButtonMode === 'test' && (
             <View style={styles.warningContainer}>
@@ -522,6 +547,31 @@ const styles = StyleSheet.create({
     color: '#fff',
     textAlign: 'center',
     lineHeight: 20,
+  },
+  // Same shape as warningCard, in the app's blue rather than the amber it uses
+  // for "you are in a setup mode": a countdown is information, not a warning.
+  countdownCard: {
+    backgroundColor: '#2b7fff',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  // Big enough to read from arm's length across a classroom, which is the
+  // distance the person who needs it is standing at.
+  countdownSeconds: {
+    fontSize: 40,
+    lineHeight: 46,
+    color: '#fff',
+    fontWeight: 'bold',
+    fontVariant: ['tabular-nums'],
+    marginBottom: 4,
+  },
+  countdownHint: {
+    fontSize: 13,
+    color: '#e8f0ff',
+    textAlign: 'center',
+    marginTop: 8,
   },
   buttonContainer: {
     width: '100%',
