@@ -1,5 +1,6 @@
 package com.alimdm
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.Handler
@@ -52,6 +53,16 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
         /** The platform will not take accessibility screenshots faster than this. */
         private const val ACCESSIBILITY_MIN_INTERVAL_MS = 1100L
 
+        /** How long the window manager needs to drop the secure flag after a lift. */
+        private const val POLICY_SETTLE_MS = 300L
+
+        /**
+         * A session that never stops cleanly must not leave the display lit all
+         * day. Long enough for any real viewing session, short enough that a
+         * leaked lock costs a battery, not a night.
+         */
+        private const val WAKE_LOCK_TIMEOUT_MS = 30 * 60 * 1000L
+
         /**
          * How long a scroll drag takes. Long enough that Android reads it as a
          * scroll rather than a fling, short enough not to feel stuck.
@@ -74,6 +85,22 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
 
     /** Whether we turned the screen-capture policy off, and so must put it back. */
     private var liftedCapturePolicy = false
+
+    /**
+     * Holds the screen on for the length of a session.
+     *
+     * The kiosk's own "keep screen on" is FLAG_KEEP_SCREEN_ON on Ali MDM's
+     * window, and a window that is not the visible one holds nothing: behind an
+     * external app the display sleeps on the system timeout anyway. A sleeping
+     * display captures as solid black, which is what "live view cannot see
+     * other apps" really was — the capture path was fine all along and the
+     * screen was simply off.
+     *
+     * Watching a tablet is a reason to keep its screen on, so the session takes
+     * a wake lock of its own and drops it on stop. The timeout is a backstop
+     * against a session that never stops cleanly leaving the display lit.
+     */
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     /**
      * The part of the display the last frame showed, in screen coordinates.
@@ -114,9 +141,23 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
         // Lift the Device Owner capture block for the session, so the
         // accessibility path can see an external app. PixelCopy does not need
         // this, but we cannot know in advance what will be on screen.
+        //
+        // The hold is claimed FIRST and for the whole session, not just around
+        // the lift: every startLockTask() re-asserts the block, and lock task
+        // restarts on a settings reload, a policy sync, or the way back from an
+        // external app. Without the hold the lift lasted seconds and every
+        // frame after it came back black — which is what "live view cannot see
+        // other apps" actually was.
+        acquireWakeLock()
+        KioskModule.holdCaptureLift(true)
         liftedCapturePolicy = try {
             if (KioskModule.isScreenCapturePolicyBlocked(reactContext)) {
-                KioskModule.setScreenCapturePolicyBlocked(reactContext, false)
+                val lifted = KioskModule.setScreenCapturePolicyBlocked(reactContext, false)
+                // The window manager needs a beat to drop the secure flag from the
+                // layers; capturing immediately still comes back black. The
+                // screenshot path already learned this the hard way.
+                if (lifted) Thread.sleep(POLICY_SETTLE_MS)
+                lifted
             } else {
                 false
             }
@@ -153,6 +194,9 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
         }
         copyThread = null
         copyHandler = null
+        releaseWakeLock()
+        // Release the hold before restoring, so nothing can re-lift behind us.
+        KioskModule.holdCaptureLift(false)
         // Put the policy back exactly as we found it. Leaving it off would let
         // anyone screenshot the tablet indefinitely.
         if (liftedCapturePolicy) {
@@ -183,8 +227,22 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
                     reactContext.lifecycleState == LifecycleState.RESUMED
 
                 var bitmap: Bitmap? = null
+                // Kept when PixelCopy produced a frame we do not trust, so a failed
+                // accessibility capture still has something to publish rather than
+                // counting as a dropped frame.
+                var blankPixelCopy: Bitmap? = null
                 if (foreground) {
                     bitmap = capturePixelCopy()
+                    // React Native can still report RESUMED while an external app is
+                    // actually on top, and PixelCopy of a window nobody can see comes
+                    // back all black. Believing it is what made live view look like it
+                    // could not see other apps: two frames in three were this, not a
+                    // capture failure. Try the accessibility path, which sees what is
+                    // really on screen, and keep this one only as a fallback.
+                    if (bitmap != null && isBlankFrame(bitmap)) {
+                        blankPixelCopy = bitmap
+                        bitmap = null
+                    }
                 }
                 if (bitmap == null) {
                     // Either an external app is in front, or PixelCopy failed.
@@ -209,9 +267,31 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
                     }
                     lastAccessibilityAt = System.currentTimeMillis()
                     bitmap = AliMdmAccessibilityService.captureScreen(3000)
+                    // An all-black frame here does not mean a black screen: it is
+                    // what the capture policy returns when it is on. The hold
+                    // should prevent that, but something outside this module can
+                    // still set it — so check the policy and lift it again rather
+                    // than streaming black for the rest of the session.
+                    if (bitmap != null && isBlankFrame(bitmap) &&
+                        KioskModule.isScreenCapturePolicyBlocked(reactContext)) {
+                        Log.w(TAG, "Frame came back black and the capture policy is on again — re-lifting")
+                        bitmap.recycle()
+                        bitmap = null
+                        if (KioskModule.setScreenCapturePolicyBlocked(reactContext, false)) {
+                            liftedCapturePolicy = true
+                            Thread.sleep(POLICY_SETTLE_MS)
+                            bitmap = AliMdmAccessibilityService.captureScreen(3000)
+                        }
+                    }
                     // This path returns the whole display, not our window.
                     if (bitmap != null) lastFrameRect = fullDisplayRect()
                 }
+                // Nothing better arrived: a black kiosk screen is still the truth.
+                if (bitmap == null && blankPixelCopy != null) {
+                    bitmap = blankPixelCopy
+                    blankPixelCopy = null
+                }
+                blankPixelCopy?.recycle()
                 if (bitmap == null) {
                     failures++
                     if (failures >= MAX_CONSECUTIVE_FAILURES) {
@@ -332,6 +412,58 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
     private fun fullDisplayRect(): android.graphics.Rect {
         val m = reactContext.resources.displayMetrics
         return android.graphics.Rect(0, 0, m.widthPixels, m.heightPixels)
+    }
+
+    /**
+     * Is every sampled pixel opaque black? That is what a capture blocked by the
+     * screen-capture policy looks like. A genuinely black screen — a dim
+     * screensaver, a letterboxed video, a sleeping display — reads the same, so
+     * this is only ever used together with a check that the policy is actually
+     * on. Same sampling as the screenshot path in HttpServerModule.
+     */
+    private fun isBlankFrame(bitmap: Bitmap): Boolean {
+        val stepX = maxOf(1, bitmap.width / 16)
+        val stepY = maxOf(1, bitmap.height / 16)
+        var y = 0
+        while (y < bitmap.height) {
+            var x = 0
+            while (x < bitmap.width) {
+                if ((bitmap.getPixel(x, y) and 0x00FFFFFF) != 0) return false
+                x += stepX
+            }
+            y += stepY
+        }
+        return true
+    }
+
+    @Suppress("DEPRECATION") // SCREEN_BRIGHT_WAKE_LOCK is the only thing that
+    // lights a display we do not own a visible window on. The documented
+    // replacement, FLAG_KEEP_SCREEN_ON, is exactly what does not work here.
+    private fun acquireWakeLock() {
+        if (wakeLock != null) return
+        try {
+            val pm = reactContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            val lock = pm.newWakeLock(
+                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                    android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "AliMDM:LiveView",
+            )
+            lock.setReferenceCounted(false)
+            lock.acquire(WAKE_LOCK_TIMEOUT_MS)
+            wakeLock = lock
+            Log.i(TAG, "Live view holds the screen on for this session")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not hold the screen on: ${e.message}")
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.let { if (it.isHeld) it.release() }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not release the screen wake lock: ${e.message}")
+        }
+        wakeLock = null
     }
 
     /** PixelCopy of our own window, or null when it is not on screen. */

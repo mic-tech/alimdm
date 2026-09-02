@@ -158,6 +158,33 @@ class KioskModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         }
 
         /**
+         * Whether something is currently holding the screen-capture policy open.
+         *
+         * A live view lifts the policy for the length of its session, but every
+         * startLockTask() re-asserts it — and lock task restarts often: on a
+         * settings reload, on a policy sync, on the way back from an external
+         * app. The lift was therefore undone within seconds and every frame
+         * after that came back black, which is exactly what "live view cannot
+         * see other apps" turned out to be. The hold makes startLockTask leave
+         * the policy alone while a session owns it.
+         */
+        private val captureLiftHold = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        /**
+         * Claim or release the hold. The caller that sets it MUST clear it —
+         * ScreenStreamModule does so in the same place it restores the policy,
+         * so a stream that dies for any reason still puts the kiosk back. If
+         * the process dies outright the hold dies with it, and the next
+         * startLockTask re-blocks capture, so the failure mode is safe.
+         */
+        fun holdCaptureLift(hold: Boolean) {
+            captureLiftHold.set(hold)
+            android.util.Log.d("KioskModule", "Screen-capture lift hold = $hold")
+        }
+
+        fun isCaptureLiftHeld(): Boolean = captureLiftHold.get()
+
+        /**
          * #229 — Toggle the screen-capture policy. Used to lift it for the few hundred
          * milliseconds a remote screenshot takes, then put it straight back; callers MUST
          * restore it in a finally block. Returns true when the policy was actually changed.
@@ -711,7 +738,15 @@ class KioskModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
 
                             dpm.setLockTaskPackages(adminComponent, uniqueWhitelist.toTypedArray())
                             activity.startLockTask()
-                            dpm.setScreenCaptureDisabled(adminComponent, true)
+                            // Re-asserting the capture block here is what silently killed
+                            // a running live view: the session lifts the policy once, and
+                            // the next lock-task start put it straight back.
+                            if (captureLiftHold.get()) {
+                                android.util.Log.d("KioskModule",
+                                    "Live view holds the capture lift — not re-blocking screen capture")
+                            } else {
+                                dpm.setScreenCaptureDisabled(adminComponent, true)
+                            }
                             android.util.Log.d("KioskModule", "Full lock task started (Device Owner) with whitelist: $uniqueWhitelist")
                             // Update DE boot flag so the next LOCKED_BOOT_COMPLETED also locks immediately
                             BootReceiver.updateDeBootFlag(reactApplicationContext, true)
