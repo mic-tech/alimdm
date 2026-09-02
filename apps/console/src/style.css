@@ -1123,5 +1123,5 @@ code.code, .code {
 
 /* A stored value the app does not recognise — loud enough to notice, since
    nothing else on the page would ever tell you. */
-.unknown-note { color: var(--warning, #b45309); }
+.unknown-note { color: var(--yellow-700); }
 .unknown-note .mono { font-weight: 600; }
