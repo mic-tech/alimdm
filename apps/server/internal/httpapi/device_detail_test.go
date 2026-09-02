@@ -584,3 +584,65 @@ func TestPolicyCanBeReSentToAWholeGroup(t *testing.T) {
 		}
 	}
 }
+
+// Everything an operator reads names a device the way the console does: its
+// label, and the id only for one nobody has named. The feed used to carry raw
+// ids — "Sent screen_on to android-ec75eab22a9ed1cb" — which is the one string
+// in the sentence that means nothing to the person reading it.
+func TestNotificationsNameDevicesByLabel(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	e.newDeviceKey(t, "tablet-1")
+	if rec, _ := e.do("POST", "/api/v1/devices/tablet-1/name", tok, map[string]any{"name": "IQRA Tab 9"}); rec.Code != http.StatusOK {
+		t.Fatalf("rename: status %d", rec.Code)
+	}
+
+	// Renaming again is where the label matters: the entry says what it was
+	// called until now, and by now that is a name rather than an id.
+	if rec, _ := e.do("POST", "/api/v1/devices/tablet-1/name", tok, map[string]any{"name": "IQRA Tab 10"}); rec.Code != http.StatusOK {
+		t.Fatalf("second rename: status %d", rec.Code)
+	}
+	e.do("POST", "/api/v1/devices/tablet-1/commands", tok, map[string]any{"type": "screen_on"})
+	e.do("POST", "/api/v1/devices/tablet-1/config/resend", tok, nil)
+	e.do("POST", "/api/v1/devices/tablet-1/logs", tok, nil)
+	e.do("DELETE", "/api/v1/devices/tablet-1", tok, nil)
+
+	rec, _ := e.do("GET", "/api/v1/events", tok, nil)
+	var page struct {
+		Events []struct {
+			Kind    string `json:"kind"`
+			Summary string `json:"summary"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]string{}
+	for _, ev := range page.Events {
+		if _, dup := seen[ev.Kind]; !dup {
+			seen[ev.Kind] = ev.Summary
+		}
+	}
+	for _, kind := range []string{"command_sent", "config_resent", "logs_requested", "device_removed", "device_renamed"} {
+		summary, ok := seen[kind]
+		if !ok {
+			t.Errorf("no %s event was recorded", kind)
+			continue
+		}
+		if strings.Contains(summary, "tablet-1") {
+			t.Errorf("%s names the device by id: %q", kind, summary)
+		}
+		want := "IQRA Tab 10"
+		if kind == "device_renamed" {
+			// This one reports what the device was called before the change,
+			// which is the previous label — not the new one, and not the id.
+			want = "IQRA Tab 9"
+		}
+		if !strings.Contains(summary, want) {
+			t.Errorf("%s does not name the device: %q", kind, summary)
+		}
+	}
+}

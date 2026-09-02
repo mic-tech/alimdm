@@ -707,17 +707,21 @@ func (s *Server) unenroll(w http.ResponseWriter, r *http.Request) {
 // on the device itself.
 func (s *Server) forceUnenroll(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, err := s.st.GetDevice(id); err != nil {
+	dev, err := s.st.GetDevice(id)
+	if err != nil {
 		http.Error(w, "unknown device", http.StatusNotFound)
 		return
 	}
+	// Read before the row goes: afterwards there is nothing left to name it by.
+	removedLabel := deviceLabel(dev.ID, dev.Name)
 	if err := s.st.DeleteDevice(id); err != nil {
 		http.Error(w, "unenroll failed", http.StatusInternalServerError)
 		return
 	}
 	// Forget its picture too; the row is gone, the image should go with it.
 	s.snapshots.drop(id)
-	s.record(r, "device_removed", store.EventWarn, id, "Removed "+id+" from the console")
+	s.record(r, "device_removed", store.EventWarn, id,
+		"Removed "+removedLabel+" from the console")
 	writeJSON(w, map[string]any{"id": id, "unenrolled": true})
 }
 
@@ -1023,7 +1027,11 @@ func (s *Server) enqueueCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	// Poke the device over MQTT so it polls immediately instead of waiting for its tick.
 	s.pokes.Enqueue(id, device.Poke{Type: req.Type, Package: ""})
-	s.record(r, "command_sent", store.EventInfo, id, "Sent "+req.Type+" to "+id)
+	label := id
+	if dev, err := s.st.GetDevice(id); err == nil {
+		label = deviceLabel(dev.ID, dev.Name)
+	}
+	s.record(r, "command_sent", store.EventInfo, id, "Sent "+req.Type+" to "+label)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"id": c.ID, "status": "pending"})
 }
@@ -1256,18 +1264,21 @@ func (s *Server) renameDevice(w http.ResponseWriter, r *http.Request) {
 	if len(name) > 64 {
 		name = name[:64]
 	}
-	if _, err := s.st.GetDevice(id); err != nil {
+	dev, err := s.st.GetDevice(id)
+	if err != nil {
 		http.Error(w, "unknown device", http.StatusNotFound)
 		return
 	}
+	// Read before the change: the entry is about what it was called until now.
+	was := deviceLabel(dev.ID, dev.Name)
 	if err := s.st.SetDeviceName(id, name); err != nil {
 		http.Error(w, "rename failed", http.StatusInternalServerError)
 		return
 	}
 	if name == "" {
-		s.record(r, "device_renamed", store.EventInfo, id, "Cleared the label on "+id)
+		s.record(r, "device_renamed", store.EventInfo, id, "Cleared the label on "+was)
 	} else {
-		s.record(r, "device_renamed", store.EventInfo, id, "Labelled "+id+" \u201c"+name+"\u201d")
+		s.record(r, "device_renamed", store.EventInfo, id, "Renamed "+was+" to \u201c"+name+"\u201d")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"id": id, "name": name})

@@ -550,6 +550,13 @@ function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
 /* How an event's severity reads in the feeds, here and on the Activity page. */
 const SEVERITY_LABEL = { info: "Info", warn: "Attention", error: "Failure" };
 
+/* What to call a device in something a person reads. The label if it has one,
+   the id if nobody has named it — the same rule the device list, the kiosk
+   screen and the server's own notifications follow. */
+function deviceLabel(d) {
+  return d.label || d.name || d.id;
+}
+
 /* Asked before re-applying a policy, from the row or from the device's page.
    It is worth confirming: any setting someone changed on the tablet itself is
    about to go back to what the policy says. */
@@ -1359,10 +1366,14 @@ function Devices({ onErr, navigate }) {
   }, [onErr]);
   useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [load]);
 
-  async function cmd(id, type) {
-    if (!confirm(`Send "${type}" to ${id}?`)) return;
+  // Every message here names the device the way the page does: its label, and
+  // the id only for one nobody has named. An operator reads "IQRA Tab 2", not
+  // android-6cabbb95036a8830.
+  async function cmd(d, type) {
+    const who = deviceLabel(d);
+    if (type !== "screen_on" && !confirm(`Send "${type}" to ${who}?`)) return;
     setBusy(true);
-    try { await api.sendCommand(id, type); toast(`Sent ${type} to ${id}`); load(); }
+    try { await api.sendCommand(d.id, type); toast(`Sent ${type} to ${who}`); load(); }
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
@@ -1370,15 +1381,15 @@ function Devices({ onErr, navigate }) {
   // when it thinks a device is behind, so a tablet changed locally is never
   // corrected without this.
   async function resendConfig(d) {
-    if (!confirm(resendPrompt(d.name || d.id))) return;
+    if (!confirm(resendPrompt(deviceLabel(d)))) return;
     setBusy(true);
-    try { await api.resendDeviceConfig(d.id); toast(`The policy will be sent again to ${d.name || d.id}`); }
+    try { await api.resendDeviceConfig(d.id); toast(`The policy will be sent again to ${deviceLabel(d)}`); }
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
-  async function moveGroup(id, newGroup) {
+  async function moveGroup(d, newGroup) {
     setBusy(true);
-    try { await api.moveDeviceGroup(id, newGroup); toast(`Moved ${id} to ${newGroup}`); load(); }
+    try { await api.moveDeviceGroup(d.id, newGroup); toast(`Moved ${deviceLabel(d)} to ${newGroup}`); load(); }
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
@@ -1387,8 +1398,9 @@ function Devices({ onErr, navigate }) {
   async function renameDevice(id, name, previous) {
     const next = name.trim().slice(0, 64);
     if (next === (previous || "")) return;
+    const was = previous || id;
     setBusy(true);
-    try { await api.renameDevice(id, next); toast(next ? `Renamed ${id} to "${next}"` : `Cleared label on ${id}`); load(); }
+    try { await api.renameDevice(id, next); toast(next ? `Renamed ${was} to "${next}"` : `Cleared the label on ${was}`); load(); }
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
@@ -1555,7 +1567,7 @@ function Devices({ onErr, navigate }) {
                   {d.last_seen ? timeAgo(d.last_seen) : <span className="muted">Never</span>}
                 </td>
                 <td data-label="Group">
-                  <select value={d.group_id || ""} onChange={(e) => moveGroup(d.id, e.target.value)}
+                  <select value={d.group_id || ""} onChange={(e) => moveGroup(d, e.target.value)}
                     style={{ minWidth: 140, maxWidth: 180 }}>
                     {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                   </select>
@@ -1569,13 +1581,13 @@ function Devices({ onErr, navigate }) {
                       next to it already did. */}
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
                     <button className="btn outline sm icon" title="Wake the screen" disabled={busy}
-                      onClick={() => cmd(d.id, "screen_on")}><IconMonitor /></button>
+                      onClick={() => cmd(d, "screen_on")}><IconMonitor /></button>
                     <button className="btn outline sm icon" title="Reboot" disabled={busy}
-                      onClick={() => cmd(d.id, "reboot")}><IconPower /></button>
+                      onClick={() => cmd(d, "reboot")}><IconPower /></button>
                     <button className="btn outline sm icon" title="Lock" disabled={busy}
-                      onClick={() => cmd(d.id, "lock")}><IconLock /></button>
+                      onClick={() => cmd(d, "lock")}><IconLock /></button>
                     <button className="btn outline sm icon" title="Unlock" disabled={busy}
-                      onClick={() => cmd(d.id, "unlock")}><IconUnlock /></button>
+                      onClick={() => cmd(d, "unlock")}><IconUnlock /></button>
                     <button className="btn outline sm icon" title="Re-apply policy" disabled={busy}
                       aria-label={`Re-apply the policy to ${d.name || d.id}`}
                       onClick={() => resendConfig(d)}><IconRefresh /></button>
@@ -2126,7 +2138,7 @@ function Files({ onErr }) {
 
   const deviceName = (id) => {
     const d = devices.find((x) => x.id === id);
-    return d && d.name ? d.name : id;
+    return d ? deviceLabel(d) : id;
   };
 
   if (!files) return <Loading label="Loading files…" />;

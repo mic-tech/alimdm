@@ -325,8 +325,12 @@ func (s *Server) deleteDeviceFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not queue the deletion")
 		return
 	}
+	label := id
+	if dev, err := s.st.GetDevice(id); err == nil {
+		label = deviceLabel(dev.ID, dev.Name)
+	}
 	s.record(r, "device_file_deleted", store.EventWarn, id,
-		"Asked "+id+" to delete "+name+" from its inbox")
+		"Asked "+label+" to delete "+name+" from its inbox")
 	writeJSON(w, map[string]any{"queued": true})
 }
 
