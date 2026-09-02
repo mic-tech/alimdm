@@ -303,10 +303,19 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
             return;
           }
           
-          // Mode immediate: relancer directement
+          // 'immediate' and 'ignore' both relaunch at once, for different
+          // reasons: immediate says so, and ignore means the pupil has no way
+          // out of the app, so leaving them parked on Ali MDM would contradict
+          // the setting they chose. Anything else is a value this build does
+          // not know — relaunching is the safe reading for a kiosk, but say so
+          // in the log rather than letting it ride the end of an if-chain the
+          // way 'ignore' silently did before it was a named mode.
+          if (currentBackButtonMode !== 'immediate' && currentBackButtonMode !== 'ignore') {
+            console.warn(`[KioskScreen] Unknown back button mode "${currentBackButtonMode}" — relaunching as if immediate`);
+          }
           const currentPackage = await StorageService.getExternalAppPackage();
           if (currentDisplayMode === 'external_app' && currentPackage) {
-            console.log('[KioskScreen] Immediate mode: relaunching', currentPackage);
+            console.log(`[KioskScreen] ${currentBackButtonMode} mode: relaunching`, currentPackage);
             appLaunchTimeoutRef.current = setTimeout(() => {
               launchExternalApp(currentPackage);
             }, 300);
