@@ -515,3 +515,72 @@ func TestDeviceReportsItsGroupsPolicyVersion(t *testing.T) {
 		t.Errorf("list reports config_version %v, want v%d", list[0]["config_version"], g.ConfigVersion)
 	}
 }
+
+// Re-applying a policy is the only "push" a pull channel allows: the server
+// stops assuming the device already has the config, and hands it over in full
+// on the next check-in.
+//
+// Without it a tablet whose settings have drifted is never corrected — the
+// config is sent only when the hash differs, and after the first delivery it
+// never does.
+func TestPolicyCanBeReSentToOneDevice(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	key := e.newDeviceKey(t, "tablet-1")
+
+	// First check-in: the device is behind, so it is sent the config.
+	_, body := e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{})
+	if body["sync_action"] != "apply" {
+		t.Fatalf("first heartbeat: sync_action = %v, want apply", body["sync_action"])
+	}
+	// Second: nothing changed, so nothing is sent. This is the state a drifted
+	// tablet is stuck in.
+	_, body = e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{})
+	if body["sync_action"] != "none" || body["config"] != nil {
+		t.Fatalf("second heartbeat: sync_action = %v, config = %v", body["sync_action"], body["config"])
+	}
+
+	if rec, out := e.do("POST", "/api/v1/devices/tablet-1/config/resend", tok, nil); rec.Code != http.StatusOK {
+		t.Fatalf("resend: status %d", rec.Code)
+	} else if n, _ := out["resent"].(float64); int(n) != 1 {
+		t.Errorf("resent = %v, want 1", out["resent"])
+	}
+
+	_, body = e.do("POST", "/api/v1/devices/tablet-1/heartbeat", key, map[string]any{})
+	if body["sync_action"] != "apply" {
+		t.Errorf("after a resend: sync_action = %v, want apply", body["sync_action"])
+	}
+	if body["config"] == nil {
+		t.Error("after a resend the config was not sent; the device would keep whatever it drifted to")
+	}
+}
+
+// The same for a whole group, which is how a policy is normally re-applied:
+// every device in it, in one action.
+func TestPolicyCanBeReSentToAWholeGroup(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]string{}
+	for _, id := range []string{"tablet-1", "tablet-2"} {
+		keys[id] = e.newDeviceKey(t, id)
+		e.do("POST", "/api/v1/devices/"+id+"/heartbeat", keys[id], map[string]any{})
+		e.do("POST", "/api/v1/devices/"+id+"/heartbeat", keys[id], map[string]any{})
+	}
+
+	_, out := e.do("POST", "/api/v1/groups/"+testGroup.ID+"/config/resend", tok, nil)
+	if n, _ := out["resent"].(float64); int(n) != 2 {
+		t.Fatalf("resent = %v, want both devices", out["resent"])
+	}
+	for id, key := range keys {
+		_, body := e.do("POST", "/api/v1/devices/"+id+"/heartbeat", key, map[string]any{})
+		if body["sync_action"] != "apply" {
+			t.Errorf("%s: sync_action = %v after a group resend, want apply", id, body["sync_action"])
+		}
+	}
+}

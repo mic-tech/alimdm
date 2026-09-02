@@ -160,6 +160,9 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("PUT /api/v1/groups/{id}", s.requireOperator(s.updateGroup))
 	mux.HandleFunc("DELETE /api/v1/groups/{id}", s.requireOperator(s.deleteGroup))
 	mux.HandleFunc("POST /api/v1/devices/{id}/group", s.requireOperator(s.moveDeviceGroup))
+	// Re-deliver the policy: to one device, or to a whole group at once.
+	mux.HandleFunc("POST /api/v1/devices/{id}/config/resend", s.requireOperator(s.resendDeviceConfig))
+	mux.HandleFunc("POST /api/v1/groups/{id}/config/resend", s.requireOperator(s.resendGroupConfig))
 	mux.HandleFunc("POST /api/v1/devices/{id}/name", s.requireOperator(s.renameDevice))
 	// Forced unenrolment, operator-side. Needs no cooperation from the tablet.
 	mux.HandleFunc("DELETE /api/v1/devices/{id}", s.requireOperator(s.forceUnenroll))
@@ -922,6 +925,47 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 
 // maxCommandResultBytes bounds what a device may post back as a command result.
 const maxCommandResultBytes = 1 << 20
+
+// resendDeviceConfig has one device treated as out of date, so its next
+// check-in is answered with the policy in full.
+//
+// There is no push: the tablets are behind school NAT and the config travels on
+// the heartbeat they make every 30 seconds. What this does is make the server
+// stop assuming the device already has it — which it assumes for good after the
+// first delivery, and which is wrong the moment anything on the tablet drifts.
+func (s *Server) resendDeviceConfig(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	dev, err := s.st.GetDevice(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "unknown device")
+		return
+	}
+	if err := s.st.ResendConfig(dev.ID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not queue the policy")
+		return
+	}
+	s.record(r, "config_resent", store.EventInfo, dev.ID,
+		"Re-sending the policy to "+deviceLabel(dev.ID, dev.Name))
+	writeJSON(w, map[string]any{"resent": 1})
+}
+
+// resendGroupConfig does the same for every device in a group.
+func (s *Server) resendGroupConfig(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	g, err := s.st.GetGroup(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "unknown group")
+		return
+	}
+	n, err := s.st.ResendConfigToGroup(g.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not queue the policy")
+		return
+	}
+	s.record(r, "config_resent", store.EventInfo, "",
+		fmt.Sprintf("Re-sending the %s policy to %s", g.Name, plural(n, "device", "devices")))
+	writeJSON(w, map[string]any{"resent": n})
+}
 
 // singleTarget names the device an action was aimed at, when it was aimed at
 // exactly one. Empty for a fleet-wide action, which has no single device to

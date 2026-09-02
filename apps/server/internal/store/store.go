@@ -410,6 +410,31 @@ func (s *Store) SetDeviceGroup(deviceID, groupID string) error {
 	return err
 }
 
+// ResendConfig makes a device look out of date so its next check-in is answered
+// with the whole policy again.
+//
+// Config is only sent when the group's hash differs from the one the device was
+// last handed, so a tablet whose settings have drifted — someone changed
+// something on the device, a write failed halfway, the app was reinstalled —
+// sits there looking perfectly in sync and is never corrected. Clearing the
+// hash is the only lever: the tablets are behind NAT, so nothing can be pushed
+// to them, and this is what "re-apply the policy" means on a pull channel.
+func (s *Store) ResendConfig(deviceID string) error {
+	_, err := s.db.Exec(`UPDATE devices SET last_applied_hash='' WHERE id=?`, deviceID)
+	return err
+}
+
+// ResendConfigToGroup does the same for every device in a group, and says how
+// many that was.
+func (s *Store) ResendConfigToGroup(groupID string) (int, error) {
+	res, err := s.db.Exec(`UPDATE devices SET last_applied_hash='' WHERE group_id=?`, groupID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
 // DeleteDevice removes a device and everything keyed to it.
 //
 // This is the server half of a forced unenrolment: it revokes the device's API

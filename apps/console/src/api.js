@@ -63,6 +63,11 @@ export const api = {
   createGroup: (body) => req("POST", "/groups", body),
   deleteGroup: (id) => req("DELETE", "/groups/" + id),
   moveDeviceGroup: (id, group_id) => req("POST", "/devices/" + id + "/group", { group_id }),
+  // Re-deliver the policy. There is no push — the tablets are behind NAT — so
+  // this makes the server stop assuming the device already has the config, and
+  // hand it over in full on the next check-in.
+  resendDeviceConfig: (id) => req("POST", "/devices/" + encodeURIComponent(id) + "/config/resend", {}),
+  resendGroupConfig: (id) => req("POST", "/groups/" + encodeURIComponent(id) + "/config/resend", {}),
   renameDevice: (id, name) => req("POST", "/devices/" + id + "/name", { name }),
   listAPKs: () => req("GET", "/apks"),
   // Setup-wizard provisioning payload. Operator-only: it carries the enrolment token.

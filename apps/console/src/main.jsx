@@ -855,6 +855,18 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
+  // For a device whose settings have drifted from the policy. The server only
+  // sends config when it thinks the device is behind, so a tablet that was
+  // changed locally sits there looking in sync and is never corrected.
+  async function resendConfig() {
+    setBusy(true);
+    try {
+      await api.resendDeviceConfig(d.id);
+      toast("The policy will be sent again on the next check-in");
+      load();
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
   // Only the app can surrender Device Owner, so this is a queued command
   // rather than something the server can do — unlike removing the device.
   async function releaseOwner() {
@@ -939,6 +951,10 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
             </button>
             <button className="btn outline sm" disabled={busy} onClick={() => cmd("unlock", "Unlock")}>
               <IconUnlock />Unlock
+            </button>
+            <button className="btn outline sm" disabled={busy} onClick={resendConfig}
+              title="Send the whole policy again on this device's next check-in. For a tablet whose settings have drifted — the policy is only sent when the console thinks the device is behind.">
+              <IconSave />Re-apply policy
             </button>
           </div>
         }>
@@ -1422,7 +1438,9 @@ function Devices({ onErr, navigate }) {
                   {/* The quick ones only. Live view, files, and anything that
                       cannot be undone are on the device's own page, where there
                       is room to explain them and no chance of hitting one while
-                      aiming at the row above. */}
+                      aiming at the row above. The name opens that page; a
+                      second control for it was a button saying what the link
+                      next to it already did. */}
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
                     <button className="btn outline sm icon" title="Reboot" disabled={busy}
                       onClick={() => cmd(d.id, "reboot")}><IconPower /></button>
@@ -1430,8 +1448,6 @@ function Devices({ onErr, navigate }) {
                       onClick={() => cmd(d.id, "lock")}><IconLock /></button>
                     <button className="btn outline sm icon" title="Unlock" disabled={busy}
                       onClick={() => cmd(d.id, "unlock")}><IconUnlock /></button>
-                    <a className="btn outline sm" {...linkTo(pathForDevice(d.id), navigate)}
-                      title="Everything about this device">Open</a>
                   </div>
                 </td>
               </tr>

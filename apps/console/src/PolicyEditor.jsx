@@ -3,7 +3,7 @@ import { api } from "./api";
 import { POLICY_TABS, POLICY_FIELDS } from "./policySchema";
 import {
   IconHome, IconGrid, IconMonitor, IconShield, IconKey, IconSliders,
-  IconPlus, IconTrash, IconSave, IconWarning, IconInfo,
+  IconPlus, IconTrash, IconSave, IconWarning, IconInfo, IconRefresh,
 } from "./icons.jsx";
 
 // The schema names icons after the app's icon font; map them onto our set.
@@ -467,6 +467,23 @@ export default function PolicyEditor({ groupId, onErr, onClose }) {
   }
 
   const fieldsInTab = POLICY_FIELDS.filter((f) => f.tab === tab);
+  async function resend() {
+    setBusy(true);
+    try {
+      const r = await api.resendGroupConfig(groupId);
+      const n = r?.resent ?? 0;
+      const el = document.getElementById("toast");
+      if (el) {
+        el.textContent = n === 1
+          ? "The policy will be sent again to 1 device on its next check-in"
+          : `The policy will be sent again to ${n} devices on their next check-in`;
+        el.className = "toast ok"; el.style.display = "flex";
+        setTimeout(() => (el.style.display = "none"), 3600);
+      }
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
   const activeTab = POLICY_TABS.find((t) => t.id === tab);
 
   return (
@@ -537,9 +554,18 @@ export default function PolicyEditor({ groupId, onErr, onClose }) {
         <span className="small muted">
           Changes apply to every device in <span className="mono">{groupId}</span> on its next sync.
         </span>
-        <button className="btn" disabled={busy || !dirty} onClick={save}>
-          <IconSave />{busy ? "Saving…" : "Save policy"}
-        </button>
+        <div className="btn-group">
+          {/* Saving only reaches devices that are behind, which after the first
+              delivery is none of them. This is how an unchanged policy gets
+              applied again to tablets that have drifted from it. */}
+          <button className="btn outline" disabled={busy} onClick={resend}
+            title="Send this policy again to every device in the group, on each one's next check-in. Use it when a tablet's settings have drifted from the policy.">
+            <IconRefresh />{busy ? "Working…" : "Re-apply to all"}
+          </button>
+          <button className="btn" disabled={busy || !dirty} onClick={save}>
+            <IconSave />{busy ? "Saving…" : "Save policy"}
+          </button>
+        </div>
       </div>
     </div>
   );
