@@ -425,6 +425,15 @@ function LiveView({ device, onErr }) {
                   title={key} onClick={() => send({ type: "key", key })}>{glyph}</button>
               ))}
             </span>
+            {/* Scrolling on a tablet is a finger, not a wheel: these send a drag
+                across the middle of the screen. Named for what you want to see,
+                so Scroll down shows what is further down the page. */}
+            <span className="keypad" role="group" aria-label="Scroll">
+              <button className="btn outline sm" title="Scroll up — swipes down on the device"
+                onClick={() => send({ type: "scroll", dir: "up" })}>Scroll ↑</button>
+              <button className="btn outline sm" title="Scroll down — swipes up on the device"
+                onClick={() => send({ type: "scroll", dir: "down" })}>Scroll ↓</button>
+            </span>
             <button className="btn outline sm" title="Send the Enter key on its own"
               onClick={() => send({ type: "key", key: "enter" })}>Enter</button>
             <input className="grow" placeholder="Type into the device…" value={typing}

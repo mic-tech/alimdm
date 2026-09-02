@@ -58,6 +58,34 @@ class AliMdmAccessibilityService : AccessibilityService() {
         
         fun isRunning(): Boolean = instance != null
 
+        /**
+         * Drag from one point to another, in display pixels.
+         *
+         * This is what scrolling is on a tablet: there is no scroll wheel to
+         * send, only a finger moving. The caller decides the points, for the
+         * same reason it decides a tap's — the rectangle the operator was
+         * looking at is not always the whole display.
+         */
+        fun swipeBetween(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long): Boolean {
+            val service = instance ?: return false
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
+            return try {
+                val path = Path().apply {
+                    moveTo(x1, y1)
+                    lineTo(x2, y2)
+                }
+                val gesture = GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
+                    .build()
+                val ok = service.dispatchGesture(gesture, null, null)
+                DebugLog.i(TAG, "Swipe ($x1, $y1) -> ($x2, $y2) dispatched=$ok")
+                ok
+            } catch (e: Exception) {
+                DebugLog.errorProduction(TAG, "Swipe failed: ${e.message}")
+                false
+            }
+        }
+
         /** Whether Android has granted this service the gesture capability. */
         fun canPerformGestures(): Boolean {
             val info = instance?.serviceInfo ?: return false

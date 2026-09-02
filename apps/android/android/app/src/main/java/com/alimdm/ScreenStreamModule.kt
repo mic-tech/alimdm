@@ -52,6 +52,12 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
         /** The platform will not take accessibility screenshots faster than this. */
         private const val ACCESSIBILITY_MIN_INTERVAL_MS = 1100L
 
+        /**
+         * How long a scroll drag takes. Long enough that Android reads it as a
+         * scroll rather than a fling, short enough not to feel stuck.
+         */
+        private const val SCROLL_DURATION_MS = 260L
+
         /** Give up on a session that cannot reach the server for this long. */
         private const val MAX_CONSECUTIVE_FAILURES = 10
 
@@ -296,6 +302,22 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
                         else -> 0
                     }
                     code != 0 && AliMdmAccessibilityService.sendKey(code)
+                }
+                "scroll" -> {
+                    // Down means "show me what is further down the page", which
+                    // is a finger moving up. Named for what the operator wants
+                    // rather than which way the finger goes, because the button
+                    // says Scroll down and that is what it must do.
+                    val rect = lastFrameRect ?: fullDisplayRect()
+                    val x = (rect.left + rect.width() / 2).toFloat()
+                    val near = (rect.top + rect.height() * 0.70).toFloat()
+                    val far = (rect.top + rect.height() * 0.30).toFloat()
+                    val down = e.optString("dir") == "down"
+                    AliMdmAccessibilityService.swipeBetween(
+                        x, if (down) near else far,
+                        x, if (down) far else near,
+                        SCROLL_DURATION_MS,
+                    )
                 }
                 "text" -> AliMdmAccessibilityService.sendText(e.optString("text"))
                 else -> false

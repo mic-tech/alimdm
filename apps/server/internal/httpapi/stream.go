@@ -61,8 +61,9 @@ type inputEvent struct {
 	Type string  `json:"type"`           // "tap" | "key" | "text"
 	X    float64 `json:"x,omitempty"`    // 0..1 across
 	Y    float64 `json:"y,omitempty"`    // 0..1 down
-	Key  string  `json:"key,omitempty"`  // "back" | "home"
+	Key  string  `json:"key,omitempty"`  // "back" | "home" | "enter" | an arrow
 	Text string  `json:"text,omitempty"` // typed into whatever has focus
+	Dir  string  `json:"dir,omitempty"`  // "up" | "down", for a scroll
 }
 
 // controlKeys is what an operator may press. A short list on purpose: these are
@@ -277,6 +278,13 @@ func (s *Server) sendInput(w http.ResponseWriter, r *http.Request) {
 	case "key":
 		if !controlKeys[e.Key] {
 			writeErr(w, http.StatusBadRequest, "unknown key")
+			return
+		}
+	case "scroll":
+		// A scroll is a drag on a tablet, not a wheel: the device turns this
+		// into a finger moving across the picture the operator is looking at.
+		if e.Dir != "up" && e.Dir != "down" {
+			writeErr(w, http.StatusBadRequest, "scroll must be up or down")
 			return
 		}
 	case "text":
