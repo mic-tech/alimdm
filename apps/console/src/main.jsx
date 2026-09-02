@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { createRoot } from "react-dom/client";
 import { api, getToken, setToken } from "./api.js";
 import PolicyEditor from "./PolicyEditor";
+import { defaultPolicyConfig } from "./policySchema";
 import QRCode from "qrcode";
 import logoLockup from "./assets/ali-mdm-lockup-h.svg";
 import logoMark from "./assets/ali-mdm-logo.svg";
@@ -198,7 +199,11 @@ function Groups({ onErr }) {
     setBusy(true);
     try {
       const body = { id: newId.trim(), name: newName.trim() || newId.trim() };
+      // "Start from" is a deliberate choice to inherit another group's policy;
+      // otherwise the group starts at the app's own defaults rather than at
+      // nothing, so every device moved into it lands in the same known state.
       if (copyFrom) body.copy_from = copyFrom;
+      else body.config = JSON.stringify(defaultPolicyConfig());
       await api.createGroup(body);
       toast(`Created group "${newId.trim()}"`);
       setNewId(""); setNewName(""); setCopyFrom(""); setAdding(false);
@@ -286,7 +291,11 @@ function Groups({ onErr }) {
             <button className="btn" disabled={busy} onClick={create}>
               <IconPlus />{busy ? "Creating…" : "Create group"}
             </button>
-            <span className="muted small">“Start from” copies an existing group’s policy so you can tweak it.</span>
+            <span className="muted small">
+              “Start from” copies an existing group’s policy so you can tweak it. Without it the
+              group starts at the app’s defaults — which include <strong>Lock mode off</strong>, so
+              set the policy before moving locked devices in.
+            </span>
           </>}
         >
           <div className="field-grid">

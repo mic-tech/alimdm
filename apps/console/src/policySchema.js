@@ -543,3 +543,35 @@ export const POLICY_FIELDS = [
     default: false,
     help: "Run camera motion detection continuously rather than only during the screensaver. It costs battery, and it means the camera is watching the room all day." },
 ];
+
+/**
+ * The policy a brand-new group starts with.
+ *
+ * An empty policy and a policy full of defaults are not the same thing. An
+ * empty one says nothing, so every device in the group keeps whatever it
+ * happens to have — which for a device enrolled by hand, or one a teacher has
+ * been into the settings of, is not necessarily what anyone chose. Writing the
+ * defaults in makes a new group mean something: every device in it is put into
+ * the same known state, and the editor shows the administrator what that state
+ * is instead of a page of blanks.
+ *
+ * Empty strings and empty lists are left out. They would apply as "clear this"
+ * on the device while looking exactly like an unset field in the editor, which
+ * is the worst of both — the URL, the app package and the various lists are
+ * things an administrator fills in, not things a new group should blank.
+ *
+ * Not used when a group is created with "Start from": copying an existing
+ * policy is a deliberate choice to inherit it, defaults included.
+ */
+export function defaultPolicyConfig() {
+  const cfg = {};
+  for (const f of POLICY_FIELDS) {
+    const d = f.default;
+    if (d === undefined || d === "" || (Array.isArray(d) && d.length === 0)) continue;
+    const parts = f.path.split(".");
+    let node = cfg;
+    for (const p of parts.slice(0, -1)) node = node[p] ??= {};
+    node[parts.at(-1)] = d;
+  }
+  return cfg;
+}

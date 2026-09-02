@@ -157,7 +157,10 @@ function defaultLabel(field) {
     return opt ? opt.label : String(d);
   }
   const shown = toDisplay(d, field);
-  return field.unit ? shown + " " + field.unit : String(shown);
+  // "50%" reads as one value; "50 %" reads as two. Percent sits tight against
+  // the number, every other unit is a word and takes a space.
+  if (!field.unit) return String(shown);
+  return field.unit === "%" ? shown + "%" : shown + " " + field.unit;
 }
 
 /**
