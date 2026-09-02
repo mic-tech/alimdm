@@ -285,10 +285,21 @@ class CloudCommandServiceClass {
       // lock-task API, so call KioskModule here and skip the native/executeAction path.
       if (command === 'lockKiosk' || command === 'unlockKiosk') {
         if (!KioskModule) return { ok: false, error: 'KioskModule unavailable' };
-        const ok = command === 'lockKiosk'
+        const locking = command === 'lockKiosk';
+        // Persist the setting, not just the lock task. Releasing lock task on
+        // its own lasted seconds: KioskScreen re-applies whatever the stored
+        // Lock Mode setting says whenever it reloads — on focus, on a config
+        // push, on resume — so an unlocked tablet locked itself again while the
+        // console reported success and the device's own Security tab still read
+        // "on". The setting is what an operator is asking to change.
+        //
+        // A device-level override: the group's policy wins again the next time
+        // it is applied, which is what "Re-apply policy" is for.
+        await StorageService.saveKioskEnabled(locking);
+        const ok = locking
           ? await KioskModule.startLockTask(null, true, true, true, true)
           : await KioskModule.stopLockTask();
-        return ok ? { ok: true } : { ok: false, error: (command === 'lockKiosk' ? 'startLockTask' : 'stopLockTask') + ' failed' };
+        return ok ? { ok: true } : { ok: false, error: (locking ? 'startLockTask' : 'stopLockTask') + ' failed' };
       }
 
       // Releasing Device Owner: leave lock task first, mirroring the on-device

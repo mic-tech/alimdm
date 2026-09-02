@@ -220,6 +220,23 @@ class KioskWatchdogService : Service() {
 
         // Re-check kiosk setting each cycle (user may have turned it off)
         if (!isKioskEnabled()) {
+            // Turning Lock Mode off used to stop this service outright, and with
+            // it the foreground service an enrolled tablet needs to keep
+            // checking in. The device then dropped off the console until
+            // somebody touched it — which is what happened the first time the
+            // console's Unlock button was made to change the setting rather
+            // than only release lock task. Reaching that state from the tablet's
+            // own settings screen did the same thing, silently.
+            //
+            // So: stop guarding the kiosk, but keep the process alive while
+            // anything still depends on it.
+            if (keepAliveStillNeeded()) {
+                DebugLog.i(TAG, "Kiosk mode disabled — downgrading to keep-alive")
+                keepAliveOnly = true
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_KEEPALIVE_ONLY, true).apply()
+                return
+            }
             DebugLog.d(TAG, "Kiosk mode disabled — stopping watchdog")
             stopSelf()
             return

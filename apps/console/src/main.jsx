@@ -559,6 +559,22 @@ function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
 /* How an event's severity reads in the feeds, here and on the Activity page. */
 const SEVERITY_LABEL = { info: "Info", warn: "Attention", error: "Failure" };
 
+/* What a command is about to do, for the dialog that asks first. Lock and
+   unlock change the device's Lock Mode setting and not just the lock task, so
+   they say so — and say how it comes back. */
+function commandPrompt(type, who) {
+  if (type === "unlock") {
+    return `Unlock ${who}?\n\nIt leaves kiosk mode and stays out of it — a pupil can reach other apps and the home screen — until the group's policy is applied to it again.`;
+  }
+  if (type === "lock") {
+    return `Lock ${who}?\n\nIt returns to kiosk mode with the policy's app whitelist.`;
+  }
+  if (type === "reboot") {
+    return `Reboot ${who}?\n\nWhoever is using it loses what is on screen.`;
+  }
+  return `Send "${type}" to ${who}?`;
+}
+
 /* What to call a device in something a person reads. The label if it has one,
    the id if nobody has named it — the same rule the device list, the kiosk
    screen and the server's own notifications follow. */
@@ -956,10 +972,10 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
   useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [load]);
   useEffect(() => { api.listGroups().then(setGroups).catch(() => {/* the group row just shows its id */}); }, []);
 
-  async function cmd(type, label) {
+  async function cmd(type) {
     // Waking a screen is not worth a dialog; the rest interrupt whoever is
     // holding the tablet.
-    if (type !== "screen_on" && !confirm(`${label} ${d.label}?`)) return;
+    if (type !== "screen_on" && !confirm(commandPrompt(type, d.label))) return;
     setBusy(true);
     try { await api.sendCommand(d.id, type); toast(`Sent ${type} to ${d.label}`); load(); }
     catch (e) { onErr(e.message); }
@@ -1072,16 +1088,16 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
             {/* screen_on, not wake: wake only clears the screensaver overlay and
                 resets the inactivity timer, while screen_on is what actually
                 turns the display on. */}
-            <button className="btn outline sm" disabled={busy} onClick={() => cmd("screen_on", "Wake")}>
+            <button className="btn outline sm" disabled={busy} onClick={() => cmd("screen_on")}>
               <IconMonitor />Wake
             </button>
-            <button className="btn outline sm" disabled={busy} onClick={() => cmd("reboot", "Reboot")}>
+            <button className="btn outline sm" disabled={busy} onClick={() => cmd("reboot")}>
               <IconPower />Reboot
             </button>
-            <button className="btn outline sm" disabled={busy} onClick={() => cmd("lock", "Lock")}>
+            <button className="btn outline sm" disabled={busy} onClick={() => cmd("lock")}>
               <IconLock />Lock
             </button>
-            <button className="btn outline sm" disabled={busy} onClick={() => cmd("unlock", "Unlock")}>
+            <button className="btn outline sm" disabled={busy} onClick={() => cmd("unlock")}>
               <IconUnlock />Unlock
             </button>
             <button className="btn outline sm" disabled={busy} onClick={resendConfig}
@@ -1380,7 +1396,7 @@ function Devices({ onErr, navigate }) {
   // android-6cabbb95036a8830.
   async function cmd(d, type) {
     const who = deviceLabel(d);
-    if (type !== "screen_on" && !confirm(`Send "${type}" to ${who}?`)) return;
+    if (type !== "screen_on" && !confirm(commandPrompt(type, who))) return;
     setBusy(true);
     try { await api.sendCommand(d.id, type); toast(`Sent ${type} to ${who}`); load(); }
     catch (e) { onErr(e.message); }
