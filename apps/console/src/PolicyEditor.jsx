@@ -160,6 +160,27 @@ function defaultLabel(field) {
   return field.unit ? shown + " " + field.unit : String(shown);
 }
 
+/**
+ * A stored value that is not one of the offered options.
+ *
+ * Older versions of this editor wrote option values the app has never heard
+ * of, and nothing anywhere rejects them: the device stores the string, it
+ * matches no branch, and the setting quietly does something other than what
+ * the console said. Left alone, such a field renders as a pill group with
+ * nothing selected, which reads as "unset" and hides the problem. Say it
+ * instead — the value is on screen and the fix is to pick a real one.
+ */
+function UnknownValueNote({ field, value }) {
+  if (field.type !== "select" || value === undefined || value === null || value === "") return null;
+  if ((field.options || []).some((o) => o.value === value)) return null;
+  return (
+    <div className="form-desc unknown-note">
+      This policy holds <span className="mono">{String(value)}</span>, which is not one of the
+      values the app understands — it is ignoring the setting. Choose one above to replace it.
+    </div>
+  );
+}
+
 /* Shown only while a field is unset — once it has a value, the note is noise. */
 function DefaultNote({ field, value }) {
   if (value !== undefined && value !== null && value !== "") return null;
@@ -305,6 +326,7 @@ function FieldControl({ field, value, onChange }) {
         {control}
         {help}
         <DefaultNote field={field} value={value} />
+        <UnknownValueNote field={field} value={value} />
         {field.danger && <DangerNote />}
       </div>
     );
@@ -316,6 +338,7 @@ function FieldControl({ field, value, onChange }) {
         <div className="control-line">{control}</div>
         {help}
         <DefaultNote field={field} value={value} />
+        <UnknownValueNote field={field} value={value} />
         {field.danger && <DangerNote />}
       </div>
     </div>

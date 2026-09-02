@@ -1120,3 +1120,8 @@ code.code, .code {
 
 /* The option a device falls back to, marked only while nothing is chosen. */
 .pill.is-default { border-color: var(--border); border-style: dashed; }
+
+/* A stored value the app does not recognise — loud enough to notice, since
+   nothing else on the page would ever tell you. */
+.unknown-note { color: var(--warning, #b45309); }
+.unknown-note .mono { font-weight: 600; }
