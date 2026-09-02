@@ -293,8 +293,8 @@ function Groups({ onErr }) {
             </button>
             <span className="muted small">
               “Start from” copies an existing group’s policy so you can tweak it. Without it the
-              group starts at the app’s defaults — which include <strong>Lock mode off</strong>, so
-              set the policy before moving locked devices in.
+              group starts locked down — kiosk on, Back ignored, PIN <span className="mono">1234</span>
+              — so check the policy before moving devices in.
             </span>
           </>}
         >
