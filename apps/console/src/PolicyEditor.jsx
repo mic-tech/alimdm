@@ -150,8 +150,10 @@ function defaultLabel(field) {
   const d = field.default;
   if (d === undefined) return null;
   if (field.type === "bool") return d ? "On" : "Off";
-  if (Array.isArray(d)) return d.length === 0 ? "empty" : JSON.stringify(d);
-  if (d === "") return "empty";
+  // A default of "" or [] adds nothing: "not set" already says the field is
+  // empty, and "devices use empty" is a sentence that wastes a line.
+  if (d === "" || (Array.isArray(d) && d.length === 0)) return null;
+  if (Array.isArray(d)) return JSON.stringify(d);
   if (field.type === "select") {
     const opt = (field.options || []).find((o) => o.value === d);
     return opt ? opt.label : String(d);
