@@ -402,9 +402,14 @@ a { color: inherit; text-decoration: none; }
 .card-content.flush { padding: 0; }
 .card-footer {
   display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
   padding: 16px 20px;
   border-top: 1px solid var(--border);
 }
+/* Card footers are where a narrow column meets several buttons — the device
+   page's is 330px wide and holds four. Left to nowrap, the last one runs off
+   the card and takes the whole page's horizontal scrollbar with it. */
+.card-footer .btn-group { flex-wrap: wrap; row-gap: 6px; }
 /* A table that fills the card edge-to-edge, with the first/last cells inset */
 .card-table { display: grid; flex-grow: 1; }
 .card-table table th:first-child, .card-table table td:first-child { padding-inline-start: 20px; }

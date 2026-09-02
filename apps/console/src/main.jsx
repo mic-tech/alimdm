@@ -171,6 +171,28 @@ function Groups({ onErr }) {
 
   const countFor = (gid) => devices.filter((d) => d.group_id === gid).length;
 
+  // Re-deliver an unchanged policy. Saving only reaches devices the console
+  // thinks are behind, which after the first delivery is none of them, so this
+  // is the only way to correct a tablet whose settings have drifted. Confirmed
+  // because it touches every device in the group at once.
+  async function resend(g) {
+    const n = countFor(g.id);
+    if (!confirm(
+      `Re-apply the "${g.name}" policy to ${n === 1 ? "1 device" : `all ${n} devices`}?\n\n` +
+      "Each one is sent the whole policy again on its next check-in, within about 30 seconds, " +
+      "and any setting changed on the device itself goes back to what the policy says.",
+    )) return;
+    setBusy(true);
+    try {
+      const r = await api.resendGroupConfig(g.id);
+      const sent = r?.resent ?? 0;
+      toast(sent === 1
+        ? "The policy will be sent again to 1 device"
+        : `The policy will be sent again to ${sent} devices`);
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
   async function create() {
     if (!newId.trim()) { onErr("Enter a group id"); return; }
     setBusy(true);
@@ -229,6 +251,13 @@ function Groups({ onErr }) {
                     <button className="btn outline sm" disabled={busy}
                       onClick={() => setEditing(editing === g.id ? "" : g.id)}>
                       <IconEdit />{editing === g.id ? "Close editor" : "Edit policy"}
+                    </button>
+                    <button className="btn outline sm" disabled={busy || countFor(g.id) === 0}
+                      onClick={() => resend(g)}
+                      title={countFor(g.id) === 0
+                        ? "No devices in this group"
+                        : "Send this policy again to every device in the group, on each one's next check-in"}>
+                      <IconRefresh />Re-apply to all
                     </button>
                     {g.id !== "default" && (
                       <button className="btn danger-outline sm" disabled={busy} onClick={() => remove(g)}>
@@ -452,6 +481,15 @@ function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
 
 /* How an event's severity reads in the feeds, here and on the Activity page. */
 const SEVERITY_LABEL = { info: "Info", warn: "Attention", error: "Failure" };
+
+/* Asked before re-applying a policy, from the row or from the device's page.
+   It is worth confirming: any setting someone changed on the tablet itself is
+   about to go back to what the policy says. */
+function resendPrompt(label) {
+  return `Re-apply the policy to ${label}?\n\n` +
+    "It is sent the whole policy again on its next check-in, within about 30 seconds, " +
+    "and any setting changed on the device itself goes back to what the policy says.";
+}
 
 /* ── One device ─────────────────────────────────────────────────────────────
 
@@ -859,6 +897,7 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
   // sends config when it thinks the device is behind, so a tablet that was
   // changed locally sits there looking in sync and is never corrected.
   async function resendConfig() {
+    if (!confirm(resendPrompt(d.label || d.id))) return;
     setBusy(true);
     try {
       await api.resendDeviceConfig(d.id);
@@ -954,7 +993,7 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
             </button>
             <button className="btn outline sm" disabled={busy} onClick={resendConfig}
               title="Send the whole policy again on this device's next check-in. For a tablet whose settings have drifted — the policy is only sent when the console thinks the device is behind.">
-              <IconSave />Re-apply policy
+              <IconRefresh />Re-apply policy
             </button>
           </div>
         }>
@@ -1250,6 +1289,16 @@ function Devices({ onErr, navigate }) {
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
+  // Re-deliver an unchanged policy to one device. The console only sends config
+  // when it thinks a device is behind, so a tablet changed locally is never
+  // corrected without this.
+  async function resendConfig(d) {
+    if (!confirm(resendPrompt(d.name || d.id))) return;
+    setBusy(true);
+    try { await api.resendDeviceConfig(d.id); toast(`The policy will be sent again to ${d.name || d.id}`); }
+    catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
   async function moveGroup(id, newGroup) {
     setBusy(true);
     try { await api.moveDeviceGroup(id, newGroup); toast(`Moved ${id} to ${newGroup}`); load(); }
@@ -1448,6 +1497,9 @@ function Devices({ onErr, navigate }) {
                       onClick={() => cmd(d.id, "lock")}><IconLock /></button>
                     <button className="btn outline sm icon" title="Unlock" disabled={busy}
                       onClick={() => cmd(d.id, "unlock")}><IconUnlock /></button>
+                    <button className="btn outline sm icon" title="Re-apply policy" disabled={busy}
+                      aria-label={`Re-apply the policy to ${d.name || d.id}`}
+                      onClick={() => resendConfig(d)}><IconRefresh /></button>
                   </div>
                 </td>
               </tr>
