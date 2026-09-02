@@ -55,49 +55,56 @@ class KioskModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     private val safetyHubPackage = "com.google.android.apps.safetyhub"
 
     companion object {
-        // Long enough that a healthy restart always disarms it first, short
-        // enough that a tablet which failed to come back is not lost for the
-        // rest of the lesson.
-        private const val RESTART_BACKSTOP_MS = 25_000L
+        // How long the process gets to report the command result before it dies.
         private const val RESTART_REPORT_GRACE_MS = 900L
-        private const val RESTART_KILL_GRACE_MS = 400L
+        // The restart proper: far enough out that the process is gone, close
+        // enough that nobody watching the tablet thinks it has crashed.
+        private const val RESTART_DELAY_MS = 1_200L
+        // And a second chance, in case the first alarm is refused or lost.
+        // Cancelled on the way up, so a restart that worked never sees it.
+        private const val RESTART_BACKSTOP_MS = 25_000L
         private const val RESTART_REQUEST_CODE = 1010
+        private const val RESTART_BACKSTOP_REQUEST_CODE = 1011
 
-        /** Arm the alarm that brings Ali MDM back if the direct relaunch fails. */
-        fun armRestartBackstop(context: Context, launch: Intent) {
+        /** Arm one alarm that starts Ali MDM again, `delayMs` from now. */
+        fun armRestart(context: Context, launch: Intent, requestCode: Int, delayMs: Long) {
             try {
                 val pi = android.app.PendingIntent.getActivity(
-                    context, RESTART_REQUEST_CODE, launch,
+                    context, requestCode, launch,
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
                 val am = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
                 am.setAndAllowWhileIdle(
                     android.app.AlarmManager.RTC_WAKEUP,
-                    System.currentTimeMillis() + RESTART_BACKSTOP_MS,
+                    System.currentTimeMillis() + delayMs,
                     pi
                 )
-                DebugLog.i("KioskModule", "Restart backstop armed for +${RESTART_BACKSTOP_MS}ms")
+                DebugLog.i("KioskModule", "Restart alarm $requestCode armed for +${delayMs}ms")
             } catch (e: Exception) {
-                DebugLog.e("KioskModule", "Could not arm restart backstop: ${e.message}")
+                DebugLog.e("KioskModule", "Could not arm restart alarm $requestCode: ${e.message}")
             }
         }
 
         /**
-         * Disarm the backstop. Called from MainActivity.onCreate, so a restart
-         * that worked never gets restarted a second time by its own safety net.
-         * Harmless when no alarm is pending, which is almost always.
+         * Disarm both restart alarms. Called from MainActivity.onCreate: by the
+         * time we are up, whichever alarm did the job has fired and the other
+         * must not fire behind it. Harmless when nothing is pending, which is
+         * almost always.
          */
         fun cancelRestartBackstop(context: Context) {
             try {
                 val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                val pi = android.app.PendingIntent.getActivity(
-                    context, RESTART_REQUEST_CODE, launch,
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-                )
-                (context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager).cancel(pi)
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                val am = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+                for (code in intArrayOf(RESTART_REQUEST_CODE, RESTART_BACKSTOP_REQUEST_CODE)) {
+                    val pi = android.app.PendingIntent.getActivity(
+                        context, code, launch,
+                        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                    )
+                    am.cancel(pi)
+                }
             } catch (e: Exception) {
-                DebugLog.e("KioskModule", "Could not cancel restart backstop: ${e.message}")
+                DebugLog.e("KioskModule", "Could not cancel restart alarms: ${e.message}")
             }
         }
 
@@ -1571,9 +1578,14 @@ class KioskModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
                 promise.reject("ERROR", "No launch intent for ${context.packageName}")
                 return
             }
-            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            // A launcher tap, nothing more. CLEAR_TASK is pointless when the
+            // process is about to die anyway, and asking the system to tear the
+            // task down while we are dying is part of what produced the recents
+            // screen instead of the app.
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-            armRestartBackstop(context, launch)
+            armRestart(context, launch, RESTART_REQUEST_CODE, RESTART_DELAY_MS)
+            armRestart(context, launch, RESTART_BACKSTOP_REQUEST_CODE, RESTART_BACKSTOP_MS)
 
             // Resolve before dying so the command result reaches the server on
             // this process. CloudCommandService also marks the command as one
@@ -1581,19 +1593,15 @@ class KioskModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
             // reported correctly on the way back up — belt, and braces.
             promise.resolve(true)
 
-            val handler = android.os.Handler(android.os.Looper.getMainLooper())
-            handler.postDelayed({
-                try {
-                    DebugLog.i("KioskModule", "Restart requested — relaunching and killing pid")
-                    context.startActivity(launch)
-                } catch (e: Exception) {
-                    DebugLog.e("KioskModule", "Direct relaunch refused (${e.message}) — leaving it to the alarm")
-                }
-                // A moment for the activity start to be handed to the system.
-                // Killing in the same tick can abort the launch we just asked for.
-                handler.postDelayed({
-                    android.os.Process.killProcess(android.os.Process.myPid())
-                }, RESTART_KILL_GRACE_MS)
+            // Nothing starts the activity from here. A process that calls
+            // startActivity and then kills itself is racing the system: the
+            // launch is half-done when the task's process dies, and the user is
+            // left looking at the app switcher with Ali MDM behind it. Both
+            // alarms start us from a clean slate instead, exactly as a launcher
+            // tap would, and the first one is only a moment away.
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                DebugLog.i("KioskModule", "Restart requested — killing pid, alarm brings us back")
+                android.os.Process.killProcess(android.os.Process.myPid())
             }, RESTART_REPORT_GRACE_MS)
         } catch (e: Exception) {
             DebugLog.e("KioskModule", "Failed to restart: ${e.message}")
