@@ -64,18 +64,48 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
-      - uses: docker/build-push-action@v6
+      # Built first and kept local, so a vulnerable image is never published.
+      # Scanning after the push means the bad artifact is already pullable and
+      # the only remedy is deleting a tag people may have.
+      - name: Build (not pushed yet)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/server/Dockerfile
+          load: true
+          push: false
+          # The VPS is x86-64. Adding linux/arm64 roughly doubles the build for
+          # a target nothing runs on yet.
+          platforms: linux/amd64
+          tags: alimdm-cloud:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ignore-unfixed, because a finding with no fix available is not something
+      # a build can act on — failing on it would only teach people to ignore a
+      # red build. Anything with a published fix is a dependency bump away and
+      # should stop the release.
+      - name: Scan for known vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: alimdm-cloud:ci
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      # Fully cached by the build above, so this is a push and nothing more.
+      - name: Push
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: apps/server/Dockerfile
           push: true
-          # The VPS is x86-64. Adding linux/arm64 roughly doubles the build for
-          # a target nothing runs on yet.
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Summarise what was pushed
         run: |
