@@ -47,6 +47,13 @@ jobs:
             exit 1
           fi
 
+      # Needed only for the runtime stage: the Go and console stages are pinned
+      # to BUILDPLATFORM and cross-compile, so the only thing emulated per
+      # architecture is `apk upgrade && apk add` on a handful of packages.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -74,8 +81,13 @@ jobs:
           file: apps/server/Dockerfile
           load: true
           push: false
-          # The VPS is x86-64. Adding linux/arm64 roughly doubles the build for
-          # a target nothing runs on yet.
+          # Single platform on purpose: `load` puts an image into the local
+          # docker so Trivy can read it, and a manifest list cannot be loaded.
+          # The packages are identical across architectures — same Alpine
+          # repository, same apk upgrade in the same layer — so scanning one
+          # covers the vulnerability surface of both. What differs is the
+          # compiled Go binary, and Go findings come from the module versions
+          # in go.mod, which are architecture-independent too.
           platforms: linux/amd64
           tags: alimdm-cloud:ci
           cache-from: type=gha
@@ -102,7 +114,10 @@ jobs:
           context: .
           file: apps/server/Dockerfile
           push: true
-          platforms: linux/amd64
+          # arm64 and aarch64 are the same architecture under two names: aarch64
+          # is what the Linux toolchain calls it, linux/arm64 is what OCI does.
+          # One entry covers both.
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
