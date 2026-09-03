@@ -57,11 +57,12 @@ class ScreenStreamModule(private val reactContext: ReactApplicationContext) :
         private const val POLICY_SETTLE_MS = 300L
 
         /**
-         * A session that never stops cleanly must not leave the display lit all
-         * day. Long enough for any real viewing session, short enough that a
-         * leaked lock costs a battery, not a night.
+         * A session that never stops cleanly must not leave the display lit.
+         * Ten minutes outlasts any real look at a tablet and bounds what a
+         * leaked lock can cost — an operator who opens a live view and walks
+         * away has the screen go dark on its own well inside a lesson.
          */
-        private const val WAKE_LOCK_TIMEOUT_MS = 30 * 60 * 1000L
+        private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
 
         /**
          * How long a scroll drag takes. Long enough that Android reads it as a
