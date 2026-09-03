@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/api ./cmd/api \
 #
 # The build now fails the image, and dist/ is cleared first so what ships can
 # only be what this stage produced.
-FROM node:20-alpine AS console
+FROM node:22-alpine AS console
 WORKDIR /web
 COPY apps/console/package.json apps/console/package-lock.json* ./
 RUN npm install --no-audit --no-fund
@@ -26,8 +26,13 @@ COPY apps/console/ ./
 RUN rm -rf dist && npm run build
 
 # ---- Stage 3: runtime ----
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata
+FROM alpine:3.24
+# apk upgrade, not just add. A base image is a snapshot: alpine:3.24 was built
+# in June and still shipped OpenSSL 3.5.7-r0 while 3.5.8-r0 was out, so the
+# "current" tag scanned with 20 findings and the older 3.20 line — long since
+# rebuilt with its backports — scanned with none. Upgrading at build time takes
+# whatever is patched today instead of waiting for someone to rebuild the base.
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=go /out/api /out/bootstrap ./
 # console dist (if built)
