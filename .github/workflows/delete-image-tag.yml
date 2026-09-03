@@ -1,0 +1,48 @@
+# Delete one published tag from Docker Hub.
+#
+# Manual only, and it names the tag it is deleting in the log. Deleting a
+# published tag is not something that should ever happen as a side effect of a
+# push: someone may already be running it, and a digest that vanishes turns a
+# working deployment into an unpullable one.
+name: Delete image tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to delete from Docker Hub (e.g. sha-abc123). Refuses latest."
+        required: true
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the tag
+        env:
+          USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # latest is what deployments and humans reach for by default. Removing
+          # it is almost always a mistake, so it takes a deliberate different path.
+          if [ "$TAG" = "latest" ]; then
+            echo "::error::Refusing to delete 'latest'."
+            exit 1
+          fi
+          JWT=$(curl -sS -H "Content-Type: application/json" \
+            -d "{\"username\":\"$USERNAME\",\"password\":\"$TOKEN\"}" \
+            https://hub.docker.com/v2/users/login/ | jq -r .token)
+          if [ -z "$JWT" ] || [ "$JWT" = "null" ]; then
+            echo "::error::Could not authenticate to Docker Hub."
+            exit 1
+          fi
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+            -H "Authorization: JWT $JWT" \
+            "https://hub.docker.com/v2/repositories/$USERNAME/alimdm/tags/$TAG/")
+          echo "DELETE $USERNAME/alimdm:$TAG -> HTTP $CODE"
+          case "$CODE" in
+            204|202) echo "Deleted $TAG" ;;
+            404) echo "::error::No such tag: $TAG"; exit 1 ;;
+            *)   echo "::error::Unexpected response $CODE"; exit 1 ;;
+          esac
