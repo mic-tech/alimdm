@@ -99,6 +99,6 @@ cd wiki && git add . && git commit -m "Sync docs" && git push
 
 ## Resources
 
-- **Workflow:** [`.github/workflows/docs-to-wiki-sync.yml`](https://github.com/mic-tech/ali-mdm/blob/main/.github/workflows/docs-to-wiki-sync.yml)
+- **Workflow:** [`.github/workflows/docs-to-wiki-sync.yml`](https://github.com/mic-tech/alimdm/blob/main/.github/workflows/docs-to-wiki-sync.yml)
 - **GitHub Wiki Docs:** [docs.github.com/en/wikis](https://docs.github.com/en/wikis)
 - **GitHub Actions:** [docs.github.com/en/actions](https://docs.github.com/en/actions)

@@ -36,7 +36,7 @@ Thank you for considering contributing to Ali MDM! 🎉
 ## Development Setup
 
 Clone repository
-git clone https://github.com/mic-tech/ali-mdm.git
+git clone https://github.com/mic-tech/alimdm.git
 cd alimdm
 
 Install dependencies
@@ -87,7 +87,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ## Questions?
 
-Open a [Discussion](https://github.com/mic-tech/ali-mdm/discussions) or email support@example.com
+Open a [Discussion](https://github.com/mic-tech/alimdm/discussions) or email support@example.com
 
 ---
 

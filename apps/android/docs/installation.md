@@ -25,13 +25,13 @@
 ### Requirements
 
 - Android tablet (version 8.0+)
-- APK file from [Releases](https://github.com/mic-tech/ali-mdm/releases)
+- APK file from [Releases](https://github.com/mic-tech/alimdm/releases)
 - PIN code (4-6 digits)
 
 ### Installation Steps
 
 **1. Download APK**
-- Visit [GitHub Releases](https://github.com/mic-tech/ali-mdm/releases)
+- Visit [GitHub Releases](https://github.com/mic-tech/alimdm/releases)
 - Download the latest `Ali MDM-vX.X.X.apk`
 - Transfer to tablet (USB, email, or direct download)
 
@@ -324,6 +324,6 @@ Should work, but not officially tested.
 ## Need Help?
 
 - **FAQ:** [Complete FAQ](FAQ)
-- **Community:** [GitHub Discussions](https://github.com/mic-tech/ali-mdm/discussions)
-- **Bug Reports:** [GitHub Issues](https://github.com/mic-tech/ali-mdm/issues)
+- **Community:** [GitHub Discussions](https://github.com/mic-tech/alimdm/discussions)
+- **Bug Reports:** [GitHub Issues](https://github.com/mic-tech/alimdm/issues)
 - **Email:** support@example.com

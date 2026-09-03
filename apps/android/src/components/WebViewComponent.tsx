@@ -846,7 +846,7 @@ const WebViewComponent = forwardRef<WebViewComponentRef, WebViewComponentProps>(
   };
 
   const handleOpenGitHub = (): void => {
-    Linking.openURL('https://github.com/mic-tech/ali-mdm').catch(err =>
+    Linking.openURL('https://github.com/mic-tech/alimdm').catch(err =>
       console.error('[AliMDM] Failed to open GitHub URL:', err)
     );
   };

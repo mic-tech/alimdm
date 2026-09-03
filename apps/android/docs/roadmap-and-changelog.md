@@ -70,7 +70,7 @@
 > [!NOTE]
 > For complete release history and detailed notes, refer to GitHub releases:
 >
-> - [All Releases](https://github.com/mic-tech/ali-mdm/releases)
+> - [All Releases](https://github.com/mic-tech/alimdm/releases)
 
 ## Product Roadmap
 
@@ -104,8 +104,8 @@
 
 > [!NOTE]
 > Roadmap items evolve over time; use issues/discussions for current prioritization:
-> - [Issues](https://github.com/mic-tech/ali-mdm/issues)
-> - [Discussions](https://github.com/mic-tech/ali-mdm/discussions)
+> - [Issues](https://github.com/mic-tech/alimdm/issues)
+> - [Discussions](https://github.com/mic-tech/alimdm/discussions)
 
 
 ## Detailed Feature Progress
@@ -234,8 +234,8 @@
 
 | Method | How to Participate | Impact |
 |---|---|---|
-| **Report Issues** | [GitHub Issues](https://github.com/mic-tech/ali-mdm/issues) | Bug fixes and improvements |
-| **Join Discussions** | [GitHub Discussions](https://github.com/mic-tech/ali-mdm/discussions) | Feature ideas and feedback |
+| **Report Issues** | [GitHub Issues](https://github.com/mic-tech/alimdm/issues) | Bug fixes and improvements |
+| **Join Discussions** | [GitHub Discussions](https://github.com/mic-tech/alimdm/discussions) | Feature ideas and feedback |
 | **Feature Requests** | Create detailed issue with use case | Prioritization consideration |
 | **Test Beta Releases** | Join beta channel | Early feedback and testing |
 | **Share Use Cases** | Document your deployment scenarios | Feature development guidance |
@@ -251,9 +251,9 @@
 
 | Resource | Link | Purpose |
 |---|---|---|
-| **GitHub Releases** | [All Releases](https://github.com/mic-tech/ali-mdm/releases) | Download latest version |
-| **Issue Tracker** | [GitHub Issues](https://github.com/mic-tech/ali-mdm/issues) | Report bugs and request features |
-| **Discussions** | [GitHub Discussions](https://github.com/mic-tech/ali-mdm/discussions) | Community feedback |
+| **GitHub Releases** | [All Releases](https://github.com/mic-tech/alimdm/releases) | Download latest version |
+| **Issue Tracker** | [GitHub Issues](https://github.com/mic-tech/alimdm/issues) | Report bugs and request features |
+| **Discussions** | [GitHub Discussions](https://github.com/mic-tech/alimdm/discussions) | Community feedback |
 | **Contributing** | [Contributing Guide](../CONTRIBUTING.md) | How to contribute code |
 | **Development** | [Development Guide](development.md) | Setup and contribution |
 | **Documentation** | [Docs Home](README.md) | Complete documentation |

@@ -55,7 +55,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/mic-tech/ali-mdm.git
+git clone https://github.com/mic-tech/alimdm.git
 cd alimdm
 
 # Install dependencies
@@ -133,8 +133,8 @@ cd android
 | Resource | Link |
 |---|---|
 | **Contributing Guide** | [CONTRIBUTING.md](../CONTRIBUTING.md) |
-| **Issue Tracker** | [GitHub Issues](https://github.com/mic-tech/ali-mdm/issues) |
-| **Discussions** | [GitHub Discussions](https://github.com/mic-tech/ali-mdm/discussions) |
+| **Issue Tracker** | [GitHub Issues](https://github.com/mic-tech/alimdm/issues) |
+| **Discussions** | [GitHub Discussions](https://github.com/mic-tech/alimdm/discussions) |
 | **FAQ** | [FAQ](FAQ) |
 
 

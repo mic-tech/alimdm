@@ -8,7 +8,7 @@ _Complete guides for deployment, automation, and integration_
 
 <p>
   <img src="https://img.shields.io/badge/Version-1.2.17-blue.svg" alt="Version 1.2.17">
-  <a href="https://github.com/mic-tech/ali-mdm/releases"><img src="https://img.shields.io/github/downloads/mic-tech/ali-mdm/total.svg" alt="Downloads"></a>
+  <a href="https://github.com/mic-tech/alimdm/releases"><img src="https://img.shields.io/github/downloads/mic-tech/alimdm/total.svg" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
   <img src="https://img.shields.io/badge/Android-8.0%2B-green.svg" alt="Android 8.0+">
 </p>
@@ -53,7 +53,7 @@ Ali MDM is a **free, open-source kiosk platform** for Android tablets. It's desi
 
 ### Basic Installation (5 minutes)
 
-1. Download the latest APK from [**Releases**](https://github.com/mic-tech/ali-mdm/releases)
+1. Download the latest APK from [**Releases**](https://github.com/mic-tech/alimdm/releases)
 2. Install on your Android 8.0+ tablet
 3. Configure URL and PIN
 4. Start kiosk mode
@@ -133,10 +133,10 @@ adb shell am start -n com.alimdm/.MainActivity \
 
 ## Resources
 
-- **Website:** [github.com/mic-tech/ali-mdm](https://github.com/mic-tech/ali-mdm)
-- **Releases:** [GitHub Releases](https://github.com/mic-tech/ali-mdm/releases)
-- **Issues:** [Report Bugs](https://github.com/mic-tech/ali-mdm/issues)
-- **Discussions:** [Community Forum](https://github.com/mic-tech/ali-mdm/discussions)
+- **Website:** [github.com/mic-tech/alimdm](https://github.com/mic-tech/alimdm)
+- **Releases:** [GitHub Releases](https://github.com/mic-tech/alimdm/releases)
+- **Issues:** [Report Bugs](https://github.com/mic-tech/alimdm/issues)
+- **Discussions:** [Community Forum](https://github.com/mic-tech/alimdm/discussions)
 - **Support:** support@example.com
 
 
@@ -144,9 +144,9 @@ adb shell am start -n com.alimdm/.MainActivity \
 
 Ali MDM is open source and welcomes contributions!
 
-- **Code:** [Contributing Guide](https://github.com/mic-tech/ali-mdm/blob/main/CONTRIBUTING.md)
+- **Code:** [Contributing Guide](https://github.com/mic-tech/alimdm/blob/main/CONTRIBUTING.md)
 - **Documentation:** Submit PRs to improve these docs
-- **Feedback:** Share your use case in [Discussions](https://github.com/mic-tech/ali-mdm/discussions)
+- **Feedback:** Share your use case in [Discussions](https://github.com/mic-tech/alimdm/discussions)
 
 
 <div align="center">

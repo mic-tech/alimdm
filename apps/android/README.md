@@ -4,7 +4,7 @@
   <p>Alternative to Fully Kiosk Browser</p>
   
   <p>
-    <a href="https://github.com/mic-tech/ali-mdm">Website</a> •
+    <a href="https://github.com/mic-tech/alimdm">Website</a> •
     <a href="#-install-in-60-seconds">Installation</a> •
     <a href="docs/faq.md">FAQ</a> •
     <a href="#-key-capabilities">Features</a>
@@ -12,7 +12,7 @@
   
   <p>
     <img src="https://img.shields.io/badge/Version-1.2.20-blue.svg" alt="Version 1.2.20">
-    <a href="https://github.com/mic-tech/ali-mdm/releases"><img src="https://img.shields.io/github/downloads/mic-tech/ali-mdm/total.svg" alt="Downloads"></a>
+    <a href="https://github.com/mic-tech/alimdm/releases"><img src="https://img.shields.io/github/downloads/mic-tech/alimdm/total.svg" alt="Downloads"></a>
     <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
     <img src="https://img.shields.io/badge/Android-8.0%2B-green.svg" alt="Android 8.0+">
     <img src="https://img.shields.io/badge/Device%20Owner-Supported-brightgreen" alt="Device Owner">
@@ -51,7 +51,7 @@ Instead of burying everything in one long page, this README gives you the essent
 
 ## 📦 Install in 60 seconds
 
-1. Download the latest APK from [Releases](https://github.com/mic-tech/ali-mdm/releases).
+1. Download the latest APK from [Releases](https://github.com/mic-tech/alimdm/releases).
 2. Install on Android 8.0+ tablet.
 3. Configure URL/app + PIN.
 4. Start kiosk mode.
@@ -107,8 +107,8 @@ Detailed notes: [docs/roadmap-and-changelog.md](docs/roadmap-and-changelog.md)
 Contributions are welcome.
 
 - Guidelines: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Issues: [GitHub Issues](https://github.com/mic-tech/ali-mdm/issues)
-- Discussions: [GitHub Discussions](https://github.com/mic-tech/ali-mdm/discussions)
+- Issues: [GitHub Issues](https://github.com/mic-tech/alimdm/issues)
+- Discussions: [GitHub Discussions](https://github.com/mic-tech/alimdm/discussions)
 
 ---
 
@@ -117,17 +117,17 @@ Contributions are welcome.
 MIT License. See [LICENSE](LICENSE).
 
 <div align="center">
-  <img src="https://img.shields.io/github/stars/mic-tech/ali-mdm?style=social" alt="Stars">
-  <img src="https://img.shields.io/github/forks/mic-tech/ali-mdm?style=social" alt="Forks">
-  <img src="https://img.shields.io/github/issues/mic-tech/ali-mdm" alt="Issues">
-  <img src="https://img.shields.io/github/license/mic-tech/ali-mdm" alt="License">
+  <img src="https://img.shields.io/github/stars/mic-tech/alimdm?style=social" alt="Stars">
+  <img src="https://img.shields.io/github/forks/mic-tech/alimdm?style=social" alt="Forks">
+  <img src="https://img.shields.io/github/issues/mic-tech/alimdm" alt="Issues">
+  <img src="https://img.shields.io/github/license/mic-tech/alimdm" alt="License">
 </div>
 
 <div align="center">
   <p><strong>Made with ❤️ in France by Rushb</strong></p>
   <p>
-    <a href="https://github.com/mic-tech/ali-mdm">Website</a> •
-    <a href="https://github.com/mic-tech/ali-mdm">GitHub</a> •
+    <a href="https://github.com/mic-tech/alimdm">Website</a> •
+    <a href="https://github.com/mic-tech/alimdm">GitHub</a> •
     <a href="mailto:support@example.com">Contact</a>
   </p>
 </div>

@@ -16,7 +16,7 @@
 - **A:** No! Just ADB tool (15 MB download). See [Installation Guide](Installation).
 
 **Q: Can I install from Play Store?**
-- **A:** Yes! Search "Ali MDM" on Google Play Store, or download APK from [Releases](https://github.com/mic-tech/ali-mdm/releases).
+- **A:** Yes! Search "Ali MDM" on Google Play Store, or download APK from [Releases](https://github.com/mic-tech/alimdm/releases).
 
 **Q: Which Android versions are supported?**
 - **A:** Android 8.0+ (API 26 and above).
@@ -194,7 +194,7 @@
 - **A:** Absolutely! See [Contributing Guide](../CONTRIBUTING.md).
 
 **Q: Is Ali MDM really open-source?**
-- **A:** Yes! MIT licensed. View source on [GitHub](https://github.com/mic-tech/ali-mdm).
+- **A:** Yes! MIT licensed. View source on [GitHub](https://github.com/mic-tech/alimdm).
 
 **Q: Who develops Ali MDM?**
 - **A:** Ali MDM is developed by [Rushb](https://rushb.io), a French tech company passionate about open-source.
@@ -228,17 +228,17 @@
 | Resource | Link |
 |---|---|
 | **Installation Guide** | [Installation](Installation) |
-| **GitHub Discussions** | [Discussions](https://github.com/mic-tech/ali-mdm/discussions) |
-| **Report Bug** | [Issues](https://github.com/mic-tech/ali-mdm/issues) |
+| **GitHub Discussions** | [Discussions](https://github.com/mic-tech/alimdm/discussions) |
+| **Report Bug** | [Issues](https://github.com/mic-tech/alimdm/issues) |
 | **Email Support** | support@example.com |
 
 **Q: How can I support Ali MDM?**
 | Action | How to |
 |---|---|
-| **Star on GitHub** | [Star Repository](https://github.com/mic-tech/ali-mdm) |
+| **Star on GitHub** | [Star Repository](https://github.com/mic-tech/alimdm) |
 | **Spread the word** | Share with friends & colleagues |
-| **Report bugs** | [Open Issue](https://github.com/mic-tech/ali-mdm/issues) |
+| **Report bugs** | [Open Issue](https://github.com/mic-tech/alimdm/issues) |
 | **Contribute code** | [Contributing Guide](../CONTRIBUTING.md) |
 | **Buy us coffee** | [Ko-fi](https://ko-fi.com/rushb) (coming soon) |
 
-**Didn't find your answer? Ask in [Discussions](https://github.com/mic-tech/ali-mdm/discussions)!**
+**Didn't find your answer? Ask in [Discussions](https://github.com/mic-tech/alimdm/discussions)!**
