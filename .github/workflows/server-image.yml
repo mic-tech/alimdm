@@ -86,7 +86,7 @@ jobs:
       # red build. Anything with a published fix is a dependency bump away and
       # should stop the release.
       - name: Scan for known vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: alimdm-cloud:ci
           scanners: vuln
