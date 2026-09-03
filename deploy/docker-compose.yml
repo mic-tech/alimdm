@@ -14,6 +14,9 @@ services:
       FK_SECRET: "${FK_SECRET:-CHANGE_ME_SECRET}"
       FK_ENROLL_TOKEN: "${FK_ENROLL_TOKEN:-CHANGE_ME_ENROLL}"
       FK_BASE_URL: "${FK_BASE_URL:-https://cloud.example.com}"
+      # Needed before QR enrollment will produce a code; see .env.example.
+      FK_PROVISION_CHECKSUM: "${FK_PROVISION_CHECKSUM:-}"
+      FK_ORG_ID: "${FK_ORG_ID:-}"
       # Optional MQTT poke (uncomment + set to enable low-latency command wake)
       # FK_MQTT_URL: "tcp://mqtt:1883"
     volumes:

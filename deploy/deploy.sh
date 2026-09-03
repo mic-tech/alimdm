@@ -31,11 +31,20 @@ echo
 read -rp "Create the first operator? [Y/n] " ans
 if [ "${ans:-Y}" != "n" ]; then
   read -rp "Operator email: " OEMAIL
-  read -rsp "Operator password: "; echo
+  # -rsp with no variable name puts the answer in $REPLY and throws it away. This
+  # used to read the password, discard it, and then pass "$OEMAIL" as -password,
+  # so every install created an admin account whose password was its own email
+  # address — on the public internet, from the very first boot.
+  read -rsp "Operator password: " OPASS; echo
+  if [ -z "$OPASS" ]; then
+    echo "ERROR: the operator password cannot be empty."
+    exit 1
+  fi
   read -rp "Comma-separated app package names [default: the 3 school apps]: " APPS
   APPS="${APPS:-com.gplanet_tech.noraneya,com.tagmedia.adnan,com.pakdata.QuranMajeed}"
   docker compose run --rm api /app/bootstrap \
-    -db /data/alimdm.db -email "$OEMAIL" -password "$OEMAIL" -apps "$APPS"
+    -db /data/alimdm.db -email "$OEMAIL" -password "$OPASS" -apps "$APPS"
+  unset OPASS
   echo "Operator created."
 fi
 
