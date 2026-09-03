@@ -93,7 +93,7 @@ $ADB shell am start -n "$PKG/.MainActivity"
 echo
 echo "==> DONE. The tablet should now:"
 echo "    - Enroll with $CLOUD_URL${GROUP_ID:+ into group '$GROUP_ID'}"
-echo "    - Auto-install Noraneya, Adnan, Quran Majeed (watch the grid show 'Downloading...')"
+echo "    - Auto-install whatever apps the group's policy lists (watch the grid show 'Downloading...')"
 echo "    - Settle into the multi-app kiosk"
 echo
 echo "==> Verify device owner:"

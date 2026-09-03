@@ -40,8 +40,10 @@ if [ "${ans:-Y}" != "n" ]; then
     echo "ERROR: the operator password cannot be empty."
     exit 1
   fi
-  read -rp "Comma-separated app package names [default: the 3 school apps]: " APPS
-  APPS="${APPS:-com.gplanet_tech.noraneya,com.tagmedia.adnan,com.pakdata.QuranMajeed}"
+  # No default list. A whitelist decides what a locked tablet can run, so it is
+  # not something an installer should guess: leaving it empty starts empty, and
+  # apps are added in the console where you can see what you are allowing.
+  read -rp "Comma-separated app package names (optional, Enter to start empty): " APPS
   docker compose run --rm api /app/bootstrap \
     -db /data/alimdm.db -email "$OEMAIL" -password "$OPASS" -apps "$APPS"
   unset OPASS

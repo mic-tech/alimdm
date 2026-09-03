@@ -89,12 +89,13 @@ docker build -f apps/server/Dockerfile -t ali-mdm-cloud .
    Scan the QR at each tablet's first setup. They appear online in the console
    within ~30s.
 
-## The three apps (default whitelist)
-- `com.gplanet_tech.noraneya`
-- `com.tagmedia.adnan`
-- `com.pakdata.QuranMajeed`
+## Allowed apps
 
-Change these anytime in the console → **Apps & Lockdown**.
+A new install starts with an empty whitelist — nothing is seeded, because what a
+locked tablet may run is a decision for whoever is deploying it, not a default.
+
+Add packages in the console → **Apps & Lockdown**, by package name (for example
+`com.google.android.calculator`, found in the Play Store listing's URL).
 
 ## Building the Ali MDM APK (for the ADB `--apk` path)
 ```

@@ -12,7 +12,7 @@ Two enrollment paths, both supported:
 
 Usage:
   python3 enroll.py --cloud https://cloud.school.local --token <enroll-token> \
-      --apps com.gplanet_tech.noraneya,com.tagmedia.adnan,com.pakdata.QuranMajeed \
+      --apps com.example.one,com.example.two \
       --mode qr|push [--serial <adb-serial>] [--apk alimdm-release.apk]
 
 The enroll token must match ALIMDM_ENROLL_TOKEN on the cloud server.

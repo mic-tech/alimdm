@@ -71,7 +71,9 @@ whitelist, managed from a self-hosted cloud console on a VPS.
 - Phase 3: hardening — rate limiting, audit log, backup, escape-hatch UX.
 
 ## 7. Decisions
-- App whitelist (3): com.gplanet_tech.noraneya, com.tagmedia.adnan, com.pakdata.QuranMajeed
+- App whitelist: empty on a fresh install. The three this deployment happens to
+  run (com.gplanet_tech.noraneya, com.tagmedia.adnan, com.pakdata.QuranMajeed)
+  are configured in the console, not seeded by the installer.
 - Escape hatch: BOTH — corner-tap gesture reveals a PIN keypad; correct PIN exits
   lock-task to Settings. (staff-only)
 - API language: Go (single static binary; Fleet's Android policy patterns port over)

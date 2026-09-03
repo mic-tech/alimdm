@@ -49,8 +49,12 @@ func main() {
 	}
 	log.Printf("created administrator %s", *email)
 
-	// Default group with lockdown config
-	var managed []config.ManagedApp
+	// Default group with lockdown config.
+	//
+	// Empty, not nil: a nil slice marshals to `null`, and the device treats a
+	// null as "this key was not specified" and leaves whatever list it already
+	// has. A group seeded with no apps means no apps, so it has to say [].
+	managed := []config.ManagedApp{}
 	for _, a := range splitCSV(*apps) {
 		managed = append(managed, config.ManagedApp{
 			PackageName: a, DisplayName: a, ShowOnHomeScreen: true,
