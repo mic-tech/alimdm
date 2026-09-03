@@ -19,7 +19,7 @@ run unattended. You generate the QR from the **console website**.
 3. Fill in:
    - **Cloud URL** — pre-filled with your console address
    - **Organization ID** — pre-filled (`mic-tech`)
-   - **Enroll token** — paste your `FK_ENROLL_TOKEN` (from the server's `.env`)
+   - **Enroll token** — paste your `ALIMDM_ENROLL_TOKEN` (from the server's `.env`)
 4. Click **Generate QR**
 5. **Download PNG** (to print) — or just leave it on screen to hold up
 

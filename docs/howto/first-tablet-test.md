@@ -20,9 +20,9 @@ Everything runs locally on the workstation for now (no VPS needed).
 > ```
 > cd /path/to/ali-mdm
 > docker run -d --name fk-cloud-test \
->   -e FK_ADDR=:8080 -e FK_DB=/data/alimdm.db -e FK_CONSOLE_DIR=/app/console-dist \
->   -e FK_APK_ROOT=/data/apks \
->   -e FK_ENROLL_TOKEN=test-enroll-token-123 -e FK_BASE_URL=http://192.168.1.100:8090 \
+>   -e ALIMDM_ADDR=:8080 -e ALIMDM_DB=/data/alimdm.db -e ALIMDM_CONSOLE_DIR=/app/console-dist \
+>   -e ALIMDM_APK_ROOT=/data/apks \
+>   -e ALIMDM_ENROLL_TOKEN=test-enroll-token-123 -e ALIMDM_BASE_URL=http://192.168.1.100:8090 \
 >   -v /tmp/fktest-data:/data -p 8090:8080 ali-mdm:test
 > docker exec -w /app fk-cloud-test ./bootstrap --db /data/alimdm.db \
 >   --email admin@school.local --password testpass123

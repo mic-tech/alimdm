@@ -13,10 +13,10 @@ config change — no re-enrollment.
    or use a venv). Without it, `--mode qr` prints the URL to encode with any QR tool.
 
 ## The enroll token
-Must match `FK_ENROLL_TOKEN` on the cloud server. Keep it secret — anyone with it
+Must match `ALIMDM_ENROLL_TOKEN` on the cloud server. Keep it secret — anyone with it
 can enroll a device. Generate one and set it on the server:
 ```
-export FK_ENROLL_TOKEN="$(openssl rand -hex 24)"
+export ALIMDM_ENROLL_TOKEN="$(openssl rand -hex 24)"
 ```
 
 ## Two ways to enroll
@@ -26,7 +26,7 @@ Factory-reset the tablet, then during its **first setup** (the "Set up device"
 wizard) scan the QR. The tablet becomes a Device Owner and auto-enrolls.
 ```
 python3 enroll.py --cloud https://cloud.school.local \
-    --token "$FK_ENROLL_TOKEN" --org mic-tech --mode qr --qr-out qr.png
+    --token "$ALIMDM_ENROLL_TOKEN" --org mic-tech --mode qr --qr-out qr.png
 ```
 Print/display `qr.png`. The teacher scans it at the setup wizard. Done.
 
@@ -35,7 +35,7 @@ If the tablet is already set up (has a user), use ADB to set Device Owner and
 push the enrollment so it auto-enrolls on next launch:
 ```
 python3 enroll.py --cloud https://cloud.school.local \
-    --token "$FK_ENROLL_TOKEN" --org mic-tech --mode push \
+    --token "$ALIMDM_ENROLL_TOKEN" --org mic-tech --mode push \
     --apk alimdm-release.apk
 ```
 Notes:
@@ -50,7 +50,7 @@ Loop over connected devices (each must be freshly reset first):
 ```
 for s in $(adb devices | awk 'NR>1 && /device/{print $1}'); do
   python3 enroll.py --cloud https://cloud.school.local \
-    --token "$FK_ENROLL_TOKEN" --org mic-tech --mode push \
+    --token "$ALIMDM_ENROLL_TOKEN" --org mic-tech --mode push \
     --serial "$s" --apk alimdm-release.apk
 done
 ```
@@ -61,7 +61,7 @@ After enrollment, the tablet appears **online** in the operator console within
 
 ## Troubleshooting
 - **"device already has a different owner"** → factory-reset, retry.
-- **App doesn't auto-enroll** → confirm `FK_ENROLL_TOKEN` matches; check the
+- **App doesn't auto-enroll** → confirm `ALIMDM_ENROLL_TOKEN` matches; check the
   tablet has Wi-Fi; watch the console for the device appearing.
 - **QR won't scan** → make sure the tablet is on the *setup wizard* screen (not
   the home screen); regenerate with a higher-contrast QR.

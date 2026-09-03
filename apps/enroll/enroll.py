@@ -15,7 +15,7 @@ Usage:
       --apps com.gplanet_tech.noraneya,com.tagmedia.adnan,com.pakdata.QuranMajeed \
       --mode qr|push [--serial <adb-serial>] [--apk alimdm-release.apk]
 
-The enroll token must match FK_ENROLL_TOKEN on the cloud server.
+The enroll token must match ALIMDM_ENROLL_TOKEN on the cloud server.
 """
 import argparse
 import base64
@@ -202,7 +202,7 @@ def push_enrollment(serial, cloud_url, token, org_id):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cloud", required=True, help="Cloud base URL, e.g. https://cloud.school.local")
-    ap.add_argument("--token", required=True, help="Enroll token (must match FK_ENROLL_TOKEN on the server)")
+    ap.add_argument("--token", required=True, help="Enroll token (must match ALIMDM_ENROLL_TOKEN on the server)")
     ap.add_argument("--org", default="mic-tech", help="Organization id (default: mic-tech)")
     ap.add_argument("--apps", default="", help="Comma-separated app package names (informational; the real list lives in the cloud group config)")
     ap.add_argument("--mode", choices=["qr", "push", "both"], default="both",

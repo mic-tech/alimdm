@@ -70,9 +70,9 @@ docker build -f apps/server/Dockerfile -t ali-mdm-cloud .
 4. **Configure**
    ```
    cp .env.example .env
-   # edit .env: CLOUD_DOMAIN, FK_BASE_URL, and generate:
-   export FK_SECRET=*** rand -hex 32)
-   export FK_ENROLL_TOKEN=*** rand -hex 24)
+   # edit .env: CLOUD_DOMAIN, ALIMDM_BASE_URL, and generate:
+   export ALIMDM_SECRET=*** rand -hex 32)
+   export ALIMDM_ENROLL_TOKEN=*** rand -hex 24)
    ```
 5. **Deploy**
    ```
@@ -84,7 +84,7 @@ docker build -f apps/server/Dockerfile -t ali-mdm-cloud .
 7. **Enroll tablets** — see `enroll/README.md`:
    ```
    python3 enroll/enroll.py --cloud https://cloud.yourdomain.com \
-       --token "$FK_ENROLL_TOKEN" --org your-org --mode qr
+       --token "$ALIMDM_ENROLL_TOKEN" --org your-org --mode qr
    ```
    Scan the QR at each tablet's first setup. They appear online in the console
    within ~30s.
@@ -108,8 +108,8 @@ tablet can install Ali MDM during setup.)
 ## Security notes
 - **HTTPS is mandatory** — Ali MDM's cloud client requires it; Caddy provides
   automatic Let's Encrypt certs.
-- **Keep `FK_ENROLL_TOKEN` secret** — anyone with it can enroll a device.
-- **Keep `FK_SECRET` secret** — it signs operator JWTs.
+- **Keep `ALIMDM_ENROLL_TOKEN` secret** — anyone with it can enroll a device.
+- **Keep `ALIMDM_SECRET` secret** — it signs operator JWTs.
 - Device API keys are stored **SHA-256-hashed** in the DB (never plaintext).
 - The API port (8080) is bound to `127.0.0.1` inside the compose network; only
   Caddy (443) is public.

@@ -22,7 +22,7 @@ CLOUD="${1:?Usage: enroll-one.sh <cloud-url> <enroll-token> [path-to-apk] [adb-s
 TOKEN="${2:?Missing enroll token (arg 2)}"
 APK="${3:-}"                       # optional — auto-detected below
 SERIAL="${4:-}"
-ORG="${FK_ORG_ID:-mic-tech}"       # org id baked into the enrollment (override via FK_ORG_ID)
+ORG="${ALIMDM_ORG_ID:-mic-tech}"       # org id baked into the enrollment (override via ALIMDM_ORG_ID)
 
 PKG="com.alimdm"
 ADMIN="$PKG/.DeviceAdminReceiver"

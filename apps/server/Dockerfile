@@ -32,6 +32,14 @@ WORKDIR /app
 COPY --from=go /out/api /out/bootstrap ./
 # console dist (if built)
 COPY --from=console /web/dist/ ./console-dist/
+# DELIBERATELY still FK_, not ALIMDM_. These are image defaults, and env() reads
+# ALIMDM_<name> FIRST, falling back to FK_<name>. The running production server
+# is started with an env file that still says FK_DB=/data/freekiosk.db — a
+# database named before the rename. Renaming these to ALIMDM_DB would make the
+# image's own default WIN over that override, and the server would quietly open
+# an empty /data/alimdm.db: console with no devices, every tablet unable to
+# authenticate, and the real database sitting untouched on disk next to it.
+# Change these only together with the deployment's env file, never on their own.
 ENV FK_ADDR=:8080 \
     FK_DB=/data/alimdm.db \
     FK_CONSOLE_DIR=/app/console-dist \

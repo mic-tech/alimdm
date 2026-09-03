@@ -72,7 +72,7 @@ When the setup wizard scans it:
 2. Enter:
    - **Cloud URL** — `http://192.168.1.100:8090` (local) or your HTTPS domain
    - **Organization ID** — e.g. `mic-tech`
-   - **Enroll token** — your server's `FK_ENROLL_TOKEN`
+   - **Enroll token** — your server's `ALIMDM_ENROLL_TOKEN`
 3. Leave **Zero-touch** checked (the APK download URL + checksum auto-fill)
 4. *(Optional)* Enter your Wi-Fi SSID + password so the tablet connects on its own
 5. Click **Generate QR** → **Download PNG**

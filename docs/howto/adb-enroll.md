@@ -23,7 +23,7 @@ You'll need:
 - A USB cable
 - The Ali MDM APK file (see `build-apk.md`)
 - Your cloud URL (e.g. `https://cloud.yourdomain.com`)
-- Your enroll token (the `FK_ENROLL_TOKEN` from your server's `.env`)
+- Your enroll token (the `ALIMDM_ENROLL_TOKEN` from your server's `.env`)
 
 ---
 

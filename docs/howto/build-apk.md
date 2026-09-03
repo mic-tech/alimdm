@@ -61,7 +61,7 @@ Keep a copy somewhere handy for enrollment, e.g.:
 ```
 Then:
 ```bash
-./docs/howto/enroll-one.sh https://cloud.yourdomain.com "$FK_ENROLL_TOKEN" ~/tablets/alimdm-release.apk
+./docs/howto/enroll-one.sh https://cloud.yourdomain.com "$ALIMDM_ENROLL_TOKEN" ~/tablets/alimdm-release.apk
 ```
 
 ## Hosting the APK (for the full zero-touch QR path)

@@ -53,7 +53,7 @@ The guides below are just different ways to accomplish steps 1–4.
 - **The Ali MDM APK** downloaded — see `build-apk.md` (or grab the official
   release).
 - **Your cloud is live** — you can log in to `https://cloud.yourdomain.com`.
-- **Your enroll token** — the `FK_ENROLL_TOKEN` value from your server's `.env`.
+- **Your enroll token** — the `ALIMDM_ENROLL_TOKEN` value from your server's `.env`.
 
 ## Quick start (the fast version)
 
