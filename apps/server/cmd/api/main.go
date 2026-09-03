@@ -15,13 +15,11 @@ import (
 	"ali-mdm/server/internal/store"
 )
 
-// env reads ALIMDM_<name>, falling back to the older FK_<name> so a container
-// started with the previous environment keeps working across the rename.
+// env reads ALIMDM_<name>. The prefix inherited from the upstream project used
+// to be accepted as a fallback, and is gone: one name, so a deployment cannot
+// half-migrate and end up reading defaults it never chose.
 func env(name string) string {
-	if v := strings.TrimSpace(os.Getenv("ALIMDM_" + name)); v != "" {
-		return v
-	}
-	return strings.TrimSpace(os.Getenv("FK_" + name))
+	return strings.TrimSpace(os.Getenv("ALIMDM_" + name))
 }
 
 func envOr(name, def string) string {
@@ -33,13 +31,21 @@ func envOr(name, def string) string {
 
 func main() {
 	dbPath := envOr("DB", "alimdm.db")
-	secret := envOr("SECRET", "change-me-in-prod")
+	secret := env("SECRET")
 	apkRoot := envOr("APK_ROOT", "./apks")
 	mqttURL := env("MQTT_URL") // optional
 	addr := envOr("ADDR", ":8080")
 	enrollToken := envOr("ENROLL_TOKEN", "alimdm-enroll")
 	baseURL := envOr("BASE_URL", "http://localhost:8080")
 	consoleDir := env("CONSOLE_DIR")     // e.g. ../console/dist
+
+	// No default. A built-in signing secret is a published one: this server ran
+	// for months on "change-me-in-prod" precisely because an unset variable was
+	// survivable. Anyone holding that value could mint a token for any operator
+	// email, and the server would grant it that account's real role.
+	if secret == "" {
+		log.Fatal("ALIMDM_SECRET is not set. Generate one with: openssl rand -hex 32")
+	}
 
 	st, err := store.Open(dbPath)
 	if err != nil {

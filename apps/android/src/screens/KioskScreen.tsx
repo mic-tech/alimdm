@@ -702,7 +702,7 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
         onExecuteJs: (code: string) => {
           // Append a unique comment to ensure React state change even if same code is sent twice
           jsExecuteCounterRef.current += 1;
-          const uniqueCode = `${code}\n/* __fk_exec_${jsExecuteCounterRef.current}__ */`;
+          const uniqueCode = `${code}\n/* __alimdm_exec_${jsExecuteCounterRef.current}__ */`;
           setJsToExecute(uniqueCode);
           console.log('[API] Execute JS:', code.substring(0, 50));
         },

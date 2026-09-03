@@ -743,7 +743,7 @@ func (s *Server) downloadAPK(w http.ResponseWriter, r *http.Request) {
 // openProvisionAPK opens the build a QR-provisioned tablet will install: the
 // release staged on the App update page, and nothing else.
 //
-// There used to be a second source — a path in FK_PROVISION_APK, pointing at a
+// There used to be a second source — a path in ALIMDM_PROVISION_APK, pointing at a
 // file someone copied onto the server by hand. Nobody remembered it. The console
 // rolled build 65 to the fleet for a day while every newly provisioned tablet
 // installed a four-day-old APK from that file, and nothing anywhere said so.

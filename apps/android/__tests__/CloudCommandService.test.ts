@@ -24,7 +24,7 @@ jest.mock('../src/utils/secureStorage', () => ({
   getCloudCredentials: jest.fn(() =>
     Promise.resolve({
       deviceId: 'dev-1',
-      apiKey: 'fk_test',
+      apiKey: 'alimdm_test',
       cloudUrl: 'https://cloud.test',
       organizationName: 'Test Org',
     }),

@@ -20,12 +20,8 @@ import (
 )
 
 // env mirrors cmd/api's lookup: ALIMDM_<name> with a fallback to the older
-// FK_<name>, so a container started with the previous environment keeps working.
 func env(name string) string {
-	if v := strings.TrimSpace(os.Getenv("ALIMDM_" + name)); v != "" {
-		return v
-	}
-	return strings.TrimSpace(os.Getenv("FK_" + name))
+	return strings.TrimSpace(os.Getenv("ALIMDM_" + name))
 }
 
 // provisionQR returns the QR payload plus everything the console needs to
