@@ -16,7 +16,7 @@ receiving an image over SSH from someone's laptop.
    | Secret   | `DOCKERHUB_TOKEN`    | the token from step 1        |
    | Variable | `DOCKERHUB_USERNAME` | Docker Hub account/org name  |
 
-3. **Repository on Docker Hub** — create `<username>/alimdm-cloud`. **This repo
+3. **Repository on Docker Hub** — create `<username>/alimdm`. **This repo
    is private, so make the Docker Hub repository private too** unless you intend
    to publish the built server and console. The image holds no secrets — they
    all arrive as environment variables — but it is still this codebase compiled.
@@ -39,12 +39,12 @@ On the VPS, replacing the `docker save | ssh docker load` pipeline:
 
 ```bash
 docker login -u <username>          # once, if the repository is private
-docker pull <username>/alimdm-cloud:latest
+docker pull <username>/alimdm:latest
 docker stop alimdm-cloud && docker rm alimdm-cloud
 docker run -d --name alimdm-cloud --restart unless-stopped \
   --env-file /home/tech/ali-mdm/alimdm.env \
   -v /home/tech/ali-mdm/data:/data -p 127.0.0.1:8080:8080 \
-  <username>/alimdm-cloud:latest
+  <username>/alimdm:latest
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/healthz
 ```
 
