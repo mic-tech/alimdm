@@ -1,0 +1,25 @@
+# The server image builds two things: apps/server (Go) and apps/console (Vite).
+# Everything else in this repo is context Docker packs up and ships to the
+# daemon before the first instruction runs — 5.5GB of it, of which ~4.7GB is the
+# Android app's node_modules and Gradle output that the image never reads.
+.git
+.github
+**/node_modules
+
+# The whole Android app: its own toolchain, never part of the server image.
+apps/android
+apps/enroll
+
+# Built by the console stage itself. Excluded as well as cleaned, because a
+# stale local dist/ shipped as a release once already: the Dockerfile now does
+# `rm -rf dist` before building, and this keeps it out of the context entirely.
+apps/console/dist
+
+# Operator-facing material, not build input.
+docs
+deploy
+qr
+apk
+brand
+*.png
+*.md
