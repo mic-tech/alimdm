@@ -155,12 +155,17 @@ android {
             keyPassword 'android'
         }
         release {
-            // Accepts ALIMDM_UPLOAD_* and still falls back to the old
-            // FREEKIOSK_UPLOAD_* names: gradle.properties is not tracked, so
-            // renaming outright would silently sign releases with the debug
-            // keystore on any machine whose local file was not updated.
-            def ksProp = { String name ->
-                keystoreProperties["ALIMDM_UPLOAD_${name}"] ?: keystoreProperties["FREEKIOSK_UPLOAD_${name}"]
+            def ksProp = { String name -> keystoreProperties["ALIMDM_UPLOAD_${name}"] }
+            // A keystore.properties that exists but does not name the keystore
+            // is the dangerous case the old fallback was there to soften: the
+            // build would drop to the debug keystore and produce an APK that
+            // installs fine and then cannot upgrade a single release-signed
+            // tablet. Fail here instead — a missing file is a fresh clone and
+            // still gets the debug keystore, but a half-filled one is a mistake.
+            if (keystorePropertiesFile.exists() && ksProp('STORE_FILE') == null) {
+                throw new GradleException(
+                    "keystore.properties exists but has no ALIMDM_UPLOAD_STORE_FILE. " +
+                    "Fill it in (see keystore.properties.example) or delete the file to build unsigned.")
             }
             if (keystorePropertiesFile.exists() && ksProp('STORE_FILE') != null) {
                 storeFile file(ksProp('STORE_FILE'))
