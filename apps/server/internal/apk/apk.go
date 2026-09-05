@@ -91,6 +91,15 @@ func (s *Store) Delete(name string) error {
 	if !strings.HasPrefix(absFull, absRoot+string(os.PathSeparator)) {
 		return os.ErrPermission
 	}
+	// A split package is a directory of parts rather than one file. Remove the
+	// whole set: half a split package installs nothing, so leaving parts behind
+	// would only be litter.
+	if st, err := os.Stat(full); err == nil && st.IsDir() {
+		if s.PartsOf(base) == nil {
+			return os.ErrPermission // a directory, but not one of ours
+		}
+		return os.RemoveAll(full)
+	}
 	// Only ever remove APKs, never anything else that happens to sit in the root.
 	if !strings.HasSuffix(base, ".apk") {
 		return os.ErrPermission
@@ -108,7 +117,13 @@ func (s *Store) List() ([]string, error) {
 	}
 	var names []string
 	for _, e := range entries {
+		// A directory holding APK parts is a split package, and counts as one
+		// installable thing under its own name — the matching below looks for a
+		// package name inside that name, and would miss it entirely otherwise.
 		if e.IsDir() {
+			if s.PartsOf(e.Name()) != nil {
+				names = append(names, e.Name())
+			}
 			continue
 		}
 		if strings.HasSuffix(e.Name(), ".apk") {

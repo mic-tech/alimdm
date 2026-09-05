@@ -1935,7 +1935,11 @@ function APKs({ onErr }) {
   }
 
   function openPicker(apkName) {
-    setInstallName(apkName); setInstallPkg(""); setSelected({}); setSelectAll(false);
+    // A split package is stored under its own package name, read out of the
+    // base APK's manifest at upload — so there is nothing for the operator to
+    // type, and nothing to mistype.
+    const known = apkName.endsWith(".xapk") ? apkName.slice(0, -".xapk".length) : "";
+    setInstallName(apkName); setInstallPkg(known); setSelected({}); setSelectAll(false);
   }
   async function removeAPK(name) {
     if (!confirm(`Delete ${name} from the server?\n\nDevices that already installed it keep it — this only removes the server copy and stops future installs.`)) return;
@@ -1978,7 +1982,7 @@ function APKs({ onErr }) {
         actions={
           <label className="btn sm" style={{ position: "relative", overflow: "hidden" }}>
             <IconUpload />{busy ? "Uploading…" : "Upload APK"}
-            <input type="file" accept=".apk" onChange={upload} disabled={busy}
+            <input type="file" accept=".apk,.xapk,.apks,.apkm" onChange={upload} disabled={busy}
               style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", height: "100%" }} />
           </label>
         }
@@ -1986,6 +1990,9 @@ function APKs({ onErr }) {
           <Alert>
             Upload an APK, then queue a silent install to the devices you pick. Devices download and
             install it on their next poll, and the whitelist locks it afterwards.
+            A <span className="mono">.xapk</span> or <span className="mono">.apks</span> is unpacked
+            here and its APKs are installed together, so an app split across a base and several
+            config APKs arrives in one piece. It is listed under its package name.
           </Alert>
         }
       >
@@ -1998,7 +2005,14 @@ function APKs({ onErr }) {
               <tr key={a.name}>
                 <td className="mono strong" data-label="File">{a.name}</td>
                 <td className="nowrap" data-label="Size">{(a.size / 1024 / 1024).toFixed(1)} MB</td>
-                <td className="mono small muted" data-label="SHA-256">{a.sha256.slice(0, 16)}…</td>
+                <td className="mono small muted" data-label="SHA-256">
+                  {/* A split package is a set of APKs rather than a file, so it
+                      has no single hash. Say what it is instead of showing an
+                      empty hash where every other row has one. */}
+                  {a.parts
+                    ? <span className="badge off">{a.parts.length} APKs</span>
+                    : <>{(a.sha256 || "").slice(0, 16)}…</>}
+                </td>
                 <td className="cell-actions">
                   <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
                     {installName === a.name ? (

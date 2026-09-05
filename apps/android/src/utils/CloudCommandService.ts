@@ -66,6 +66,8 @@ interface CloudUpdate {
   package_name: string | null;
   version_name: string | null;
   download_url: string;
+  /** Present when the package is a split set; base first. */
+  split_urls?: string[];
 }
 
 type CommandMapper = (params: Record<string, any>) => {
@@ -433,11 +435,21 @@ class CloudCommandServiceClass {
       } satisfies InflightCommand);
 
       try {
-        const result = await ManagedAppInstaller.installFromUrl(
-          u.download_url,
-          c.apiKey, // the download endpoint is authenticated with the device API key
-          u.package_name ?? null,
-        );
+        // split_urls means the server unpacked a .xapk/.apks: base plus config
+        // splits, which Android takes as one session or not at all. Anything
+        // without it is a plain APK and takes the path it always did.
+        const splits: string[] | undefined = u.split_urls;
+        const result = splits?.length
+          ? await ManagedAppInstaller.installSplitsFromUrls(
+              splits,
+              c.apiKey, // the download endpoint is authenticated with the device API key
+              u.package_name ?? null,
+            )
+          : await ManagedAppInstaller.installFromUrl(
+              u.download_url,
+              c.apiKey,
+              u.package_name ?? null,
+            );
         await StorageService.saveInflightCommand(null);
         await this.reportResult(c, u.command_id, {
           ok: true,

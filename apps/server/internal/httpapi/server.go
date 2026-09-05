@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"ali-mdm/server/internal/apk"
+	"ali-mdm/server/internal/apkinfo"
 	"ali-mdm/server/internal/auth"
 	"ali-mdm/server/internal/blob"
 	"ali-mdm/server/internal/config"
@@ -134,6 +135,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/devices/{id}/screenshot/", s.requireDevice(s.screenshot))
 	mux.HandleFunc("POST /api/v1/devices/{id}/unenroll/", s.unenroll)
 	mux.HandleFunc("GET /api/v1/apk/{name}", s.downloadAPK)
+	mux.HandleFunc("GET /api/v1/apk/{name}/{part}", s.downloadAPKPart)
 	// Zero-touch provisioning: the tablet's setup wizard downloads the Ali MDM
 	// APK from here while scanning the QR. Open (no auth) — it runs before the
 	// device has an API key. 404 until a build is staged on the App update page.
@@ -649,12 +651,27 @@ func (s *Server) deviceUpdates(w http.ResponseWriter, r *http.Request) {
 	ups, _ := s.st.ClaimPendingAPKUpdates(dev.ID)
 	out := make([]map[string]any, 0, len(ups))
 	for _, u := range ups {
-		out = append(out, map[string]any{
+		name := baseName(u.APKPath)
+		item := map[string]any{
 			"command_id":   u.CommandID,
 			"package_name": u.PackageName,
 			"version_name": u.VersionName,
-			"download_url": s.baseURL + "/api/v1/apk/" + baseName(u.APKPath),
-		})
+			"download_url": s.baseURL + "/api/v1/apk/" + name,
+		}
+		// A split package installs as a set or not at all, so the device is
+		// given every part. download_url still points at the base: a build that
+		// predates split support then fails on a missing split, which is a
+		// clearer outcome than quietly installing a base whose native libraries
+		// are in a split it never fetched.
+		if parts := s.apks.PartsOf(name); parts != nil {
+			urls := make([]string, 0, len(parts))
+			for _, part := range parts {
+				urls = append(urls, s.baseURL+"/api/v1/apk/"+name+"/"+part)
+			}
+			item["split_urls"] = urls
+			item["download_url"] = urls[0] // the base, which PartsOf puts first
+		}
+		out = append(out, item)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
@@ -742,6 +759,25 @@ func (s *Server) downloadAPK(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+baseName(name)+`"`)
+	io.Copy(w, f)
+}
+
+// downloadAPKPart serves one APK out of a split package.
+//
+// Both segments are single path components, so the route needs no wildcard
+// gymnastics — a split package is stored under its package name, and its parts
+// under theirs.
+func (s *Server) downloadAPKPart(w http.ResponseWriter, r *http.Request) {
+	pkg := baseName(r.PathValue("name"))
+	part := baseName(r.PathValue("part"))
+	f, err := s.apks.OpenPart(pkg, part)
+	if err != nil {
+		http.Error(w, "apk not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+part+`"`)
 	io.Copy(w, f)
 }
 
@@ -1304,6 +1340,10 @@ func (s *Server) uploadAPK(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = hdr.Filename
 	}
+	if apk.IsArchiveName(name) {
+		s.uploadSplitAPK(w, r, file, name)
+		return
+	}
 	sha, path, size, err := s.apks.Ingest(file, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1315,12 +1355,87 @@ func (s *Server) uploadAPK(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"name": baseName(path), "sha256": sha, "size": size})
 }
 
+// uploadSplitAPK stores a .xapk/.apks archive as the set of APKs it holds.
+//
+// The archive is unpacked here rather than on the tablet for two reasons. The
+// package name has to be read out of the base APK's manifest anyway — it is what
+// the catalogue is keyed on and what enrollment matches a managed app against —
+// so the archive must be opened server-side regardless. And a malformed archive
+// then fails once, in front of the operator who chose it, instead of on every
+// tablet in the school at the next check-in.
+//
+// The stored name is the package name, not the uploaded file name: the operator
+// is not the one who should have to know that "Instagram_v300.xapk" has to be
+// called com.instagram.android for enrollment to match it up.
+func (s *Server) uploadSplitAPK(w http.ResponseWriter, r *http.Request, file io.Reader, name string) {
+	set, err := s.apks.UnpackArchive(file)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Anything that fails from here leaves an unpacked directory behind, so
+	// clear it unless the upload finishes.
+	adopted := false
+	defer func() {
+		if !adopted {
+			os.RemoveAll(set.Dir)
+		}
+	}()
+
+	info, err := apkinfo.ReadAPK(filepath.Join(set.Dir, set.Base))
+	if err != nil {
+		http.Error(w, "cannot read the base APK in that archive: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if info.PackageName == "" {
+		http.Error(w, "the base APK in that archive names no package", http.StatusBadRequest)
+		return
+	}
+
+	stored := info.PackageName + ".xapk"
+	dir, err := s.apks.AdoptSplitSet(set, stored)
+	if err != nil {
+		http.Error(w, "could not store the package", http.StatusInternalServerError)
+		return
+	}
+	adopted = true
+
+	var size int64
+	for _, part := range set.Parts {
+		if st, err := os.Stat(filepath.Join(dir, part)); err == nil {
+			size += st.Size()
+		}
+	}
+	// No single sha256 to give: the thing installed is a set, not a file. The
+	// parts are re-read from disk at install time anyway.
+	_ = s.st.SaveAPK(&store.APK{Name: stored, SHA256: "", Size: size, Path: dir})
+	s.record(r, "apk_uploaded", store.EventInfo, "",
+		fmt.Sprintf("Uploaded %s as %s (%d APKs, base %s)",
+			name, stored, len(set.Parts), set.Base))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"name": stored, "sha256": "", "size": size,
+		"package_name": info.PackageName, "version_name": info.VersionName,
+		"parts": set.Parts,
+	})
+}
+
 func (s *Server) listAPKs(w http.ResponseWriter, r *http.Request) {
 	apks, _ := s.st.ListAPKs()
-	if apks == nil {
-		apks = []store.APK{}
+	out := make([]map[string]any, 0, len(apks))
+	for _, a := range apks {
+		item := map[string]any{
+			"name": a.Name, "sha256": a.SHA256, "size": a.Size,
+		}
+		// A split package has no single sha256 to show — it is a set of APKs,
+		// not a file — so say how many it holds instead of showing an empty
+		// hash where every other row has one.
+		if parts := s.apks.PartsOf(a.Name); parts != nil {
+			item["parts"] = parts
+		}
+		out = append(out, item)
 	}
-	json.NewEncoder(w).Encode(apks)
+	json.NewEncoder(w).Encode(out)
 }
 
 // deleteAPK removes an uploaded APK from both the catalogue and disk. Devices
@@ -1351,10 +1466,15 @@ func (s *Server) deleteAPK(w http.ResponseWriter, r *http.Request) {
 //
 //	{"package_name": "com.x.y", "devices": ["dev1","dev2"]}  // devices optional = all
 func (s *Server) installAPK(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if _, err := s.apks.Open(baseName(name)); err != nil {
-		http.Error(w, "apk not found", http.StatusNotFound)
-		return
+	name := baseName(r.PathValue("name"))
+	// A split package is a directory of parts, not a file. os.Open happens to
+	// succeed on a directory, so the old check passed it by luck rather than by
+	// intent; say what is actually being looked for.
+	if s.apks.PartsOf(name) == nil {
+		if _, err := s.apks.Open(name); err != nil {
+			http.Error(w, "apk not found", http.StatusNotFound)
+			return
+		}
 	}
 	var req struct {
 		PackageName string   `json:"package_name"`

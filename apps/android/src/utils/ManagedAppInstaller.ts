@@ -37,6 +37,26 @@ export const ManagedAppInstaller = {
     }
     return Native.installFromUrl(url, authToken, expectedPackage);
   },
+
+  /**
+   * Install a split package: a base APK and the config splits that attach to it.
+   *
+   * The parts go into one install session and are committed together — a split
+   * cannot be installed on its own, so there is no sequence of single installs
+   * that adds up to this. `urls` arrives base first.
+   */
+  installSplitsFromUrls(
+    urls: string[],
+    authToken: string | null,
+    expectedPackage: string | null,
+  ): Promise<ManagedInstallResult> {
+    if (!Native?.installSplitsFromUrls) {
+      return Promise.reject(
+        new Error('This build cannot install split packages; update Ali MDM first.'),
+      );
+    }
+    return Native.installSplitsFromUrls(urls, authToken, expectedPackage);
+  },
 };
 
 export default ManagedAppInstaller;
