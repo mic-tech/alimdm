@@ -85,7 +85,10 @@ the device's own **Files** tab does that.
 To update an app (or add a new one that isn't on the tablets yet):
 
 1. Go to **📦 APKs**.
-2. **Upload** the `.apk` file.
+2. **Upload** the `.apk` file — or a `.xapk` / `.apks`, for an app that ships as
+   a base plus config splits. The archive is unpacked here and its APKs are
+   installed together in one go; it is listed under its package name, and the
+   install dialog fills that name in for you.
 3. The APK is now available for devices to install. (Pair this with adding the
    app to the whitelist in **Apps & Lockdown** so devices know to install it.)
 

@@ -82,6 +82,26 @@ Work through this list:
 - Wrong enroll token, or the token in the server's `.env` doesn't match what
   you're passing. They must be identical.
 
+### Uploading a package fails with "413 Request Entity Too Large"
+
+That page comes from the reverse proxy, not from Ali MDM — the upload never
+reached the API. A split package is far bigger than a plain APK: an app whose
+audio ships as asset packs was 732MB on the wire and 771MB unpacked.
+
+On nginx, raise the limit in the site's config to match what the API allows for
+itself, and stream large bodies rather than buffering them to disk first:
+
+```nginx
+client_max_body_size 2G;
+# inside location / :
+proxy_request_buffering off;
+```
+
+Then `sudo nginx -t && sudo systemctl reload nginx`. Caddy has no body limit by
+default and needs nothing. With the limit raised, an archive that really is too
+big is refused by the API with a sentence explaining why, instead of by the
+proxy with a bare 413.
+
 ### An app's file picker, camera or share sheet closes after a few seconds
 
 The app opens, you tap "choose a file", the picker appears — and a few seconds
