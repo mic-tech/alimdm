@@ -49,6 +49,11 @@ export interface InboxEntry {
 const STATUS_DONE = 'done';
 const STATUS_FAILED = 'failed';
 
+/** How many server batches one poll will work through before giving the rest to
+    the next check-in. Twenty-five files a batch, so this covers a folder of a
+    thousand. */
+const MAX_BATCHES_PER_POLL = 40;
+
 class CloudFileServiceImpl {
   /** Guards against a slow download overlapping the next heartbeat's poll. */
   private polling = false;
@@ -60,21 +65,31 @@ class CloudFileServiceImpl {
    * fails here is reported explicitly rather than being retried forever: the
    * attempt cap on the server side would otherwise never be reached and a file
    * the tablet cannot store would be downloaded on every heartbeat.
+   *
+   * The server hands over a bounded batch at a time, so that an interruption
+   * strands a batch rather than a whole folder. Keep asking until it says there
+   * is nothing left: waiting for the next heartbeat between batches would turn
+   * one folder of tracks into an afternoon of them.
    */
   async poll(c: CloudCredentials): Promise<void> {
     if (this.polling) return;
     this.polling = true;
     try {
-      const res = await fetch(`${c.cloudUrl}/api/v1/devices/${c.deviceId}/files`, {
-        headers: { Authorization: `Bearer ${c.apiKey}` },
-      });
-      if (!res.ok) {
-        console.warn(`[CloudFiles] Could not list pending files: HTTP ${res.status}`);
-        return;
-      }
-      const pending: PendingFile[] = (await res.json()) ?? [];
-      for (const f of pending) {
-        await this.fetchOne(c, f);
+      // A cap, not a schedule: this only stops a server that somehow keeps
+      // offering the same files from holding this loop open for ever.
+      for (let batch = 0; batch < MAX_BATCHES_PER_POLL; batch++) {
+        const res = await fetch(`${c.cloudUrl}/api/v1/devices/${c.deviceId}/files`, {
+          headers: { Authorization: `Bearer ${c.apiKey}` },
+        });
+        if (!res.ok) {
+          console.warn(`[CloudFiles] Could not list pending files: HTTP ${res.status}`);
+          return;
+        }
+        const pending: PendingFile[] = (await res.json()) ?? [];
+        if (pending.length === 0) return;
+        for (const f of pending) {
+          await this.fetchOne(c, f);
+        }
       }
     } catch (error) {
       console.warn('[CloudFiles] Poll failed:', error);

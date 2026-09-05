@@ -1212,13 +1212,35 @@ func (s *Store) QueueFileDelivery(deviceID, fileName string) error {
 	return err
 }
 
-// ClaimPendingFileDeliveries hands the device its outstanding files and marks
-// them sent, so a slow download is not handed out again on the next heartbeat.
+// maxFileDeliveryBatch bounds one check-in's worth of downloads.
+//
+// The device fetches these one after another and only reports as it finishes
+// each, so everything it is handed is at risk for as long as the batch takes.
+// Sending a folder made that concrete: a whole album handed over at once meant
+// one interrupted download stranded every file behind it. A batch drains over
+// several check-ins instead, and each check-in is woken immediately by the poke
+// that follows a push.
+const maxFileDeliveryBatch = 25
+
+// staleSentAfter is how long a claimed file may sit unreported before it is
+// offered again. A device that was rebooted mid-download would otherwise leave
+// its remaining files marked sent for ever, showing as pending in the console
+// and never being retried. Attempts are still capped, so this cannot loop.
+const staleSentAfter = 30 * time.Minute
+
+// ClaimPendingFileDeliveries hands the device its next files and marks them
+// sent, so a slow download is not handed out again on the next heartbeat.
 func (s *Store) ClaimPendingFileDeliveries(deviceID string) ([]FileDelivery, error) {
 	rows, err := s.db.Query(
 		`SELECT id,device_id,file_name,status,attempts,last_error,updated_at
-		 FROM file_deliveries WHERE device_id=? AND status=? AND attempts < ?`,
-		deviceID, FileDeliveryPending, maxFileDeliveryAttempts)
+		 FROM file_deliveries
+		 WHERE device_id=? AND attempts < ?
+		   AND (status=? OR (status=? AND updated_at < ?))
+		 ORDER BY updated_at LIMIT ?`,
+		deviceID, maxFileDeliveryAttempts,
+		FileDeliveryPending,
+		FileDeliverySent, time.Now().UTC().Add(-staleSentAfter).Format(time.RFC3339),
+		maxFileDeliveryBatch)
 	if err != nil {
 		return nil, err
 	}
@@ -1253,11 +1275,19 @@ func (s *Store) SetFileDeliveryStatus(deviceID, fileName, status, errText string
 }
 
 // CountPendingFileDeliveries drives the heartbeat's "go and fetch" hint.
+//
+// It counts exactly what a claim would hand over, stale claimed files included:
+// a hint of zero means the device never asks, so anything the claim would
+// re-offer but this does not count is a file that is never retried.
 func (s *Store) CountPendingFileDeliveries(deviceID string) int {
 	var n int
 	_ = s.db.QueryRow(
-		`SELECT COUNT(*) FROM file_deliveries WHERE device_id=? AND status=? AND attempts < ?`,
-		deviceID, FileDeliveryPending, maxFileDeliveryAttempts).Scan(&n)
+		`SELECT COUNT(*) FROM file_deliveries
+		 WHERE device_id=? AND attempts < ?
+		   AND (status=? OR (status=? AND updated_at < ?))`,
+		deviceID, maxFileDeliveryAttempts,
+		FileDeliveryPending,
+		FileDeliverySent, time.Now().UTC().Add(-staleSentAfter).Format(time.RFC3339)).Scan(&n)
 	return n
 }
 
