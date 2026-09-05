@@ -253,6 +253,14 @@ class KioskWatchdogService : Service() {
 
         if (isMainActivityRunning()) return  // AliMDM itself is in foreground — fine
 
+        // Carried out past the block below so the relaunch log can name what it was
+        // rejecting. Without this, a managed app that briefly hands off to a helper
+        // (a file picker, a share sheet, a camera intent) looked identical in the log
+        // to every other relaunch reason — "MainActivity not running" — and diagnosing
+        // it needed adb dumpsys at the exact moment the helper was on screen. Now the
+        // rejected package is right there in Capture Logs.
+        var rejectedForeground: String? = null
+
         // In external app mode, the external app is expected to be in the foreground.
         // Don't relaunch MainActivity just because it's not the topActivity. (#106)
         if (getDisplayMode() == "external_app") {
@@ -261,15 +269,24 @@ class KioskWatchdogService : Service() {
             // the launcher, and relaunching on a guess would hijack the app the user is on.
             if (foreground == null) return
             if (foreground in getAllowedForegroundPackages()) return
+            rejectedForeground = foreground
         }
 
         val now = System.currentTimeMillis()
         if (now - lastRelaunchTime < RELAUNCH_COOLDOWN_MS) {
-            DebugLog.d(TAG, "Relaunch cooldown active — skipping")
+            DebugLog.d(TAG, "Relaunch cooldown active — skipping" +
+                (rejectedForeground?.let { " (foreground was '$it', not on the managed-apps whitelist)" } ?: ""))
             return
         }
 
-        DebugLog.d(TAG, "MainActivity not running — relaunching AliMDM")
+        if (rejectedForeground != null) {
+            DebugLog.i(TAG, "Foreground package '$rejectedForeground' is not on the managed-apps " +
+                "whitelist — relaunching AliMDM. If a managed app is meant to hand off to this " +
+                "package (a file picker, a share sheet, a camera intent), add it to Managed Apps " +
+                "with 'Show on Home screen' off.")
+        } else {
+            DebugLog.d(TAG, "MainActivity not running — relaunching AliMDM")
+        }
         lastRelaunchTime = now
 
         try {
