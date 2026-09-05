@@ -41,25 +41,25 @@ type ManagedApp struct {
 func LockdownTemplate(apps []ManagedApp) (string, error) {
 	cfg := map[string]any{
 		"general": map[string]any{
-			"displayMode":  "external_app",
-			"externalApp":  map[string]any{"package": "", "mode": "single", "testMode": false},
-			"managedApps":  apps,
+			"displayMode":   "external_app",
+			"externalApp":   map[string]any{"package": "", "mode": "single", "testMode": false},
+			"managedApps":   apps,
 			"dashboardMode": true,
 		},
 		"display": map[string]any{
-			"keepScreenOn":    true,
+			"keepScreenOn":      true,
 			"defaultBrightness": 0.6,
 		},
 		"security": map[string]any{
-			"kioskEnabled":       true,
-			"blockFactoryReset":  true,
-			"defaultLauncher":    true,
-			"allowPowerButton":   false,
-			"returnMode":         "tap_anywhere",
-			"returnTapCount":     5,
-			"pinMode":            "numeric",
-			"backButtonMode":     "test",
-			"autoRelaunchApp":    true,
+			"kioskEnabled":      true,
+			"blockFactoryReset": true,
+			"defaultLauncher":   true,
+			"allowPowerButton":  false,
+			"returnMode":        "tap_anywhere",
+			"returnTapCount":    5,
+			"pinMode":           "numeric",
+			"backButtonMode":    "test",
+			"autoRelaunchApp":   true,
 		},
 		"advanced": map[string]any{
 			"restApi": map[string]any{"enabled": false},

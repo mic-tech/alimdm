@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"ali-mdm/server/internal/apk"
-	"ali-mdm/server/internal/blob"
 	"ali-mdm/server/internal/auth"
+	"ali-mdm/server/internal/blob"
 	"ali-mdm/server/internal/httpapi"
 	"ali-mdm/server/internal/store"
 )
@@ -37,7 +37,7 @@ func main() {
 	addr := envOr("ADDR", ":8080")
 	enrollToken := envOr("ENROLL_TOKEN", "alimdm-enroll")
 	baseURL := envOr("BASE_URL", "http://localhost:8080")
-	consoleDir := env("CONSOLE_DIR")     // e.g. ../console/dist
+	consoleDir := env("CONSOLE_DIR") // e.g. ../console/dist
 
 	// No default. A built-in signing secret is a published one: this server ran
 	// for months on "change-me-in-prod" precisely because an unset variable was

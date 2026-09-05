@@ -2,12 +2,12 @@ package apk
 
 import (
 	"crypto/sha256"
-	"strings"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Store keeps APKs on plain disk under root and records metadata.

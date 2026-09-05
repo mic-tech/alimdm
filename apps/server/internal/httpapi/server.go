@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"ali-mdm/server/internal/apk"
-	"ali-mdm/server/internal/blob"
 	"ali-mdm/server/internal/auth"
+	"ali-mdm/server/internal/blob"
 	"ali-mdm/server/internal/config"
 	"ali-mdm/server/internal/device"
 	"ali-mdm/server/internal/store"
@@ -28,20 +28,20 @@ type Server struct {
 	// agentAPKs holds Ali MDM's own builds, deliberately in a separate root from
 	// the managed-app catalogue so an agent build can never be auto-queued as a
 	// managed app (or deleted from the Packages page) by accident.
-	agentAPKs    *apk.Store
+	agentAPKs *apk.Store
 	// files holds operator-uploaded documents pushed to device inboxes, kept in
 	// its own root so a worksheet can never be mistaken for an installable APK.
-	files        *blob.Store
-	pokes        *PokeQueue
+	files *blob.Store
+	pokes *PokeQueue
 	// streams fans a tablet's live-view frames out to console viewers. In
 	// memory only: a picture of a classroom has no business on disk.
-	streams      *streamHubs
+	streams *streamHubs
 	// snapshots holds the latest still per device for the console's card view.
 	// In memory only, like the live-view frames.
-	snapshots    *snapshotStore
-	enrollToken  string
-	baseURL      string
-	consoleDir   string
+	snapshots   *snapshotStore
+	enrollToken string
+	baseURL     string
+	consoleDir  string
 }
 
 func New(st *store.Store, signer *auth.Signer, apks, agentAPKs *apk.Store, files *blob.Store, pokes *PokeQueue, enrollToken, baseURL, consoleDir string) *Server {

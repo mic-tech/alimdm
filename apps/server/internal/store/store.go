@@ -16,10 +16,10 @@ type Store struct{ db *sql.DB }
 
 // Device mirrors a Ali MDM-enrolled tablet.
 type Device struct {
-	ID           string
-	Name         string
-	GroupID      string
-	APIKeyHash   string
+	ID         string
+	Name       string
+	GroupID    string
+	APIKeyHash string
 	// LastAppliedHash is the config hash the device last confirmed it applied.
 	// The group's current hash differs from this => we must push config again.
 	LastAppliedHash string
@@ -27,10 +27,10 @@ type Device struct {
 	// so it is 0 on every device that has ever run. A device's policy version is
 	// its group's — read it from there. Kept only because the column exists.
 	ConfigVersion int
-	Battery         int
-	Wifi            int
-	AndroidVer      string
-	Model          string
+	Battery       int
+	Wifi          int
+	AndroidVer    string
+	Model         string
 	// The Ali MDM build actually running on the tablet, reported on every
 	// heartbeat. Without it the console can only show what a device was *told*
 	// to install — which is how a tablet sat on an old build for half an hour
