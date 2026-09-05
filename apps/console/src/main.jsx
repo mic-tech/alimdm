@@ -715,6 +715,7 @@ function DeviceFiles({ device, onErr }) {
                   <td className="small strong" data-label="Folder">
                     <TreeCell depth={row.depth}>
                       <button className="tree-toggle" aria-expanded={open}
+                        aria-label={`${open ? "Collapse" : "Expand"} ${row.node.path}`}
                         onClick={() => toggle(row.node.path)}>
                         <IconChevronRight width="16" height="16"
                           className={"tree-caret" + (open ? " is-open" : "")} />
@@ -2510,6 +2511,7 @@ function Files({ onErr }) {
                           {/* The whole name is the toggle, so opening a folder
                               does not mean hitting a 16px caret. */}
                           <button className="tree-toggle" aria-expanded={open}
+                            aria-label={`${open ? "Collapse" : "Expand"} ${row.node.path}`}
                             onClick={() => toggle(row.node.path)}>
                             <IconChevronRight width="16" height="16"
                               className={"tree-caret" + (open ? " is-open" : "")} />
@@ -2528,12 +2530,13 @@ function Files({ onErr }) {
                           {push?.key === row.key ? (
                             <button className="btn outline sm" onClick={() => setPush(null)}>Cancel</button>
                           ) : (
-                            <button className="btn outline sm"
+                            <button className="btn outline sm" title={`Send ${row.node.path} to devices`}
                               onClick={() => { setPush({ kind: "folder", key: row.key, path: row.node.path }); setPushGroup(""); }}>
                               <IconUpload />Send folder
                             </button>
                           )}
-                          <button className="btn danger-outline sm icon" title="Delete this folder from the library"
+                          <button className="btn danger-outline sm icon"
+                            title={`Delete ${row.node.path} from the library`}
                             disabled={busy} onClick={() => removeFolder(row.node.path, st.files)}><IconTrash /></button>
                         </div>
                       </td>
@@ -2566,12 +2569,12 @@ function Files({ onErr }) {
                         {push?.key === row.key ? (
                           <button className="btn outline sm" onClick={() => setPush(null)}>Cancel</button>
                         ) : (
-                          <button className="btn outline sm"
+                          <button className="btn outline sm" title={`Send ${f.label} to devices`}
                             onClick={() => { setPush({ kind: "file", key: row.key, name: f.name }); setPushGroup(""); }}>
                             <IconUpload />Send to devices
                           </button>
                         )}
-                        <button className="btn danger-outline sm icon" title="Delete from library"
+                        <button className="btn danger-outline sm icon" title={`Delete ${f.label} from the library`}
                           disabled={busy} onClick={() => removeFile(f.name)}><IconTrash /></button>
                       </div>
                     </td>
