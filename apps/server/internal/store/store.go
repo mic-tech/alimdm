@@ -157,7 +157,13 @@ func migrate(db *sql.DB) error {
 		name TEXT PRIMARY KEY,
 		sha256 TEXT NOT NULL,
 		size INTEGER NOT NULL,
-		path TEXT NOT NULL
+		path TEXT NOT NULL,
+		-- Read out of the APK's own manifest at upload. The file name is
+		-- whatever the operator's download happened to be called, and typing the
+		-- package by hand is a step that can be got wrong in a way nothing
+		-- catches until an install silently targets the wrong app.
+		package_name TEXT NOT NULL DEFAULT '',
+		version_name TEXT NOT NULL DEFAULT ''
 	);
 	-- The agent (Ali MDM itself) is kept apart from the managed-app catalogue.
 	-- Replacing the agent kills the process mid-install, so its rollout needs
@@ -291,6 +297,22 @@ func migrate(db *sql.DB) error {
 
 	// Files uploaded before folder upload existed have no folder to sit in, and
 	// an empty rel_path means exactly that: put it at the top of the inbox.
+	// Packages uploaded before the manifest was read at upload have no package
+	// name recorded. It is filled in the first time they are listed.
+	for _, c := range []struct{ name, ddl string }{
+		{"package_name", `ALTER TABLE apks ADD COLUMN package_name TEXT NOT NULL DEFAULT ''`},
+		{"version_name", `ALTER TABLE apks ADD COLUMN version_name TEXT NOT NULL DEFAULT ''`},
+	} {
+		has, err := hasColumn(db, "apks", c.name)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := db.Exec(c.ddl); err != nil {
+				return err
+			}
+		}
+	}
 	for _, c := range []struct{ name, ddl string }{
 		{"rel_path", `ALTER TABLE files ADD COLUMN rel_path TEXT NOT NULL DEFAULT ''`},
 		// Left empty for existing rows on purpose: their names are still
@@ -687,6 +709,11 @@ type APK struct {
 	SHA256 string `json:"sha256"`
 	Size   int64  `json:"size"`
 	Path   string `json:"-"`
+	// PackageName and VersionName come from the APK's own manifest, so the
+	// console can say what an upload actually is rather than only what the file
+	// was called. Empty on rows written before they were recorded.
+	PackageName string `json:"package_name"`
+	VersionName string `json:"version_name"`
 }
 
 // DeleteAPK drops the catalogue row for an APK. The file itself is removed
@@ -698,12 +725,16 @@ func (s *Store) DeleteAPK(name string) error {
 
 // SaveAPK records a stored APK.
 func (s *Store) SaveAPK(a *APK) error {
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO apks(name,sha256,size,path) VALUES(?,?,?,?)`, a.Name, a.SHA256, a.Size, a.Path)
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO apks(name,sha256,size,path,package_name,version_name)
+		 VALUES(?,?,?,?,?,?)`,
+		a.Name, a.SHA256, a.Size, a.Path, a.PackageName, a.VersionName)
 	return err
 }
 
 func (s *Store) ListAPKs() ([]APK, error) {
-	rows, err := s.db.Query(`SELECT name,sha256,size,path FROM apks ORDER BY name`)
+	rows, err := s.db.Query(
+		`SELECT name,sha256,size,path,package_name,version_name FROM apks ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -711,7 +742,8 @@ func (s *Store) ListAPKs() ([]APK, error) {
 	var out []APK
 	for rows.Next() {
 		var a APK
-		if err := rows.Scan(&a.Name, &a.SHA256, &a.Size, &a.Path); err != nil {
+		if err := rows.Scan(&a.Name, &a.SHA256, &a.Size, &a.Path,
+			&a.PackageName, &a.VersionName); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

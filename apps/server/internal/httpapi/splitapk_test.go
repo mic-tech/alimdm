@@ -266,3 +266,78 @@ func TestABadArchiveIsRefusedAtUpload(t *testing.T) {
 		t.Fatalf("%d packages in the catalogue after failed uploads", len(apks))
 	}
 }
+
+// The package name is what an install targets, and typing it by hand is a step
+// that goes wrong quietly. It comes from the APK's own manifest for a plain
+// upload, exactly as it already did for a split one.
+func TestAPlainAPKReportsItsPackageName(t *testing.T) {
+	e := newAPKTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+
+	body := append(miniAPK(t, "com.example.plain"), make([]byte, 60*1024)...)
+	rec, out := e.uploadPackage(t, tok, "SomeDownload_v2.apk", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upload: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	if out["package_name"] != "com.example.plain" {
+		t.Fatalf("upload reported package_name %v, want com.example.plain", out["package_name"])
+	}
+
+	listed, _ := e.do("GET", "/api/v1/apks", tok, nil)
+	var rows []map[string]any
+	json.Unmarshal(listed.Body.Bytes(), &rows)
+	if len(rows) != 1 {
+		t.Fatalf("%d packages listed, want 1", len(rows))
+	}
+	if rows[0]["package_name"] != "com.example.plain" {
+		t.Fatalf("listing reported %v, want com.example.plain", rows[0]["package_name"])
+	}
+	// The file name is still whatever the download was called.
+	if rows[0]["name"] != "SomeDownload_v2.apk" {
+		t.Fatalf("stored name = %v", rows[0]["name"])
+	}
+}
+
+// A package uploaded before the manifest was read has no name recorded. The
+// listing fills it in and keeps it, so an operator who uploaded last month is
+// not the only one left typing it.
+func TestAnOlderPackageGetsItsNameFilledIn(t *testing.T) {
+	e := newAPKTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	body := append(miniAPK(t, "com.example.old"), make([]byte, 60*1024)...)
+	e.uploadPackage(t, tok, "old.apk", body)
+
+	// Forget it, the way a row written before the column existed would be.
+	apks, _ := e.st.ListAPKs()
+	apks[0].PackageName, apks[0].VersionName = "", ""
+	if err := e.st.SaveAPK(&apks[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	listed, _ := e.do("GET", "/api/v1/apks", tok, nil)
+	var rows []map[string]any
+	json.Unmarshal(listed.Body.Bytes(), &rows)
+	if rows[0]["package_name"] != "com.example.old" {
+		t.Fatalf("listing reported %v, want the name read off disk", rows[0]["package_name"])
+	}
+	// And it was written back, not re-read on every listing.
+	after, _ := e.st.ListAPKs()
+	if after[0].PackageName != "com.example.old" {
+		t.Fatalf("stored package name = %q, want it persisted", after[0].PackageName)
+	}
+}
+
+// A file the parser cannot read is still stored — it may be a good APK this
+// parser simply does not understand — and just has no name to offer.
+func TestAnUnreadableAPKIsStillStored(t *testing.T) {
+	e := newAPKTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+
+	rec, out := e.uploadPackage(t, tok, "mystery.apk", make([]byte, 60*1024))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d — an unparseable APK should still be stored", rec.Code)
+	}
+	if out["package_name"] != "" {
+		t.Fatalf("package_name = %v, want empty", out["package_name"])
+	}
+}

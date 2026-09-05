@@ -1355,10 +1355,30 @@ func (s *Server) uploadAPK(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = s.st.SaveAPK(&store.APK{Name: baseName(path), SHA256: sha, Size: size, Path: path})
-	s.record(r, "apk_uploaded", store.EventInfo, "", "Uploaded package "+baseName(path))
+	// Read what the APK says it is. The file name is whatever the download was
+	// called; the package name is what an install actually targets, and asking
+	// an operator to type it is a step that can go wrong in a way nothing
+	// catches until the wrong app is installed. A file that will not parse is
+	// still stored — it may be a perfectly good APK this parser cannot read —
+	// and simply leaves the field empty.
+	info, infoErr := apkinfo.ReadAPK(path)
+	if infoErr != nil {
+		s.record(r, "apk_uploaded", store.EventWarn, "",
+			"Uploaded "+baseName(path)+", but could not read its manifest: "+infoErr.Error())
+	}
+	_ = s.st.SaveAPK(&store.APK{
+		Name: baseName(path), SHA256: sha, Size: size, Path: path,
+		PackageName: info.PackageName, VersionName: info.VersionName,
+	})
+	if infoErr == nil {
+		s.record(r, "apk_uploaded", store.EventInfo, "",
+			fmt.Sprintf("Uploaded package %s (%s %s)", baseName(path), info.PackageName, info.VersionName))
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"name": baseName(path), "sha256": sha, "size": size})
+	json.NewEncoder(w).Encode(map[string]any{
+		"name": baseName(path), "sha256": sha, "size": size,
+		"package_name": info.PackageName, "version_name": info.VersionName,
+	})
 }
 
 // uploadSplitAPK stores a .xapk/.apks archive as the set of APKs it holds.
@@ -1414,7 +1434,10 @@ func (s *Server) uploadSplitAPK(w http.ResponseWriter, r *http.Request, file io.
 	}
 	// No single sha256 to give: the thing installed is a set, not a file. The
 	// parts are re-read from disk at install time anyway.
-	_ = s.st.SaveAPK(&store.APK{Name: stored, SHA256: "", Size: size, Path: dir})
+	_ = s.st.SaveAPK(&store.APK{
+		Name: stored, SHA256: "", Size: size, Path: dir,
+		PackageName: info.PackageName, VersionName: info.VersionName,
+	})
 	s.record(r, "apk_uploaded", store.EventInfo, "",
 		fmt.Sprintf("Uploaded %s as %s (%d APKs, base %s)",
 			name, stored, len(set.Parts), set.Base))
@@ -1430,8 +1453,19 @@ func (s *Server) listAPKs(w http.ResponseWriter, r *http.Request) {
 	apks, _ := s.st.ListAPKs()
 	out := make([]map[string]any, 0, len(apks))
 	for _, a := range apks {
+		// Packages uploaded before the manifest was read have no package name.
+		// Read it now and keep it, so the cost is paid once rather than on every
+		// listing — and so an operator who uploaded before this existed still
+		// gets the field filled in for them.
+		if a.PackageName == "" {
+			if info, err := apkinfo.ReadAPK(s.apkPathFor(a)); err == nil && info.PackageName != "" {
+				a.PackageName, a.VersionName = info.PackageName, info.VersionName
+				_ = s.st.SaveAPK(&a)
+			}
+		}
 		item := map[string]any{
 			"name": a.Name, "sha256": a.SHA256, "size": a.Size,
+			"package_name": a.PackageName, "version_name": a.VersionName,
 		}
 		// A split package has no single sha256 to show — it is a set of APKs,
 		// not a file — so say how many it holds instead of showing an empty
@@ -1442,6 +1476,15 @@ func (s *Server) listAPKs(w http.ResponseWriter, r *http.Request) {
 		out = append(out, item)
 	}
 	json.NewEncoder(w).Encode(out)
+}
+
+// apkPathFor names the file whose manifest describes a catalogue entry: the APK
+// itself, or a split package's base.
+func (s *Server) apkPathFor(a store.APK) string {
+	if parts := s.apks.PartsOf(a.Name); parts != nil {
+		return filepath.Join(a.Path, parts[0])
+	}
+	return a.Path
 }
 
 // deleteAPK removes an uploaded APK from both the catalogue and disk. Devices

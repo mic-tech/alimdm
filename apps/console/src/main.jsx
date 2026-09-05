@@ -1935,10 +1935,11 @@ function APKs({ onErr }) {
   }
 
   function openPicker(apkName) {
-    // A split package is stored under its own package name, read out of the
-    // base APK's manifest at upload — so there is nothing for the operator to
-    // type, and nothing to mistype.
-    const known = apkName.endsWith(".xapk") ? apkName.slice(0, -".xapk".length) : "";
+    // The server reads the package name out of the manifest at upload, for a
+    // plain APK as well as a split one — so there is nothing here for the
+    // operator to type, and nothing to mistype. It stays editable for the case
+    // where the parser could not read a manifest and left it empty.
+    const known = apks?.find((a) => a.name === apkName)?.package_name || "";
     setInstallName(apkName); setInstallPkg(known); setSelected({}); setSelectAll(false);
   }
   async function removeAPK(name) {
@@ -2003,7 +2004,16 @@ function APKs({ onErr }) {
           <tbody>
             {apks.map((a) => (
               <tr key={a.name}>
-                <td className="mono strong" data-label="File">{a.name}</td>
+                <td className="mono strong" data-label="File">
+                  {a.name}
+                  {/* What an install actually targets, which the file name only
+                      sometimes resembles. */}
+                  {a.package_name && (
+                    <div className="muted small mono">
+                      {a.package_name}{a.version_name ? ` · ${a.version_name}` : ""}
+                    </div>
+                  )}
+                </td>
                 <td className="nowrap" data-label="Size">{(a.size / 1024 / 1024).toFixed(1)} MB</td>
                 <td className="mono small muted" data-label="SHA-256">
                   {/* A split package is a set of APKs rather than a file, so it
