@@ -1205,8 +1205,9 @@ class OverlayService : Service() {
     private fun startForegroundMonitoring() {
         stopForegroundMonitoring() // Clear any existing monitoring
         foregroundNullCount = 0
+        lockedAppLastForegroundMs = 0L
         
-        android.util.Log.i("OverlayService", "Starting foreground monitoring for package: $lockedPackage (interval=${FOREGROUND_CHECK_INTERVAL}ms)")
+        DebugLog.i("OverlayService", "Starting foreground monitoring for package: $lockedPackage (interval=${FOREGROUND_CHECK_INTERVAL}ms)")
         
         foregroundMonitorHandler.post(object : Runnable {
             override fun run() {
@@ -1230,6 +1231,13 @@ class OverlayService : Service() {
      * Check if the locked app is still in foreground, bring AliMDM back if not
      */
     private var foregroundNullCount = 0
+
+    /**
+     * When the locked app was last seen in the foreground, or 0 if it has not
+     * been since monitoring started. This is what tells a hand-off apart from a
+     * launch that never arrived — see checkForegroundApp.
+     */
+    private var lockedAppLastForegroundMs = 0L
     
     private fun checkForegroundApp() {
         try {
@@ -1247,6 +1255,9 @@ class OverlayService : Service() {
             
             // Correct app in foreground - nothing to do
             if (topPackage == lockedPackage || topPackage == packageName) {
+                if (topPackage == lockedPackage) {
+                    lockedAppLastForegroundMs = System.currentTimeMillis()
+                }
                 return
             }
             
@@ -1264,56 +1275,43 @@ class OverlayService : Service() {
             
             // Check if it's a launcher (user pressed Home button) - always relaunch
             if (isLauncherPackage(topPackage)) {
-                android.util.Log.i("OverlayService", "Launcher detected ($topPackage) - user pressed Home, bringing AliMDM back")
+                DebugLog.i("OverlayService", "Launcher detected ($topPackage) - user pressed Home, bringing AliMDM back")
                 bringAliMdmToFront()
                 return
             }
-            
-            // Check if the locked app still has a visible/foreground process
-            // This indicates a child activity (barcode scanner, file picker, camera, etc.)
-            // was launched BY the locked app itself - allow it
-            // Safe in Lock Task mode: user can't open other apps, only the locked app can launch activities
-            if (isLockedAppProcessAlive()) {
-                android.util.Log.d("OverlayService", "Child activity detected ($topPackage) - locked app ($lockedPackage) process still alive, allowing")
+
+            // Something else is in front, and the locked app has been in front at
+            // some point: it handed off. In Lock Task mode Android will not let the
+            // user start anything themselves, so a file picker, a share sheet, a
+            // camera intent or a permission dialog is the only way to get here —
+            // and yanking the app back would close whatever they are in the middle
+            // of, which is exactly what a file picker vanishing after five seconds
+            // looks like.
+            //
+            // This used to ask whether the locked app's process was still alive.
+            // ActivityManager.getRunningAppProcesses has returned only the caller's
+            // own processes since Android 5.1, so that check answered "dead" for
+            // every app on every device this ships to, and the hand-off allowance
+            // it guarded never once applied. Each helper package had to be listed
+            // in Managed Apps by hand instead, per device model — which is how a
+            // tablet whose picker is com.google.android.documentsui rather than
+            // com.android.documentsui broke a policy that named the other one.
+            if (lockedAppLastForegroundMs > 0L) {
+                DebugLog.d("OverlayService", "Foreground is '$topPackage' while '$lockedPackage' " +
+                    "is the locked app. It was in front ${(System.currentTimeMillis() - lockedAppLastForegroundMs) / 1000}s " +
+                    "ago, so this is something it opened — leaving it alone.")
                 return
             }
-            
-            // Locked app process is dead (crashed/killed) and foreground is not a child activity
-            android.util.Log.i("OverlayService", "Locked app ($lockedPackage) process dead (current: $topPackage) - bringing AliMDM back")
+
+            // Never seen in front since monitoring began: the launch did not take,
+            // so put the operator back on familiar ground rather than leaving them
+            // wherever this is.
+            DebugLog.i("OverlayService", "Locked app ($lockedPackage) has not been in the " +
+                "foreground since it was launched (current: $topPackage) - bringing AliMDM back")
             bringAliMdmToFront()
         } catch (e: Exception) {
-            android.util.Log.e("OverlayService", "Error checking foreground app: ${e.message}")
+            DebugLog.e("OverlayService", "Error checking foreground app: ${e.message}")
         }
-    }
-    
-    /**
-     * Check if the locked app's process is still alive (not crashed).
-     * 
-     * In Lock Task mode, the user cannot open other apps — only the locked app itself
-     * can launch child activities (barcode scanner, file picker, camera intent, etc.).
-     * So if the locked app's process is still alive AND the foreground is not a launcher,
-     * it must be a child activity launched by the locked app.
-     * 
-     * When the app crashes, its process is killed and disappears from runningAppProcesses.
-     * When the user presses Home, the launcher is detected first (isLauncherPackage check).
-     * 
-     * Note: We check for process existence, not IMPORTANCE_VISIBLE, because full-screen
-     * child activities (like MLKit barcode scanner) cause the parent to receive onStop(),
-     * dropping its importance to CACHED — but the process is still alive.
-     */
-    private fun isLockedAppProcessAlive(): Boolean {
-        val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
-        val processes = am.runningAppProcesses ?: return false
-        
-        for (proc in processes) {
-            if (proc.processName == lockedPackage || proc.processName?.startsWith("$lockedPackage:") == true) {
-                android.util.Log.d("OverlayService", "Locked app process ($lockedPackage) alive - importance=${proc.importance}")
-                return true
-            }
-        }
-        // Process not found = app crashed/killed
-        android.util.Log.d("OverlayService", "Locked app process ($lockedPackage) NOT found in running processes")
-        return false
     }
     
     /**
@@ -1435,7 +1433,7 @@ class OverlayService : Service() {
         val targetPackage = lockedPackage
         if (targetPackage != null) {
             try {
-                android.util.Log.i("OverlayService", "Relaunching external app directly: $targetPackage")
+                DebugLog.i("OverlayService", "Relaunching external app directly: $targetPackage")
                 val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
                 if (launchIntent != null) {
                     launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
