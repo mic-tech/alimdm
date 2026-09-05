@@ -7,10 +7,13 @@ Once your tablets are enrolled, this is how you manage them from the console
 
 | Tab | What you do there |
 |---|---|
-| **📱 Devices** | See all tablets live (online, battery, Android version). Send commands. |
-| **➕ Enroll (QR)** | Generate a QR to enroll new/replace tablets. |
-| **🔒 Apps & Lockdown** | Change the app whitelist, toggle kiosk mode. |
-| **📦 APKs** | Upload APKs to push-install to devices. |
+| **Devices** | See all tablets live (online, battery, Android version). Send commands. |
+| **Groups** | Edit a policy: managed apps, kiosk mode, return gesture, everything a group's tablets follow. |
+| **Activity** | What has happened across the fleet, newest first. |
+| **Enroll** | Generate a QR to enroll new or replacement tablets. |
+| **Packages** | Upload APKs to install on devices. |
+| **Files** | Upload documents and audio, and send them to tablets. |
+| **App update** | Publish a new Ali MDM build and roll it out. |
 
 ---
 
@@ -18,11 +21,12 @@ Once your tablets are enrolled, this is how you manage them from the console
 
 Say you want to add a 4th app or remove one:
 
-1. Go to **🔒 Apps & Lockdown**.
-2. Edit the **App whitelist** — add a package name (e.g. `com.example.newapp`) or
-   remove one.
+1. Go to **Groups** and open the group the tablets are in.
+2. Edit **Managed Apps** — add a package name (e.g. `com.example.newapp`) or
+   remove one. **Show on Home screen** off keeps an app allowed without putting
+   it on the grid, which is what a file picker or a camera app wants.
 3. (Optional) toggle **Kiosk mode** on/off.
-4. Click **Save & push to devices**.
+4. Click **Save**.
 
 **What happens:** the config version bumps. Every enrolled tablet picks up the
 change on its next heartbeat (within ~30 seconds) — **no factory reset, no ADB,
@@ -45,6 +49,34 @@ From **📱 Devices**, each tablet has action buttons:
 
 Commands are delivered on the device's next heartbeat (≤30s) or immediately if
 you have MQTT enabled.
+
+---
+
+## Send files to tablets
+
+**Files** is for documents, worksheets and audio — anything that is not an app.
+
+1. **Upload file** for one, or **Upload folder** for a whole tree. A folder keeps
+   its shape: sub-folders and all.
+2. The library shows folders you can open and close. Sizes and delivery counts
+   on a folder row cover everything inside it, so a closed folder still tells you
+   where things got to.
+3. **Send folder** sends everything beneath it in one go, at any depth. **Send to
+   devices** on a single file sends just that one.
+4. Choose who gets it: **every enrolled device**, **a group**, or **chosen
+   devices** — tick the tablets you want. The button says what it is about to do
+   ("Send 3 files to 2 devices") before you press it.
+
+Files land in **`Download/Ali MDM`** on the tablet, with the same folder
+structure they had here, where the tablet's own Files app can open them. Offline
+tablets collect on their next check-in, so sending to one that is switched off is
+fine. Deleting from the library does **not** remove copies already on tablets;
+the device's own **Files** tab does that.
+
+> A tablet takes files in batches of 25 per check-in rather than all at once, so
+> a folder of 200 tracks arrives over a few minutes. That is deliberate: if a
+> tablet reboots mid-download, only that batch is affected and the rest are still
+> queued.
 
 ---
 

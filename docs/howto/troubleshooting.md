@@ -82,6 +82,34 @@ Work through this list:
 - Wrong enroll token, or the token in the server's `.env` doesn't match what
   you're passing. They must be identical.
 
+### An app's file picker, camera or share sheet closes after a few seconds
+
+The app opens, you tap "choose a file", the picker appears — and a few seconds
+later you are back in the app with no picker. Nothing crashed.
+
+Two things bring a kiosk back to where it thinks it should be: the watchdog and
+the overlay service. Both used to relaunch whenever the package in front was not
+one they recognised, and a file picker is a different package from the app that
+opened it. From **1.2.47** neither does that while lock task is on, because
+Android is already deciding what may come to the front — so on 1.2.47 or later
+this should not happen at all, and if it does the cause is something else.
+
+On an older build, or with **Kiosk mode (lock task)** switched off, the fix is to
+name the helper explicitly:
+
+1. Console → **Devices** → the tablet → **Capture Logs**.
+2. Look for a line naming the package that was rejected:
+   `Foreground package 'com.google.android.documentsui' is not on the
+   managed-apps whitelist`.
+3. Console → **Groups** → the group → **Managed Apps** → add that package with
+   **Show on Home screen** off. It becomes allowed without appearing to pupils.
+
+> **The package name is not the one you expect.** The document picker is
+> `com.android.documentsui` on some tablets and `com.google.android.documentsui`
+> on others — the Lenovo TB330FU uses the Google one. Read the name out of the
+> log rather than guessing; a policy that names the wrong one looks exactly like
+> a policy that names none.
+
 ### The app keeps crashing / won't stay open
 - Check the Android version is supported (Ali MDM needs Android 8.0+).
 - Some very old or heavily-modified tablets have issues — test on a known-good
