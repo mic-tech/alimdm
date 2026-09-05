@@ -2199,9 +2199,13 @@ function fmtSize(bytes) {
   return (bytes / 1024 / 1024).toFixed(1) + " MB";
 }
 
-/* The catalogue key carries the folders so it stays unique; the row should show
-   the file's own name, the way it will appear on the tablet. */
-function stripFolderPrefix(f) {
+/* The catalogue key carries the folders so it stays unique, and may carry more
+   than that to break a tie; the row should show the name the tablet will use.
+   The server sends it. Undoing the fold is the fallback for a row uploaded
+   before it did — exact for those rows, since back then a name that needed
+   breaking a tie replaced the file it collided with instead. */
+function fileLabel(f) {
+  if (f.file_name) return f.file_name;
   if (!f.rel_path) return f.name;
   const prefix = f.rel_path.split("/").join(" - ") + " - ";
   return f.name.startsWith(prefix) ? f.name.slice(prefix.length) : f.name;
@@ -2329,7 +2333,7 @@ function Files({ onErr }) {
   // Rebuilt whenever the list refreshes; open folders live in their own state so
   // a background refresh never collapses what the operator was looking at.
   const rows = useMemo(
-    () => treeRows(buildFileTree(files ?? [], stripFolderPrefix), (p) => expanded.has(p)),
+    () => treeRows(buildFileTree(files ?? [], fileLabel), (p) => expanded.has(p)),
     [files, expanded]);
 
   function toggle(path) {

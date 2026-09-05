@@ -522,3 +522,71 @@ func TestListReportsTheFolderEachFileIsIn(t *testing.T) {
 		}
 	}
 }
+
+// The library is stored flat, so the folder path is folded into the file's
+// catalogue key. " - " is not reserved, though, which means two files in
+// different folders can fold to the same key — and the second upload used to
+// replace the first with no error at all.
+func TestTwoFilesThatFoldToTheSameNameBothSurvive(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+
+	// "Track 01.mp3" inside Juz30/CD1 …
+	if rec := e.uploadInto(t, tok, "Juz30/CD1", "Track 01.mp3", []byte("inside CD1")); rec.Code != http.StatusOK {
+		t.Fatalf("first upload: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	// … and "CD1 - Track 01.mp3" sitting at the top of Juz30. Both fold to
+	// "Juz30 - CD1 - Track 01.mp3".
+	if rec := e.uploadInto(t, tok, "Juz30", "CD1 - Track 01.mp3", []byte("top of Juz30")); rec.Code != http.StatusOK {
+		t.Fatalf("second upload: status %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	files, err := e.st.ListFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("%d files in the library, want 2 — one upload replaced the other", len(files))
+	}
+	byFolder := map[string]store.File{}
+	for _, f := range files {
+		byFolder[f.RelPath] = f
+	}
+	if got := byFolder["Juz30/CD1"].Size; got != int64(len("inside CD1")) {
+		t.Fatalf("the file in Juz30/CD1 is %d bytes, want %d", got, len("inside CD1"))
+	}
+	if got := byFolder["Juz30"].Size; got != int64(len("top of Juz30")) {
+		t.Fatalf("the file at the top of Juz30 is %d bytes, want %d", got, len("top of Juz30"))
+	}
+	// Each still reports the name a pupil should see.
+	for rel, f := range byFolder {
+		want := "Track 01.mp3"
+		if rel == "Juz30" {
+			want = "CD1 - Track 01.mp3"
+		}
+		if got := fileNameFor(&f); got != want {
+			t.Fatalf("%s: device would save it as %q, want %q", rel, got, want)
+		}
+	}
+}
+
+// Uploading the same file into the same folder is an operator replacing it, and
+// must not pile up "(2)", "(3)" copies.
+func TestReuploadingIntoTheSameFolderReplaces(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+
+	e.uploadInto(t, tok, "Juz30/CD1", "Track 01.mp3", []byte("first"))
+	e.uploadInto(t, tok, "Juz30/CD1", "Track 01.mp3", []byte("second, corrected"))
+
+	files, err := e.st.ListFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("%d files, want 1 — a re-upload should replace, not duplicate", len(files))
+	}
+	if files[0].Size != int64(len("second, corrected")) {
+		t.Fatalf("the library kept the old bytes")
+	}
+}

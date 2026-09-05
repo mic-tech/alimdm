@@ -17,7 +17,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -57,6 +59,49 @@ func Sanitize(name string) string {
 		return ""
 	}
 	return name
+}
+
+// EnsureUnique returns a variant of name that taken() does not claim.
+//
+// The library stores files flat, so a folder upload folds the folder path into
+// the name to keep it unique. " - " is not a reserved character, though, so that
+// fold is ambiguous: "Track 01.mp3" inside "Juz30/CD1" and "CD1 - Track 01.mp3"
+// at the top of "Juz30" produce exactly the same name. Left alone the second
+// upload replaces the first, which is the worst way to lose a file — no error,
+// and a row that still looks right.
+//
+// What counts as taken is the caller's business; this only knows how to spell
+// the alternative, and keeps it inside the same length limit Sanitize applies,
+// so the answer cannot be truncated back into the collision it just avoided.
+func EnsureUnique(name string, taken func(string) bool) string {
+	name = Sanitize(name)
+	if name == "" || !taken(name) {
+		return name
+	}
+	ext := filepath.Ext(name)
+	if len(ext) > 16 {
+		ext = ""
+	}
+	stem := strings.TrimSuffix(name, ext)
+	for n := 2; n < 1000; n++ {
+		candidate := fitName(stem, fmt.Sprintf(" (%d)", n), ext)
+		if !taken(candidate) {
+			return candidate
+		}
+	}
+	// A thousand names that all flatten together is not a real library; take
+	// something that will not collide rather than looping or overwriting.
+	return fitName(stem, " ("+strconv.FormatInt(time.Now().UnixNano(), 36)+")", ext)
+}
+
+// fitName joins the parts, trimming the stem on a rune boundary if the whole
+// would run past the name limit.
+func fitName(stem, suffix, ext string) string {
+	r := []rune(stem)
+	for len(string(r))+len(suffix)+len(ext) > maxNameLen && len(r) > 0 {
+		r = r[:len(r)-1]
+	}
+	return string(r) + suffix + ext
 }
 
 // maxRelDepth bounds how deep an uploaded folder tree may be. A browser folder

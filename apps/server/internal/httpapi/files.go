@@ -24,10 +24,18 @@ import (
 	"ali-mdm/server/internal/store"
 )
 
-// fileNameFor recovers the name a file should have inside its folder on the
-// tablet. The catalogue key is prefixed with the folders to keep it unique, but
-// a pupil should see "track01.mp3", not "Juz30 - Surah-078 - track01.mp3".
+// fileNameFor is the name a file should have inside its folder on the tablet.
+// The catalogue key carries the folders to keep it unique, but a pupil should
+// see "track01.mp3", not "Juz30 - Surah-078 - track01.mp3".
+//
+// Uploads record that name; rows written before they did fall back to undoing
+// the fold. That fallback is exact for those rows and only those: a key that
+// needed disambiguating beyond the folders could not exist back then, because
+// such an upload simply replaced the file it collided with.
 func fileNameFor(f *store.File) string {
+	if f.FileName != "" {
+		return f.FileName
+	}
 	if f.RelPath == "" {
 		return f.Name
 	}
@@ -81,6 +89,15 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if relPath != "" {
 		key = strings.ReplaceAll(relPath, "/", " - ") + " - " + name
 	}
+	// Folding the folders in keeps two "track01.mp3" apart, but " - " is an
+	// ordinary character: a folder can be named so that two different files
+	// fold to the same key. Only a file from a *different* folder counts as a
+	// clash — re-uploading into the same folder is an operator replacing a
+	// file, which is exactly what it should do.
+	key = blob.EnsureUnique(key, func(candidate string) bool {
+		existing, err := s.st.GetFile(candidate)
+		return err == nil && existing.RelPath != relPath
+	})
 
 	sha, path, size, err := s.files.Ingest(file, key, maxFileBytes)
 	if err != nil {
@@ -90,7 +107,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	f := &store.File{
 		Name: baseName(path), SHA256: sha, Size: size,
 		ContentType: hdr.Header.Get("Content-Type"), Path: path,
-		RelPath: relPath,
+		RelPath: relPath, FileName: blob.Sanitize(name),
 	}
 	if err := s.st.SaveFile(f); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not save the file")
@@ -127,6 +144,8 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 			"content_type": f.ContentType, "uploaded_at": f.UploadedAt,
 			"delivered": done, "failed": failed, "pending": pending,
 			"targets": len(ds),
+			// What the device saves it as, which is not the catalogue key.
+			"file_name": fileNameFor(&f),
 			// The folder the file belongs to. This hand-built map does not
 			// marshal store.File, so a field added there does not appear here:
 			// leaving rel_path out is what made a folder upload come back as a

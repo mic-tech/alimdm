@@ -197,6 +197,11 @@ func migrate(db *sql.DB) error {
 		-- means the top of the inbox. Storage on the server stays flat; this is
 		-- what the tablet rebuilds the folders from.
 		rel_path TEXT NOT NULL DEFAULT '',
+		-- The name the device saves it under. The primary key has to carry the
+		-- folders to stay unique, and may be disambiguated further, so it is no
+		-- longer something a pupil should ever see. Empty on rows written before
+		-- this column existed, where the name can still be derived.
+		file_name TEXT NOT NULL DEFAULT '',
 		uploaded_at TEXT NOT NULL DEFAULT ''
 	);
 	-- One row per (file, device). Delivery is per-device so the console can show
@@ -288,6 +293,10 @@ func migrate(db *sql.DB) error {
 	// an empty rel_path means exactly that: put it at the top of the inbox.
 	for _, c := range []struct{ name, ddl string }{
 		{"rel_path", `ALTER TABLE files ADD COLUMN rel_path TEXT NOT NULL DEFAULT ''`},
+		// Left empty for existing rows on purpose: their names are still
+		// derivable from the key, because before this column existed a name
+		// that needed disambiguating simply overwrote the file it collided with.
+		{"file_name", `ALTER TABLE files ADD COLUMN file_name TEXT NOT NULL DEFAULT ''`},
 	} {
 		has, err := hasColumn(db, "files", c.name)
 		if err != nil {
@@ -1120,7 +1129,11 @@ type File struct {
 	Path        string `json:"-"`
 	// RelPath is the folder the file belongs in on the tablet, without the file
 	// name — "Juz30/Surah-078", or empty for the top of the inbox.
-	RelPath    string `json:"rel_path"`
+	RelPath string `json:"rel_path"`
+	// FileName is what the device saves the file as, inside RelPath. Name is the
+	// catalogue key and carries the folders, so it is not that. Empty on rows
+	// written before this field existed.
+	FileName   string `json:"file_name"`
 	UploadedAt string `json:"uploaded_at"`
 }
 
@@ -1146,16 +1159,17 @@ func (s *Store) SaveFile(f *File) error {
 	// rather than an empty string the list view would later contradict.
 	f.UploadedAt = nowISO()
 	_, err := s.db.Exec(
-		`INSERT INTO files(name,sha256,size,content_type,path,rel_path,uploaded_at) VALUES(?,?,?,?,?,?,?)
+		`INSERT INTO files(name,sha256,size,content_type,path,rel_path,file_name,uploaded_at)
+		 VALUES(?,?,?,?,?,?,?,?)
 		 ON CONFLICT(name) DO UPDATE SET sha256=excluded.sha256, size=excluded.size,
 		   content_type=excluded.content_type, path=excluded.path, rel_path=excluded.rel_path,
-		   uploaded_at=excluded.uploaded_at`,
-		f.Name, f.SHA256, f.Size, f.ContentType, f.Path, f.RelPath, f.UploadedAt)
+		   file_name=excluded.file_name, uploaded_at=excluded.uploaded_at`,
+		f.Name, f.SHA256, f.Size, f.ContentType, f.Path, f.RelPath, f.FileName, f.UploadedAt)
 	return err
 }
 
 func (s *Store) ListFiles() ([]File, error) {
-	rows, err := s.db.Query(`SELECT name,sha256,size,content_type,path,rel_path,uploaded_at FROM files ORDER BY uploaded_at DESC`)
+	rows, err := s.db.Query(`SELECT name,sha256,size,content_type,path,rel_path,file_name,uploaded_at FROM files ORDER BY uploaded_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1163,7 +1177,7 @@ func (s *Store) ListFiles() ([]File, error) {
 	out := []File{}
 	for rows.Next() {
 		var f File
-		if err := rows.Scan(&f.Name, &f.SHA256, &f.Size, &f.ContentType, &f.Path, &f.RelPath, &f.UploadedAt); err != nil {
+		if err := rows.Scan(&f.Name, &f.SHA256, &f.Size, &f.ContentType, &f.Path, &f.RelPath, &f.FileName, &f.UploadedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -1174,8 +1188,8 @@ func (s *Store) ListFiles() ([]File, error) {
 func (s *Store) GetFile(name string) (*File, error) {
 	var f File
 	err := s.db.QueryRow(
-		`SELECT name,sha256,size,content_type,path,rel_path,uploaded_at FROM files WHERE name=?`, name).
-		Scan(&f.Name, &f.SHA256, &f.Size, &f.ContentType, &f.Path, &f.RelPath, &f.UploadedAt)
+		`SELECT name,sha256,size,content_type,path,rel_path,file_name,uploaded_at FROM files WHERE name=?`, name).
+		Scan(&f.Name, &f.SHA256, &f.Size, &f.ContentType, &f.Path, &f.RelPath, &f.FileName, &f.UploadedAt)
 	if err != nil {
 		return nil, err
 	}
