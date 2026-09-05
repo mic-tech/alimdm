@@ -269,6 +269,24 @@ class KioskWatchdogService : Service() {
             // the launcher, and relaunching on a guess would hijack the app the user is on.
             if (foreground == null) return
             if (foreground in getAllowedForegroundPackages()) return
+            // Not on the list — but with lock task on, Android decides what may come
+            // to the front, and it let this through. That means a managed app opened
+            // it: a file picker, a share sheet, a camera intent. Relaunching here
+            // second-guesses the OS and closes whatever the pupil is in the middle
+            // of, which is what a file picker vanishing after a few seconds is.
+            //
+            // OverlayService reasons the same way about the same moment. When only
+            // one of the two did, fixing that one moved the eviction rather than
+            // ending it, and the bug came back looking new.
+            //
+            // With lock task off there is no such guarantee — anything can come
+            // forward — so the whitelist stays the whole answer there.
+            if (isLockTaskActive() && !isLauncherPackage(foreground)) {
+                DebugLog.d(TAG, "Foreground package '$foreground' is not on the managed-apps " +
+                    "whitelist, but lock task is active and Android allowed it — treating it " +
+                    "as something a managed app opened and leaving it alone.")
+                return
+            }
             rejectedForeground = foreground
         }
 
@@ -412,6 +430,31 @@ class KioskWatchdogService : Service() {
             null
         }
     }
+
+    /** Whether Android is currently pinning the task, and so vetting what may appear. */
+    private fun isLockTaskActive(): Boolean = try {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+    } catch (e: Exception) {
+        DebugLog.d(TAG, "Cannot read lock task state: ${e.message}")
+        false // assume not pinned, which keeps the stricter whitelist behaviour
+    }
+
+    /**
+     * Whether a package is a Home screen app. A launcher in front means the pupil
+     * pressed Home or the app exited, which is a relaunch however it happened.
+     */
+    private fun isLauncherPackage(pkg: String): Boolean {
+        if (cachedLauncherPackages == null) {
+            val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            cachedLauncherPackages = packageManager.queryIntentActivities(intent, 0)
+                .map { it.activityInfo.packageName }.toSet()
+            DebugLog.d(TAG, "Cached launcher packages: $cachedLauncherPackages")
+        }
+        return cachedLauncherPackages?.contains(pkg) == true
+    }
+
+    private var cachedLauncherPackages: Set<String>? = null
 
     /**
      * #197 follow-up: packages the kiosk is allowed to be showing instead of MainActivity.
