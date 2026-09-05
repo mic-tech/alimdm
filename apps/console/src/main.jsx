@@ -971,7 +971,14 @@ function DeviceLogs({ deviceId, onErr }) {
             <dl className="facts">
               <Fact label="Android">{state.android || "—"} on {state.model || "—"}</Fact>
               <Fact label="Device Owner"><YesNo ok={state.device_owner} /></Fact>
-              <Fact label="Lock task"><YesNo ok={state.lock_task} /></Fact>
+              {/* Only meaningful while the screen is on — the device says so
+                  itself rather than leaving the reader to wonder. */}
+              <Fact label="Lock task">
+                <YesNo ok={state.lock_task}
+                  why="The screen was off when this was captured, and a sleeping tablet cannot report its lock state" />
+                {state.lock_task == null && state.screen_on === false &&
+                  <span className="muted small"> screen was off</span>}
+              </Fact>
               <Fact label="Accessibility service"><YesNo ok={state.accessibility_running} /></Fact>
               <Fact label="Can tap the screen"><YesNo ok={state.can_perform_gestures} /></Fact>
               <Fact label="Secure settings"><YesNo ok={state.can_write_secure_settings} /></Fact>
@@ -1009,7 +1016,15 @@ function DeviceLogs({ deviceId, onErr }) {
 
 /* A permission or capability, said plainly. Missing ones are what an operator
    is looking for, so they are the ones that stand out. */
-function YesNo({ ok }) {
+/* A fact the device reported, or did not.
+   
+   null and undefined are their own answer and must not collapse into "No": a
+   device that cannot currently tell, or a build too old to report a field at
+   all, would otherwise look exactly like a permission that has been refused. */
+function YesNo({ ok, why }) {
+  if (ok === null || ok === undefined) {
+    return <span className="badge off" title={why || "The device did not report this"}>Unknown</span>;
+  }
   return <span className={"badge " + (ok ? "on" : "off")}>{ok ? "Yes" : "No"}</span>;
 }
 

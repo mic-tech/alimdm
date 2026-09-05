@@ -82,8 +82,23 @@ class DiagnosticsModule(private val reactContext: ReactApplicationContext) :
             as android.app.admin.DevicePolicyManager
         m.putBoolean("device_owner", dpm.isDeviceOwnerApp(reactContext.packageName))
 
+        // Whether the display is awake, which decides whether the next answer
+        // means anything.
+        val pm = reactContext.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        val screenOn = pm?.isInteractive ?: true
+        m.putBoolean("screen_on", screenOn)
+
+        // lockTaskModeState cannot be trusted while the display is off: a tablet
+        // that came back locked the instant its screen woke reported NONE twice
+        // while it slept. Reported as a plain "no", that reads as a kiosk which
+        // has fallen open, and the next hour goes on re-locking a tablet that
+        // was never unlocked. Say nothing rather than something false.
         val am = reactContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        m.putBoolean("lock_task", am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE)
+        if (screenOn) {
+            m.putBoolean("lock_task", am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE)
+        } else {
+            m.putNull("lock_task")
+        }
 
         // The three that are granted outside the app and decide whether screen
         // capture, overlays and foreground detection work at all.
