@@ -197,6 +197,12 @@ class ManagedAppInstallerModule(reactContext: ReactApplicationContext) :
         val packageInstaller = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(expectedPackage)
+        // Tell Android how big the whole set is before writing any of it. A
+        // split package can be enormous — one seen here was 771MB across four
+        // parts — and without a size the installer only discovers a tablet is
+        // short of space part-way through writing, after the whole download.
+        // With it, a tablet that cannot fit the app says so at once.
+        params.setSize(files.sumOf { it.length() })
 
         val sessionId = packageInstaller.createSession(params)
         val session = packageInstaller.openSession(sessionId)
@@ -306,6 +312,7 @@ class ManagedAppInstallerModule(reactContext: ReactApplicationContext) :
         if (!expectedPackage.isNullOrEmpty()) {
             params.setAppPackageName(expectedPackage)
         }
+        params.setSize(apkFile.length())
 
         val sessionId = packageInstaller.createSession(params)
         val session = packageInstaller.openSession(sessionId)

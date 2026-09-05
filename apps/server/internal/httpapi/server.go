@@ -1326,7 +1326,13 @@ func (s *Server) renameDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) uploadAPK(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(512 << 20); err != nil {
+	// 16MB, not 512MB. This is how much of the upload Go holds in memory before
+	// spilling the rest to a temp file, and a split archive is routinely
+	// hundreds of megabytes — a real one seen here was 732MB. At the old figure
+	// a single upload could take half a gigabyte of RAM on a server with two
+	// available and no swap. Everything past this lands on disk, which is where
+	// it was going anyway.
+	if err := r.ParseMultipartForm(16 << 20); err != nil {
 		http.Error(w, "bad upload", http.StatusBadRequest)
 		return
 	}

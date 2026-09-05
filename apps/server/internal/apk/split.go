@@ -32,8 +32,10 @@ const (
 	// config splits; far beyond that is a mistake or a zip bomb.
 	maxArchiveParts = 64
 	// maxPartBytes bounds a single APK inside the archive, so a small download
-	// cannot decompress into a disk-filling one.
-	maxPartBytes = 512 << 20
+	// cannot decompress into a disk-filling one. Generous because a split is not
+	// always a slim config split: an app whose audio ships as asset packs had
+	// parts of 382MB and 366MB, and refusing those would refuse the feature.
+	maxPartBytes = 1 << 30
 	// maxArchiveBytes bounds the archive itself.
 	maxArchiveBytes = 2 << 30
 )
