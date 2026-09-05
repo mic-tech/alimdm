@@ -644,10 +644,11 @@ function DeviceFiles({ device, onErr }) {
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
-  async function remove(name) {
-    if (!confirm(`Delete ${name} from ${device.label || device.id}?\n\nThis removes it from the device itself.`)) return;
+  async function remove(name, relPath) {
+    const where = relPath ? `${relPath}/${name}` : name;
+    if (!confirm(`Delete ${where} from ${device.label || device.id}?\n\nThis removes it from the device itself.`)) return;
     setBusy(true);
-    try { await api.deleteDeviceFile(device.id, name); toast(`Asked the device to delete ${name}`); }
+    try { await api.deleteDeviceFile(device.id, name, relPath); toast(`Asked the device to delete ${where}`); }
     catch (e) { onErr(e.message); }
     setBusy(false);
   }
@@ -685,8 +686,11 @@ function DeviceFiles({ device, onErr }) {
             </td></tr>
           )}
           {entries.map((f) => (
-            <tr key={f.name}>
-              <td className="small strong" data-label="File">{f.name}</td>
+            <tr key={(f.rel_path ? f.rel_path + "/" : "") + f.name}>
+              <td className="small strong" data-label="File">
+                {f.name}
+                {f.rel_path && <div className="muted small mono">{f.rel_path}</div>}
+              </td>
               <td className="small nowrap" data-label="Size">{fmtSize(f.size)}</td>
               <td className="small muted nowrap" data-label="Modified">
                 {f.modified_at ? timeAgo(new Date(f.modified_at).toISOString()) : "—"}
@@ -694,7 +698,7 @@ function DeviceFiles({ device, onErr }) {
               <td className="cell-actions">
                 <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
                   <button className="btn danger-outline sm icon" title="Delete from the device"
-                    disabled={busy} onClick={() => remove(f.name)}><IconTrash /></button>
+                    disabled={busy} onClick={() => remove(f.name, f.rel_path)}><IconTrash /></button>
                 </div>
               </td>
             </tr>
@@ -2143,6 +2147,14 @@ function fmtSize(bytes) {
   return (bytes / 1024 / 1024).toFixed(1) + " MB";
 }
 
+/* The catalogue key carries the folders so it stays unique; the row should show
+   the file's own name, the way it will appear on the tablet. */
+function stripFolderPrefix(f) {
+  if (!f.rel_path) return f.name;
+  const prefix = f.rel_path.split("/").join(" - ") + " - ";
+  return f.name.startsWith(prefix) ? f.name.slice(prefix.length) : f.name;
+}
+
 function Files({ onErr }) {
   const [files, setFiles] = useState(null);
   const [groups, setGroups] = useState([]);
@@ -2151,6 +2163,7 @@ function Files({ onErr }) {
   const [pushName, setPushName] = useState("");
   const [pushGroup, setPushGroup] = useState("");
   const [detail, setDetail] = useState(null);
+  const [progress, setProgress] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -2169,6 +2182,48 @@ function Files({ onErr }) {
     try { await api.uploadLibraryFile(file, file.name); toast(`Uploaded ${file.name}`); load(); }
     catch (err) { onErr(err.message); }
     setBusy(false); e.target.value = "";
+  }
+
+  /**
+   * Upload a folder, one file at a time.
+   *
+   * Sequential rather than parallel on purpose: thirty at once would open
+   * thirty uploads against a server sized for a school, and a failure part-way
+   * through would leave no way to say which ones landed. One at a time reports
+   * progress honestly and stops where it broke.
+   */
+  async function uploadFolder(e) {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (picked.length === 0) return;
+
+    setBusy(true);
+    let done = 0;
+    const failed = [];
+    for (const file of picked) {
+      // webkitRelativePath is "RootFolder/Sub/track.mp3"; the folder part is
+      // what the tablet recreates, so drop the file name from the end.
+      const rel = (file.webkitRelativePath || "").split("/").slice(0, -1).join("/");
+      setProgress(`Uploading ${done + 1} of ${picked.length}…`);
+      try {
+        await api.uploadLibraryFile(file, file.name, rel);
+        done += 1;
+      } catch (err) {
+        failed.push(`${file.name}: ${err.message}`);
+      }
+    }
+    setProgress("");
+    setBusy(false);
+    load();
+
+    if (failed.length === 0) {
+      toast(`Uploaded ${done} file${done === 1 ? "" : "s"}`);
+    } else {
+      // Name the first failure rather than only a count: "3 failed" sends an
+      // operator back to the folder with nothing to go on.
+      onErr(`Uploaded ${done} of ${picked.length}. Failed: ${failed[0]}` +
+        (failed.length > 1 ? ` (and ${failed.length - 1} more)` : ""));
+    }
   }
 
   async function doPush(name) {
@@ -2200,18 +2255,28 @@ function Files({ onErr }) {
   return (
     <div className="stack">
       <CardTable
-        actions={
-          <label className="btn sm" style={{ position: "relative", overflow: "hidden" }}>
+        actions={<>
+          {progress && <span className="muted small" style={{ marginRight: 10 }}>{progress}</span>}
+          <label className="btn outline sm" style={{ position: "relative", overflow: "hidden" }}>
             <IconUpload />{busy ? "Working…" : "Upload file"}
             <input type="file" onChange={upload} disabled={busy}
               style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", height: "100%" }} />
           </label>
-        }
+          {/* webkitdirectory is what makes the picker offer a folder. It is
+              non-standard but supported everywhere the console runs, and the
+              plain file button above stays for anyone whose browser is not. */}
+          <label className="btn sm" style={{ position: "relative", overflow: "hidden" }}>
+            <IconUpload />{busy ? "Working…" : "Upload folder"}
+            <input type="file" webkitdirectory="" multiple onChange={uploadFolder} disabled={busy}
+              style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", height: "100%" }} />
+          </label>
+        </>}
         note={
           <Alert>
-            Upload a file, then send it to a group. Each device downloads it on its next check-in into
-            a folder called <span className="mono">Download/Ali MDM</span>, where the device’s own Files
-            app can open it. Deleting a file here does not remove copies already on devices.
+            Upload a file or a whole folder, then send it to a group. Each device downloads it on its
+            next check-in into <span className="mono">Download/Ali MDM</span>, where the device’s own
+            Files app can open it — a folder upload keeps its structure there. Deleting a file here
+            does not remove copies already on devices.
           </Alert>
         }
       >
@@ -2231,7 +2296,12 @@ function Files({ onErr }) {
             {files.map((f) => (
               <React.Fragment key={f.name}>
                 <tr>
-                  <td className="strong" data-label="File">{f.name}</td>
+                  <td className="strong" data-label="File">
+                    {f.rel_path
+                      ? <>{f.rel_path.split("/").pop()}/<wbr />{stripFolderPrefix(f)}
+                          <div className="muted small mono">{f.rel_path}</div></>
+                      : f.name}
+                  </td>
                   <td className="nowrap" data-label="Size">{fmtSize(f.size)}</td>
                   <td className="nowrap" data-label="Delivery">
                     {f.targets === 0 ? <span className="muted small">Not sent yet</span> : (

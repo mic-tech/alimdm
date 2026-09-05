@@ -27,6 +27,11 @@ interface PendingFile {
   sha256: string;
   size: number;
   content_type: string;
+  /** Folder under the inbox to place this in, e.g. "Juz30/Surah-078". */
+  rel_path?: string;
+  /** Name to use inside that folder. The catalogue key carries the folders too,
+   *  so a pupil would otherwise see "Juz30 - Surah-078 - track01.mp3". */
+  file_name?: string;
   download_url: string;
 }
 
@@ -35,6 +40,9 @@ export interface InboxEntry {
   size: number;
   mime_type: string;
   modified_at: number;
+  /** Folder within the inbox, "" at the top. Two folders can hold the same file
+   *  name, so this is what tells them apart in the console and on delete. */
+  rel_path?: string;
 }
 
 /** Matches the server's delivery states. */
@@ -103,7 +111,12 @@ class CloudFileServiceImpl {
         throw new Error(`Size mismatch: expected ${f.size} bytes, got ${got}`);
       }
 
-      await InboxModule.saveToInbox(tmpPath, f.name, f.content_type ?? '');
+      await InboxModule.saveToInbox(
+        tmpPath,
+        f.file_name || f.name,
+        f.content_type ?? '',
+        f.rel_path ?? '',
+      );
       await this.report(c, f.name, STATUS_DONE, '');
       console.log(`[CloudFiles] Saved ${f.name} to the inbox`);
     } catch (error: any) {
@@ -152,10 +165,10 @@ class CloudFileServiceImpl {
     }
   }
 
-  async remove(name: string): Promise<boolean> {
+  async remove(name: string, relPath = ''): Promise<boolean> {
     if (!InboxModule?.deleteFromInbox) return false;
     try {
-      return await InboxModule.deleteFromInbox(name);
+      return await InboxModule.deleteFromInbox(name, relPath);
     } catch (error) {
       console.warn(`[CloudFiles] Could not delete ${name}:`, error);
       return false;

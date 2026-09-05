@@ -15,12 +15,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"ali-mdm/server/internal/blob"
 	"ali-mdm/server/internal/device"
 	"ali-mdm/server/internal/store"
 )
+
+// fileNameFor recovers the name a file should have inside its folder on the
+// tablet. The catalogue key is prefixed with the folders to keep it unique, but
+// a pupil should see "track01.mp3", not "Juz30 - Surah-078 - track01.mp3".
+func fileNameFor(f *store.File) string {
+	if f.RelPath == "" {
+		return f.Name
+	}
+	prefix := strings.ReplaceAll(f.RelPath, "/", " - ") + " - "
+	return strings.TrimPrefix(f.Name, prefix)
+}
 
 // maxFileBytes bounds an upload. Large enough for the worksheets and slide
 // decks this is for, small enough that one operator cannot fill the disk.
@@ -54,7 +67,22 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = hdr.Filename
 	}
-	sha, path, size, err := s.files.Ingest(file, name, maxFileBytes)
+
+	// A folder upload sends the path the file had on the operator's machine.
+	// The folders are reproduced on the tablet, not on the server: storage here
+	// stays one flat directory, so the catalogue key has to carry enough of the
+	// path to stay unique — two "track01.mp3" in different folders would
+	// otherwise be one row, and the second upload would silently replace the
+	// first. Joining the folders into the key keeps both, and keeps the key a
+	// single path segment so every existing /api/v1/files/{name} route still
+	// matches without change.
+	relPath := blob.SanitizeRelPath(r.FormValue("rel_path"))
+	key := name
+	if relPath != "" {
+		key = strings.ReplaceAll(relPath, "/", " - ") + " - " + name
+	}
+
+	sha, path, size, err := s.files.Ingest(file, key, maxFileBytes)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -62,6 +90,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	f := &store.File{
 		Name: baseName(path), SHA256: sha, Size: size,
 		ContentType: hdr.Header.Get("Content-Type"), Path: path,
+		RelPath: relPath,
 	}
 	if err := s.st.SaveFile(f); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not save the file")
@@ -204,7 +233,16 @@ func (s *Server) devicePendingFiles(w http.ResponseWriter, r *http.Request) {
 			"sha256":       f.SHA256,
 			"size":         f.Size,
 			"content_type": f.ContentType,
-			"download_url": s.baseURL + "/api/v1/files/" + f.Name + "/download",
+			// The folder to recreate under the inbox, and the name to use inside
+			// it — which is the original file name, not the flattened key.
+			"rel_path":     f.RelPath,
+			"file_name":    fileNameFor(f),
+			// Escaped: a catalogue key contains spaces whenever it came from a
+			// folder upload ("Juz30 - Surah-078 - track01.mp3"), and a literal
+			// space in a request line is a 400 from net/http before any handler
+			// sees it. Single-file uploads with a space in the name had the same
+			// problem; folder uploads just make it the normal case.
+			"download_url": s.baseURL + "/api/v1/files/" + url.PathEscape(f.Name) + "/download",
 		})
 	}
 	writeJSON(w, out)
@@ -321,7 +359,13 @@ func (s *Server) deleteDeviceFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "file name is required")
 		return
 	}
-	if err := s.queueDeviceCommand(id, "delete_inbox_file", map[string]any{"name": name}); err != nil {
+	// The folder comes from the query string rather than the path: a nested
+	// entry is identified by (folder, name), and both in the path would need a
+	// route that matches a variable number of segments.
+	relPath := blob.SanitizeRelPath(r.URL.Query().Get("rel_path"))
+	if err := s.queueDeviceCommand(id, "delete_inbox_file", map[string]any{
+		"name": name, "rel_path": relPath,
+	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not queue the deletion")
 		return
 	}
@@ -329,8 +373,12 @@ func (s *Server) deleteDeviceFile(w http.ResponseWriter, r *http.Request) {
 	if dev, err := s.st.GetDevice(id); err == nil {
 		label = deviceLabel(dev.ID, dev.Name)
 	}
+	where := name
+	if relPath != "" {
+		where = relPath + "/" + name
+	}
 	s.record(r, "device_file_deleted", store.EventWarn, id,
-		"Asked "+label+" to delete "+name+" from its inbox")
+		"Asked "+label+" to delete "+where+" from its inbox")
 	writeJSON(w, map[string]any{"queued": true})
 }
 

@@ -276,7 +276,10 @@ class CloudCommandServiceClass {
     if (cmd.type === 'delete_inbox_file') {
       const name = String((cmd.params || {}).name ?? '');
       if (!name) return { ok: false, error: 'No file name given' };
-      const removed = await CloudFileService.remove(name);
+      // Folder-qualified: the same track name can sit in several folders once a
+      // folder upload has landed, and deleting the wrong one is silent.
+      const relPath = String((cmd.params || {}).rel_path ?? '');
+      const removed = await CloudFileService.remove(name, relPath);
       // Re-listing straight away keeps the console honest about what is left,
       // instead of showing a file the operator has just deleted.
       await this.uploadInboxListing(c);

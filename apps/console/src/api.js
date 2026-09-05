@@ -207,19 +207,25 @@ export const api = {
   // ── Per-device file manager ────────────────────────────────────────────────
   deviceInbox: (id) => req("GET", "/devices/" + encodeURIComponent(id) + "/inbox"),
   refreshDeviceInbox: (id) => req("POST", "/devices/" + encodeURIComponent(id) + "/inbox/refresh", {}),
-  deleteDeviceFile: (id, name) =>
-    req("DELETE", "/devices/" + encodeURIComponent(id) + "/inbox/" + encodeURIComponent(name)),
+  // relPath identifies which folder the file sits in, since a folder upload can
+  // put the same file name in several of them.
+  deleteDeviceFile: (id, name, relPath) =>
+    req("DELETE", "/devices/" + encodeURIComponent(id) + "/inbox/" + encodeURIComponent(name) +
+      (relPath ? "?rel_path=" + encodeURIComponent(relPath) : "")),
 
   // ── File library (console → device inbox) ──────────────────────────────────
   listLibraryFiles: () => req("GET", "/files"),
   deleteLibraryFile: (name) => req("DELETE", "/files/" + encodeURIComponent(name)),
   pushLibraryFile: (name, body) => req("POST", "/files/" + encodeURIComponent(name) + "/push", body),
   fileDeliveries: (name) => req("GET", "/files/" + encodeURIComponent(name) + "/deliveries"),
-  uploadLibraryFile: (file, name) => {
+  // relPath is the folder the file sits in, without the file name — set when a
+  // whole folder is uploaded, empty for a single file.
+  uploadLibraryFile: (file, name, relPath) => {
     const tok = getToken();
     const fd = new FormData();
     fd.append("file", file);
     if (name) fd.append("name", name);
+    if (relPath) fd.append("rel_path", relPath);
     return fetch("/api/v1/files", {
       method: "POST",
       headers: tok ? { Authorization: "Bearer " + tok } : {},

@@ -193,6 +193,10 @@ func migrate(db *sql.DB) error {
 		size INTEGER NOT NULL,
 		content_type TEXT NOT NULL DEFAULT '',
 		path TEXT NOT NULL,
+		-- Where the file sits inside the inbox, e.g. "Juz30/Surah-078". Empty
+		-- means the top of the inbox. Storage on the server stays flat; this is
+		-- what the tablet rebuilds the folders from.
+		rel_path TEXT NOT NULL DEFAULT '',
 		uploaded_at TEXT NOT NULL DEFAULT ''
 	);
 	-- One row per (file, device). Delivery is per-device so the console can show
@@ -270,6 +274,22 @@ func migrate(db *sql.DB) error {
 		{"app_version_name", `ALTER TABLE devices ADD COLUMN app_version_name TEXT NOT NULL DEFAULT ''`},
 	} {
 		has, err := hasColumn(db, "devices", c.name)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := db.Exec(c.ddl); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Files uploaded before folder upload existed have no folder to sit in, and
+	// an empty rel_path means exactly that: put it at the top of the inbox.
+	for _, c := range []struct{ name, ddl string }{
+		{"rel_path", `ALTER TABLE files ADD COLUMN rel_path TEXT NOT NULL DEFAULT ''`},
+	} {
+		has, err := hasColumn(db, "files", c.name)
 		if err != nil {
 			return err
 		}
@@ -1098,7 +1118,10 @@ type File struct {
 	Size        int64  `json:"size"`
 	ContentType string `json:"content_type"`
 	Path        string `json:"-"`
-	UploadedAt  string `json:"uploaded_at"`
+	// RelPath is the folder the file belongs in on the tablet, without the file
+	// name — "Juz30/Surah-078", or empty for the top of the inbox.
+	RelPath    string `json:"rel_path"`
+	UploadedAt string `json:"uploaded_at"`
 }
 
 type FileDelivery struct {
@@ -1123,15 +1146,16 @@ func (s *Store) SaveFile(f *File) error {
 	// rather than an empty string the list view would later contradict.
 	f.UploadedAt = nowISO()
 	_, err := s.db.Exec(
-		`INSERT INTO files(name,sha256,size,content_type,path,uploaded_at) VALUES(?,?,?,?,?,?)
+		`INSERT INTO files(name,sha256,size,content_type,path,rel_path,uploaded_at) VALUES(?,?,?,?,?,?,?)
 		 ON CONFLICT(name) DO UPDATE SET sha256=excluded.sha256, size=excluded.size,
-		   content_type=excluded.content_type, path=excluded.path, uploaded_at=excluded.uploaded_at`,
-		f.Name, f.SHA256, f.Size, f.ContentType, f.Path, f.UploadedAt)
+		   content_type=excluded.content_type, path=excluded.path, rel_path=excluded.rel_path,
+		   uploaded_at=excluded.uploaded_at`,
+		f.Name, f.SHA256, f.Size, f.ContentType, f.Path, f.RelPath, f.UploadedAt)
 	return err
 }
 
 func (s *Store) ListFiles() ([]File, error) {
-	rows, err := s.db.Query(`SELECT name,sha256,size,content_type,path,uploaded_at FROM files ORDER BY uploaded_at DESC`)
+	rows, err := s.db.Query(`SELECT name,sha256,size,content_type,path,rel_path,uploaded_at FROM files ORDER BY uploaded_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1139,7 +1163,7 @@ func (s *Store) ListFiles() ([]File, error) {
 	out := []File{}
 	for rows.Next() {
 		var f File
-		if err := rows.Scan(&f.Name, &f.SHA256, &f.Size, &f.ContentType, &f.Path, &f.UploadedAt); err != nil {
+		if err := rows.Scan(&f.Name, &f.SHA256, &f.Size, &f.ContentType, &f.Path, &f.RelPath, &f.UploadedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -1150,8 +1174,8 @@ func (s *Store) ListFiles() ([]File, error) {
 func (s *Store) GetFile(name string) (*File, error) {
 	var f File
 	err := s.db.QueryRow(
-		`SELECT name,sha256,size,content_type,path,uploaded_at FROM files WHERE name=?`, name).
-		Scan(&f.Name, &f.SHA256, &f.Size, &f.ContentType, &f.Path, &f.UploadedAt)
+		`SELECT name,sha256,size,content_type,path,rel_path,uploaded_at FROM files WHERE name=?`, name).
+		Scan(&f.Name, &f.SHA256, &f.Size, &f.ContentType, &f.Path, &f.RelPath, &f.UploadedAt)
 	if err != nil {
 		return nil, err
 	}

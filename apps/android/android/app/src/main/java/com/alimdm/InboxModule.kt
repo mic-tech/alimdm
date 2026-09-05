@@ -49,7 +49,13 @@ class InboxModule(private val reactContext: ReactApplicationContext) :
      * streamed instead.
      */
     @ReactMethod
-    fun saveToInbox(sourcePath: String, displayName: String, mimeType: String, promise: Promise) {
+    fun saveToInbox(
+        sourcePath: String,
+        displayName: String,
+        mimeType: String,
+        relDir: String?,
+        promise: Promise,
+    ) {
         val src = File(sourcePath)
         if (!src.exists()) {
             promise.reject("NO_SOURCE", "Downloaded file is missing: $sourcePath")
@@ -60,11 +66,15 @@ class InboxModule(private val reactContext: ReactApplicationContext) :
             promise.reject("BAD_NAME", "Unusable file name: $displayName")
             return
         }
+        // Sanitised again here rather than trusted from the server: this is what
+        // actually builds a filesystem path, and safeName() exists for the same
+        // reason one segment down.
+        val dir = safeRelDir(relDir)
         try {
             val path = if (useMediaStore) {
-                saveViaMediaStore(src, name, mimeType)
+                saveViaMediaStore(src, name, mimeType, dir)
             } else {
-                saveViaLegacyFile(src, name)
+                saveViaLegacyFile(src, name, dir)
             }
             promise.resolve(Arguments.createMap().apply {
                 putString("name", name)
@@ -77,16 +87,20 @@ class InboxModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    private fun saveViaMediaStore(src: File, name: String, mimeType: String): String {
+    private fun saveViaMediaStore(src: File, name: String, mimeType: String, relDir: String): String {
         val resolver = reactContext.contentResolver
+        // MediaStore creates whatever folders RELATIVE_PATH names, so a nested
+        // upload needs no mkdir of its own here.
+        val relative = if (relDir.isEmpty()) DOWNLOADS_RELATIVE
+                       else "$DOWNLOADS_RELATIVE${File.separator}$relDir"
         // Replace rather than accumulate: MediaStore would otherwise silently
         // write "worksheet (1).pdf" every time a file is re-pushed after a fix.
-        deleteExisting(name)
+        deleteExisting(name, relative)
 
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, name)
             if (mimeType.isNotBlank()) put(MediaStore.Downloads.MIME_TYPE, mimeType)
-            put(MediaStore.Downloads.RELATIVE_PATH, DOWNLOADS_RELATIVE)
+            put(MediaStore.Downloads.RELATIVE_PATH, relative)
             // Hides the entry until the bytes are all there, so a viewer cannot
             // open a half-written PDF.
             put(MediaStore.Downloads.IS_PENDING, 1)
@@ -110,14 +124,15 @@ class InboxModule(private val reactContext: ReactApplicationContext) :
             put(MediaStore.Downloads.IS_PENDING, 0)
         }, null, null)
 
-        return "$DOWNLOADS_RELATIVE/$name"
+        return "$relative/$name"
     }
 
-    private fun saveViaLegacyFile(src: File, name: String): String {
-        val dir = File(
+    private fun saveViaLegacyFile(src: File, name: String, relDir: String): String {
+        var dir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
             INBOX_FOLDER
         )
+        if (relDir.isNotEmpty()) dir = File(dir, relDir)
         if (!dir.exists() && !dir.mkdirs()) {
             throw IllegalStateException("Could not create ${dir.absolutePath}")
         }
@@ -140,7 +155,8 @@ class InboxModule(private val reactContext: ReactApplicationContext) :
                     MediaStore.Downloads.DISPLAY_NAME,
                     MediaStore.Downloads.SIZE,
                     MediaStore.Downloads.MIME_TYPE,
-                    MediaStore.Downloads.DATE_MODIFIED
+                    MediaStore.Downloads.DATE_MODIFIED,
+                    MediaStore.Downloads.RELATIVE_PATH
                 )
                 // RELATIVE_PATH comparison needs the trailing separator MediaStore stores.
                 val selection = "${MediaStore.Downloads.RELATIVE_PATH} LIKE ?"
@@ -153,6 +169,7 @@ class InboxModule(private val reactContext: ReactApplicationContext) :
                     val sizeCol = c.getColumnIndexOrThrow(MediaStore.Downloads.SIZE)
                     val mimeCol = c.getColumnIndexOrThrow(MediaStore.Downloads.MIME_TYPE)
                     val dateCol = c.getColumnIndexOrThrow(MediaStore.Downloads.DATE_MODIFIED)
+                    val relCol = c.getColumnIndexOrThrow(MediaStore.Downloads.RELATIVE_PATH)
                     while (c.moveToNext()) {
                         out.pushMap(Arguments.createMap().apply {
                             putString("name", c.getString(nameCol) ?: "")
@@ -160,6 +177,11 @@ class InboxModule(private val reactContext: ReactApplicationContext) :
                             putString("mime_type", c.getString(mimeCol) ?: "")
                             // MediaStore keeps this in seconds; JS expects millis.
                             putDouble("modified_at", c.getLong(dateCol) * 1000.0)
+                            // Which folder inside the inbox. The LIKE above already
+                            // matched subfolders, so without this two tracks named
+                            // the same in different surahs are indistinguishable —
+                            // and a delete could not tell them apart.
+                            putString("rel_path", relDirOf(c.getString(relCol) ?: ""))
                         })
                     }
                 }
@@ -168,16 +190,20 @@ class InboxModule(private val reactContext: ReactApplicationContext) :
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
                     INBOX_FOLDER
                 )
-                dir.listFiles()?.sortedByDescending { it.lastModified() }?.forEach { f ->
-                    if (f.isFile) {
+                // walkTopDown so a folder upload is not invisible here; the
+                // MediaStore branch above already matched subfolders.
+                dir.walkTopDown().filter { it.isFile }
+                    .sortedByDescending { it.lastModified() }
+                    .forEach { f ->
+                        val rel = f.parentFile?.relativeToOrNull(dir)?.path.orEmpty()
                         out.pushMap(Arguments.createMap().apply {
                             putString("name", f.name)
                             putDouble("size", f.length().toDouble())
                             putString("mime_type", "")
                             putDouble("modified_at", f.lastModified().toDouble())
+                            putString("rel_path", if (rel == ".") "" else rel)
                         })
                     }
-                }
             }
             promise.resolve(out)
         } catch (e: Exception) {
@@ -187,22 +213,25 @@ class InboxModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun deleteFromInbox(displayName: String, promise: Promise) {
+    fun deleteFromInbox(displayName: String, relDir: String?, promise: Promise) {
         val name = safeName(displayName)
         if (name == null) {
             promise.reject("BAD_NAME", "Unusable file name: $displayName")
             return
         }
+        val dir = safeRelDir(relDir)
         try {
             val removed = if (useMediaStore) {
-                deleteExisting(name) > 0
+                val relative = if (dir.isEmpty()) DOWNLOADS_RELATIVE
+                               else "$DOWNLOADS_RELATIVE${File.separator}$dir"
+                deleteExisting(name, relative) > 0
             } else {
-                File(
-                    File(
-                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                        INBOX_FOLDER
-                    ), name
-                ).delete()
+                var base = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    INBOX_FOLDER
+                )
+                if (dir.isNotEmpty()) base = File(base, dir)
+                File(base, name).delete()
             }
             promise.resolve(removed)
         } catch (e: Exception) {
@@ -211,20 +240,53 @@ class InboxModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    /** Removes any existing inbox entry with this name. Returns rows deleted. */
-    private fun deleteExisting(name: String): Int {
+    /**
+     * Removes any existing inbox entry with this name in this folder.
+     *
+     * Scoped to the exact folder, not a LIKE over the whole inbox: once uploads
+     * can nest, "track01.mp3" exists in as many folders as there are surahs,
+     * and a prefix match would delete every one of them to write a single file.
+     */
+    private fun deleteExisting(name: String, relative: String): Int {
         if (!useMediaStore) return 0
         val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        // MediaStore stores RELATIVE_PATH with a trailing separator.
+        val exact = if (relative.endsWith(File.separator)) relative else relative + File.separator
         return try {
             reactContext.contentResolver.delete(
                 collection,
-                "${MediaStore.Downloads.RELATIVE_PATH} LIKE ? AND ${MediaStore.Downloads.DISPLAY_NAME} = ?",
-                arrayOf("$DOWNLOADS_RELATIVE%", name)
+                "${MediaStore.Downloads.RELATIVE_PATH} = ? AND ${MediaStore.Downloads.DISPLAY_NAME} = ?",
+                arrayOf(exact, name)
             )
         } catch (e: Exception) {
             Log.w(TAG, "Could not clear an existing $name: ${e.message}")
             0
         }
+    }
+
+    /**
+     * Turn a MediaStore RELATIVE_PATH ("Download/Ali MDM/Juz30/Surah-078/") into
+     * the folder within the inbox ("Juz30/Surah-078"), or "" at the top.
+     */
+    private fun relDirOf(relativePath: String): String {
+        val trimmed = relativePath.trim('/')
+        val prefix = DOWNLOADS_RELATIVE.trim('/')
+        if (!trimmed.startsWith(prefix)) return ""
+        return trimmed.removePrefix(prefix).trim('/')
+    }
+
+    /**
+     * Reduce a server-supplied folder path to safe segments, or "" for the top
+     * of the inbox. Mirrors blob.SanitizeRelPath on the server; both run because
+     * this is the one that turns into a real path on a real filesystem.
+     */
+    private fun safeRelDir(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        return raw.replace('\\', '/')
+            .split('/')
+            .mapNotNull { safeName(it) }
+            .take(8)
+            .joinToString(File.separator)
     }
 
     /**

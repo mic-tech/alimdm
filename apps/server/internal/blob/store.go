@@ -59,6 +59,38 @@ func Sanitize(name string) string {
 	return name
 }
 
+// maxRelDepth bounds how deep an uploaded folder tree may be. A browser folder
+// picker will happily hand over whatever is on disk, and nothing good comes of
+// reproducing a forty-level tree inside a pupil's Downloads folder.
+const maxRelDepth = 8
+
+// SanitizeRelPath reduces a browser-supplied relative path ("Juz30/Surah-078")
+// to a safe folder path, or "" for the top of the inbox.
+//
+// Storage on the server stays flat — this never touches where bytes land, only
+// what the tablet is told to rebuild. That is deliberate: the traversal defence
+// in resolve() keeps working untouched, and a malicious rel_path can at worst
+// produce an odd-looking folder on a tablet, never a write outside the root.
+//
+// Each segment goes through the same Sanitize as a file name, so "..", control
+// characters and separators cannot survive; empty segments are dropped, which
+// collapses "a//b" and a leading "/" without special-casing either.
+func SanitizeRelPath(p string) string {
+	p = strings.ReplaceAll(strings.TrimSpace(p), "\\", "/")
+	out := make([]string, 0, maxRelDepth)
+	for _, seg := range strings.Split(p, "/") {
+		clean := Sanitize(seg)
+		if clean == "" {
+			continue
+		}
+		out = append(out, clean)
+		if len(out) == maxRelDepth {
+			break
+		}
+	}
+	return strings.Join(out, "/")
+}
+
 // resolve maps a caller-supplied name to a path inside the root, or errors.
 func (s *Store) resolve(name string) (string, error) {
 	base := Sanitize(name)
