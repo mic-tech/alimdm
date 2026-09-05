@@ -6,6 +6,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"ali-mdm/server/internal/store"
@@ -502,11 +504,11 @@ func TestListReportsTheFolderEachFileIsIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"Juz30 - Surah-078 - track01.mp3": "Juz30/Surah-078",
-		"Juz30 - Surah-078 - track02.mp3": "Juz30/Surah-078",
-		"Juz30 - Surah-079 - track01.mp3": "Juz30/Surah-079",
-		"Handouts - worksheet.pdf":        "Handouts",
-		"notice.pdf":                      "",
+		"Juz30/Surah-078/track01.mp3": "Juz30/Surah-078",
+		"Juz30/Surah-078/track02.mp3": "Juz30/Surah-078",
+		"Juz30/Surah-079/track01.mp3": "Juz30/Surah-079",
+		"Handouts/worksheet.pdf":      "Handouts",
+		"notice.pdf":                  "",
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("%d rows, want %d", len(rows), len(want))
@@ -523,11 +525,10 @@ func TestListReportsTheFolderEachFileIsIn(t *testing.T) {
 	}
 }
 
-// The library is stored flat, so the folder path is folded into the file's
-// catalogue key. " - " is not reserved, though, which means two files in
-// different folders can fold to the same key — and the second upload used to
-// replace the first with no error at all.
-func TestTwoFilesThatFoldToTheSameNameBothSurvive(t *testing.T) {
+// Every track named "Track 01.mp3" in a set of CDs is a different file. The
+// catalogue key is the whole path, so they stay different files — and a name
+// that happens to look like a folded path is just a name.
+func TestTheSameNameInTwoFoldersIsTwoFiles(t *testing.T) {
 	e := newTestEnv(t)
 	tok := e.login("admin@x.com", "adminpassword")
 
@@ -535,8 +536,8 @@ func TestTwoFilesThatFoldToTheSameNameBothSurvive(t *testing.T) {
 	if rec := e.uploadInto(t, tok, "Juz30/CD1", "Track 01.mp3", []byte("inside CD1")); rec.Code != http.StatusOK {
 		t.Fatalf("first upload: status %d (%s)", rec.Code, rec.Body.String())
 	}
-	// … and "CD1 - Track 01.mp3" sitting at the top of Juz30. Both fold to
-	// "Juz30 - CD1 - Track 01.mp3".
+	// … and a file literally called "CD1 - Track 01.mp3" at the top of Juz30,
+	// which the old flattened key could not tell apart from it.
 	if rec := e.uploadInto(t, tok, "Juz30", "CD1 - Track 01.mp3", []byte("top of Juz30")); rec.Code != http.StatusOK {
 		t.Fatalf("second upload: status %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -588,5 +589,75 @@ func TestReuploadingIntoTheSameFolderReplaces(t *testing.T) {
 	}
 	if files[0].Size != int64(len("second, corrected")) {
 		t.Fatalf("the library kept the old bytes")
+	}
+}
+
+// The catalogue key is a path, so every route that takes one leans on the
+// router keeping %2F inside a single path segment rather than splitting the
+// route on it. If that stopped holding, every nested file would 404 — and the
+// device would report a delivery against a key nothing matches.
+func TestANestedKeyWorksOnEveryRouteThatTakesOne(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.seedLibrary(t)
+	devKey := e.newDeviceKey(t, "tablet-1")
+
+	const key = "Juz30/Surah-078/track01.mp3"
+	esc := url.PathEscape(key)
+	if !strings.Contains(esc, "%2F") {
+		t.Fatalf("PathEscape(%q) = %q — the separators must be escaped or the route splits", key, esc)
+	}
+
+	if rec, _ := e.do("POST", "/api/v1/files/"+esc+"/push", tok, map[string]any{}); rec.Code != http.StatusOK {
+		t.Fatalf("push: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec, _ := e.do("GET", "/api/v1/files/"+esc+"/deliveries", tok, nil); rec.Code != http.StatusOK {
+		t.Fatalf("deliveries: status %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// The device is handed a URL and uses it verbatim, so fetch exactly that.
+	asDevice := func(method, path string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, path, bytes.NewReader([]byte(`{"status":"done"}`)))
+		req.Header.Set("Authorization", "Bearer "+devKey)
+		rec := httptest.NewRecorder()
+		e.mux.ServeHTTP(rec, req)
+		return rec
+	}
+	var pending []map[string]any
+	json.Unmarshal(asDevice("GET", "/api/v1/devices/tablet-1/files").Body.Bytes(), &pending)
+	if len(pending) != 1 {
+		t.Fatalf("device was offered %d files, want 1", len(pending))
+	}
+	if got := pending[0]["name"]; got != key {
+		t.Fatalf("device was given key %q, want %q", got, key)
+	}
+	if got := pending[0]["file_name"]; got != "track01.mp3" {
+		t.Fatalf("device would save it as %q, want track01.mp3", got)
+	}
+	dl, _ := pending[0]["download_url"].(string)
+	u, err := url.Parse(dl)
+	if err != nil {
+		t.Fatalf("download_url %q does not parse: %v", dl, err)
+	}
+	if rec := asDevice("GET", u.RequestURI()); rec.Code != http.StatusOK {
+		t.Fatalf("download: status %d for %q", rec.Code, u.RequestURI())
+	} else if rec.Body.String() != "body of Juz30/Surah-078/track01.mp3" {
+		t.Fatalf("download served %q", rec.Body.String())
+	}
+
+	// And the device reports against the same key it was given.
+	if rec := asDevice("POST", "/api/v1/devices/tablet-1/files/"+esc+"/result"); rec.Code != http.StatusOK {
+		t.Fatalf("result: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	ds, _ := e.st.FileDeliveries(key)
+	if len(ds) != 1 || ds[0].Status != store.FileDeliveryDone {
+		t.Fatalf("delivery not recorded against the key: %+v", ds)
+	}
+
+	if rec, _ := e.do("DELETE", "/api/v1/files/"+esc, tok, nil); rec.Code != http.StatusOK {
+		t.Fatalf("delete: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	if _, err := e.st.GetFile(key); err == nil {
+		t.Fatal("the file is still in the catalogue after a delete")
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -24,23 +25,28 @@ import (
 	"ali-mdm/server/internal/store"
 )
 
+// fileKey reads a catalogue key out of a request path.
+//
+// A key is the file's path inside the library ("Juz30/CD1/Track 01.mp3"), so it
+// arrives percent-encoded — Go's router keeps %2F inside one path segment and
+// hands the decoded path back here. Basing it, as a flat name could be, would
+// collapse every nested file onto its bare name and let a delete aimed at one
+// folder land in another.
+func fileKey(r *http.Request) string {
+	return blob.SanitizeStoredPath(r.PathValue("name"))
+}
+
 // fileNameFor is the name a file should have inside its folder on the tablet.
 // The catalogue key carries the folders to keep it unique, but a pupil should
 // see "track01.mp3", not "Juz30 - Surah-078 - track01.mp3".
 //
-// Uploads record that name; rows written before they did fall back to undoing
-// the fold. That fallback is exact for those rows and only those: a key that
-// needed disambiguating beyond the folders could not exist back then, because
-// such an upload simply replaced the file it collided with.
+// Uploads record that name; for anything that predates the column it is the
+// last segment of the key, which is the same thing.
 func fileNameFor(f *store.File) string {
 	if f.FileName != "" {
 		return f.FileName
 	}
-	if f.RelPath == "" {
-		return f.Name
-	}
-	prefix := strings.ReplaceAll(f.RelPath, "/", " - ") + " - "
-	return strings.TrimPrefix(f.Name, prefix)
+	return path.Base(f.Name)
 }
 
 // maxFileBytes bounds an upload. Large enough for the worksheets and slide
@@ -76,37 +82,26 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 		name = hdr.Filename
 	}
 
-	// A folder upload sends the path the file had on the operator's machine.
-	// The folders are reproduced on the tablet, not on the server: storage here
-	// stays one flat directory, so the catalogue key has to carry enough of the
-	// path to stay unique — two "track01.mp3" in different folders would
-	// otherwise be one row, and the second upload would silently replace the
-	// first. Joining the folders into the key keeps both, and keeps the key a
-	// single path segment so every existing /api/v1/files/{name} route still
-	// matches without change.
+	// A folder upload sends the path the file had on the operator's machine, and
+	// that path is what it gets: the key is the file's place in the library,
+	// and the library on disk is laid out to match. Two "track01.mp3" in
+	// different folders are two paths and stay two files, with nothing to fold
+	// and nothing to disambiguate; uploading over one is an operator replacing
+	// that file, which is what it should do.
 	relPath := blob.SanitizeRelPath(r.FormValue("rel_path"))
 	key := name
 	if relPath != "" {
-		key = strings.ReplaceAll(relPath, "/", " - ") + " - " + name
+		key = relPath + "/" + name
 	}
-	// Folding the folders in keeps two "track01.mp3" apart, but " - " is an
-	// ordinary character: a folder can be named so that two different files
-	// fold to the same key. Only a file from a *different* folder counts as a
-	// clash — re-uploading into the same folder is an operator replacing a
-	// file, which is exactly what it should do.
-	key = blob.EnsureUnique(key, func(candidate string) bool {
-		existing, err := s.st.GetFile(candidate)
-		return err == nil && existing.RelPath != relPath
-	})
 
-	sha, path, size, err := s.files.Ingest(file, key, maxFileBytes)
+	sha, storedPath, size, err := s.files.Ingest(file, key, maxFileBytes)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	f := &store.File{
-		Name: baseName(path), SHA256: sha, Size: size,
-		ContentType: hdr.Header.Get("Content-Type"), Path: path,
+		Name: blob.SanitizeStoredPath(key), SHA256: sha, Size: size,
+		ContentType: hdr.Header.Get("Content-Type"), Path: storedPath,
 		RelPath: relPath, FileName: blob.Sanitize(name),
 	}
 	if err := s.st.SaveFile(f); err != nil {
@@ -157,7 +152,7 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
-	name := baseName(r.PathValue("name"))
+	name := fileKey(r)
 	if _, err := s.st.GetFile(name); err != nil {
 		writeErr(w, http.StatusNotFound, "no such file")
 		return
@@ -245,7 +240,7 @@ func (s *Server) filesUnder(rel string) ([]store.File, error) {
 
 // pushFile queues a file for a set of devices, a whole group, or the fleet.
 func (s *Server) pushFile(w http.ResponseWriter, r *http.Request) {
-	name := baseName(r.PathValue("name"))
+	name := fileKey(r)
 	if _, err := s.st.GetFile(name); err != nil {
 		writeErr(w, http.StatusNotFound, "no such file")
 		return
@@ -370,7 +365,7 @@ func (s *Server) deleteFolder(w http.ResponseWriter, r *http.Request) {
 
 // fileDeliveries reports per-device delivery state for one file.
 func (s *Server) fileDeliveries(w http.ResponseWriter, r *http.Request) {
-	name := baseName(r.PathValue("name"))
+	name := fileKey(r)
 	ds, err := s.st.FileDeliveries(name)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not read deliveries")
@@ -400,15 +395,14 @@ func (s *Server) devicePendingFiles(w http.ResponseWriter, r *http.Request) {
 			"sha256":       f.SHA256,
 			"size":         f.Size,
 			"content_type": f.ContentType,
-			// The folder to recreate under the inbox, and the name to use inside
-			// it — which is the original file name, not the flattened key.
-			"rel_path":     f.RelPath,
-			"file_name":    fileNameFor(f),
-			// Escaped: a catalogue key contains spaces whenever it came from a
-			// folder upload ("Juz30 - Surah-078 - track01.mp3"), and a literal
-			// space in a request line is a 400 from net/http before any handler
-			// sees it. Single-file uploads with a space in the name had the same
-			// problem; folder uploads just make it the normal case.
+			// The folder to recreate under the inbox, and the name to use
+			// inside it — the key is the whole path, so it is neither.
+			"rel_path":  f.RelPath,
+			"file_name": fileNameFor(f),
+			// PathEscape, not raw: the key is a path, and both its separators
+			// and any spaces in it have to survive as one segment. A literal
+			// space in a request line is a 400 from net/http before a handler
+			// ever sees it, and a literal "/" would split the route.
 			"download_url": s.baseURL + "/api/v1/files/" + url.PathEscape(f.Name) + "/download",
 		})
 	}
@@ -421,7 +415,7 @@ func (s *Server) downloadFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "file storage is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	name := baseName(r.PathValue("name"))
+	name := fileKey(r)
 	f, err := s.files.Open(name)
 	if err != nil {
 		http.Error(w, "no such file", http.StatusNotFound)
@@ -429,7 +423,9 @@ func (s *Server) downloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	// The bare name: the key carries folders, and a Content-Disposition holding
+	// a path is a header that anything downstream is entitled to distrust.
+	w.Header().Set("Content-Disposition", `attachment; filename="`+path.Base(name)+`"`)
 	http.ServeContent(w, r, name, time.Time{}, f)
 }
 
@@ -440,7 +436,7 @@ func (s *Server) fileDeliveryResult(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown device", http.StatusNotFound)
 		return
 	}
-	name := baseName(r.PathValue("name"))
+	name := fileKey(r)
 	var req struct {
 		Status string `json:"status"`
 		Error  string `json:"error"`

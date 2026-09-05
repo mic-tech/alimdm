@@ -17,9 +17,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -61,88 +59,71 @@ func Sanitize(name string) string {
 	return name
 }
 
-// EnsureUnique returns a variant of name that taken() does not claim.
-//
-// The library stores files flat, so a folder upload folds the folder path into
-// the name to keep it unique. " - " is not a reserved character, though, so that
-// fold is ambiguous: "Track 01.mp3" inside "Juz30/CD1" and "CD1 - Track 01.mp3"
-// at the top of "Juz30" produce exactly the same name. Left alone the second
-// upload replaces the first, which is the worst way to lose a file — no error,
-// and a row that still looks right.
-//
-// What counts as taken is the caller's business; this only knows how to spell
-// the alternative, and keeps it inside the same length limit Sanitize applies,
-// so the answer cannot be truncated back into the collision it just avoided.
-func EnsureUnique(name string, taken func(string) bool) string {
-	name = Sanitize(name)
-	if name == "" || !taken(name) {
-		return name
-	}
-	ext := filepath.Ext(name)
-	if len(ext) > 16 {
-		ext = ""
-	}
-	stem := strings.TrimSuffix(name, ext)
-	for n := 2; n < 1000; n++ {
-		candidate := fitName(stem, fmt.Sprintf(" (%d)", n), ext)
-		if !taken(candidate) {
-			return candidate
-		}
-	}
-	// A thousand names that all flatten together is not a real library; take
-	// something that will not collide rather than looping or overwriting.
-	return fitName(stem, " ("+strconv.FormatInt(time.Now().UnixNano(), 36)+")", ext)
-}
-
-// fitName joins the parts, trimming the stem on a rune boundary if the whole
-// would run past the name limit.
-func fitName(stem, suffix, ext string) string {
-	r := []rune(stem)
-	for len(string(r))+len(suffix)+len(ext) > maxNameLen && len(r) > 0 {
-		r = r[:len(r)-1]
-	}
-	return string(r) + suffix + ext
-}
-
 // maxRelDepth bounds how deep an uploaded folder tree may be. A browser folder
 // picker will happily hand over whatever is on disk, and nothing good comes of
 // reproducing a forty-level tree inside a pupil's Downloads folder.
 const maxRelDepth = 8
 
-// SanitizeRelPath reduces a browser-supplied relative path ("Juz30/Surah-078")
-// to a safe folder path, or "" for the top of the inbox.
-//
-// Storage on the server stays flat — this never touches where bytes land, only
-// what the tablet is told to rebuild. That is deliberate: the traversal defence
-// in resolve() keeps working untouched, and a malicious rel_path can at worst
-// produce an odd-looking folder on a tablet, never a write outside the root.
-//
-// Each segment goes through the same Sanitize as a file name, so "..", control
-// characters and separators cannot survive; empty segments are dropped, which
-// collapses "a//b" and a leading "/" without special-casing either.
-func SanitizeRelPath(p string) string {
+// sanitizeSegments splits a "/"-separated path and cleans each part with the
+// same rules as a file name, dropping the empties. That collapses "a//b" and a
+// leading "/" without special-casing either, and leaves nothing that could mean
+// "the directory above" — Sanitize turns ".." into "".
+func sanitizeSegments(p string) []string {
 	p = strings.ReplaceAll(strings.TrimSpace(p), "\\", "/")
-	out := make([]string, 0, maxRelDepth)
+	out := []string{}
 	for _, seg := range strings.Split(p, "/") {
-		clean := Sanitize(seg)
-		if clean == "" {
-			continue
-		}
-		out = append(out, clean)
-		if len(out) == maxRelDepth {
-			break
+		if clean := Sanitize(seg); clean != "" {
+			out = append(out, clean)
 		}
 	}
-	return strings.Join(out, "/")
+	return out
 }
 
-// resolve maps a caller-supplied name to a path inside the root, or errors.
-func (s *Store) resolve(name string) (string, error) {
-	base := Sanitize(name)
-	if base == "" {
+// SanitizeRelPath reduces a browser-supplied folder path ("Juz30/Surah-078") to
+// a safe one, or "" for the top of the library. It holds folders only — the
+// file name is not part of it.
+func SanitizeRelPath(p string) string {
+	segs := sanitizeSegments(p)
+	if len(segs) > maxRelDepth {
+		segs = segs[:maxRelDepth]
+	}
+	return strings.Join(segs, "/")
+}
+
+// SanitizeStoredPath reduces a full key ("Juz30/CD1/Track 01.mp3") to a safe
+// relative path, or "" if nothing usable is left.
+//
+// The depth cap applies to the folders in front of the name, never to the name
+// itself: capping the whole path would silently drop the file name off a deep
+// upload and leave a write aimed at a directory. A too-deep file lands
+// shallower instead, which is a shape the operator can see and fix.
+//
+// It is idempotent, so a key sanitised on the way in still matches itself on
+// the way back out of a URL.
+func SanitizeStoredPath(p string) string {
+	segs := sanitizeSegments(p)
+	if len(segs) == 0 {
+		return ""
+	}
+	name := segs[len(segs)-1]
+	folders := segs[:len(segs)-1]
+	if len(folders) > maxRelDepth {
+		folders = folders[:maxRelDepth]
+	}
+	return strings.Join(append(folders, name), "/")
+}
+
+// resolve maps a caller-supplied relative path to a path inside the root.
+//
+// Sanitising each segment is what actually stops traversal; the containment
+// check after it is the backstop that would catch a mistake in the sanitising,
+// which is exactly when it matters most.
+func (s *Store) resolve(rel string) (string, error) {
+	clean := SanitizeStoredPath(rel)
+	if clean == "" {
 		return "", errors.New("invalid file name")
 	}
-	full := filepath.Join(s.root, base)
+	full := filepath.Join(s.root, filepath.FromSlash(clean))
 	absRoot, err := filepath.Abs(s.root)
 	if err != nil {
 		return "", err
@@ -158,14 +139,25 @@ func (s *Store) resolve(name string) (string, error) {
 }
 
 // Ingest streams an upload to disk and returns its SHA-256 and final path.
+//
+// rel is the file's path inside the library, folders and all, and the folders
+// are created to match: the library on disk is the shape the operator uploaded,
+// which is the only version of it that stays obvious months later.
+//
 // The write goes to a temp file first so a failed or truncated upload cannot
 // replace a good file that is already there.
-func (s *Store) Ingest(r io.Reader, name string, maxBytes int64) (sha256hex, path string, size int64, err error) {
-	final, err := s.resolve(name)
+func (s *Store) Ingest(r io.Reader, rel string, maxBytes int64) (sha256hex, path string, size int64, err error) {
+	final, err := s.resolve(rel)
 	if err != nil {
 		return "", "", 0, err
 	}
-	dst, err := os.CreateTemp(s.root, "upload-*")
+	dir := filepath.Dir(final)
+	if err = os.MkdirAll(dir, 0o755); err != nil {
+		return "", "", 0, err
+	}
+	// Staged in the destination directory, so the rename that follows is within
+	// one filesystem and therefore atomic.
+	dst, err := os.CreateTemp(dir, "upload-*")
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -174,6 +166,7 @@ func (s *Store) Ingest(r io.Reader, name string, maxBytes int64) (sha256hex, pat
 		dst.Close()
 		if err != nil {
 			os.Remove(tmp)
+			s.pruneEmptyDirs(dir)
 		}
 	}()
 
@@ -201,6 +194,28 @@ func (s *Store) Ingest(r io.Reader, name string, maxBytes int64) (sha256hex, pat
 	return hex.EncodeToString(h.Sum(nil)), final, size, nil
 }
 
+// pruneEmptyDirs walks back towards the root removing directories a delete just
+// emptied, so clearing a folder does not leave its skeleton behind for ever. It
+// stops at the root, and at the first directory that still holds something —
+// os.Remove refuses a directory that is not empty, which is the whole check.
+func (s *Store) pruneEmptyDirs(dir string) {
+	absRoot, err := filepath.Abs(s.root)
+	if err != nil {
+		return
+	}
+	for {
+		abs, err := filepath.Abs(dir)
+		if err != nil || abs == absRoot ||
+			!strings.HasPrefix(abs, absRoot+string(os.PathSeparator)) {
+			return
+		}
+		if os.Remove(dir) != nil {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
+}
+
 func (s *Store) Open(name string) (*os.File, error) {
 	full, err := s.resolve(name)
 	if err != nil {
@@ -214,5 +229,9 @@ func (s *Store) Delete(name string) error {
 	if err != nil {
 		return err
 	}
-	return os.Remove(full)
+	if err := os.Remove(full); err != nil {
+		return err
+	}
+	s.pruneEmptyDirs(filepath.Dir(full))
+	return nil
 }

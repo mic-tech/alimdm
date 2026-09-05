@@ -2199,16 +2199,11 @@ function fmtSize(bytes) {
   return (bytes / 1024 / 1024).toFixed(1) + " MB";
 }
 
-/* The catalogue key carries the folders so it stays unique, and may carry more
-   than that to break a tie; the row should show the name the tablet will use.
-   The server sends it. Undoing the fold is the fallback for a row uploaded
-   before it did — exact for those rows, since back then a name that needed
-   breaking a tie replaced the file it collided with instead. */
+/* The catalogue key is the file's path in the library, so the row should show
+   the last part of it — which is also the name the tablet saves it under. The
+   server sends that name; the fallback is the same thing read off the key. */
 function fileLabel(f) {
-  if (f.file_name) return f.file_name;
-  if (!f.rel_path) return f.name;
-  const prefix = f.rel_path.split("/").join(" - ") + " - ";
-  return f.name.startsWith(prefix) ? f.name.slice(prefix.length) : f.name;
+  return f.file_name || f.name.split("/").pop();
 }
 
 /* The library is stored flat — each file carries the folder it belongs to as

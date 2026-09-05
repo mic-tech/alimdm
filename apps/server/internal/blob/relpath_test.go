@@ -1,6 +1,8 @@
 package blob
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -57,50 +59,99 @@ func TestSanitizedPathStaysInsideRoot(t *testing.T) {
 	}
 }
 
-// EnsureUnique is what stops one upload replacing another when two different
-// folders fold to the same flat name.
-func TestEnsureUniqueStepsAsideForATakenName(t *testing.T) {
-	taken := map[string]bool{"Juz30 - CD1 - Track 01.mp3": true}
-	got := EnsureUnique("Juz30 - CD1 - Track 01.mp3", func(n string) bool { return taken[n] })
-	if got == "Juz30 - CD1 - Track 01.mp3" {
-		t.Fatal("returned the taken name")
+// The name is the last segment and must survive whatever the depth cap does to
+// the folders: dropping it would leave a write aimed at a directory.
+func TestStoredPathNeverLosesTheFileName(t *testing.T) {
+	deep := strings.Repeat("folder/", maxRelDepth+5) + "track01.mp3"
+	got := SanitizeStoredPath(deep)
+	if !strings.HasSuffix(got, "/track01.mp3") {
+		t.Fatalf("SanitizeStoredPath(%d folders deep) = %q, lost the file name", maxRelDepth+5, got)
 	}
-	if !strings.HasSuffix(got, ".mp3") {
-		t.Fatalf("%q lost its extension — the tablet decides what to do with a file by it", got)
-	}
-	if got != "Juz30 - CD1 - Track 01 (2).mp3" {
-		t.Fatalf("got %q, want the counter before the extension", got)
+	if n := strings.Count(got, "/"); n != maxRelDepth {
+		t.Fatalf("%q has %d folders, want the cap of %d", got, n, maxRelDepth)
 	}
 }
 
-func TestEnsureUniqueLeavesAFreeNameAlone(t *testing.T) {
-	got := EnsureUnique("notice.pdf", func(string) bool { return false })
-	if got != "notice.pdf" {
-		t.Fatalf("got %q, want notice.pdf", got)
+// A key sanitised on the way in has to match itself on the way back out of a
+// URL, or a file could be stored and then never found again.
+func TestStoredPathIsIdempotent(t *testing.T) {
+	for _, in := range []string{
+		"Juz30/CD1/Track 01.mp3", "notice.pdf", "../../etc/passwd",
+		"a//b/c.mp3", strings.Repeat("d/", maxRelDepth+3) + "x.mp3",
+	} {
+		once := SanitizeStoredPath(in)
+		if twice := SanitizeStoredPath(once); twice != once {
+			t.Fatalf("SanitizeStoredPath(%q): %q then %q", in, once, twice)
+		}
 	}
 }
 
-func TestEnsureUniqueKeepsCountingPastTheFirstClash(t *testing.T) {
-	taken := map[string]bool{"a.mp3": true, "a (2).mp3": true, "a (3).mp3": true}
-	if got := EnsureUnique("a.mp3", func(n string) bool { return taken[n] }); got != "a (4).mp3" {
-		t.Fatalf("got %q, want a (4).mp3", got)
+func TestStoredPathRejectsWhatIsLeftOfNothing(t *testing.T) {
+	for _, in := range []string{"", "   ", "/", "..", "../..", "./././"} {
+		if got := SanitizeStoredPath(in); got != "" {
+			t.Fatalf("SanitizeStoredPath(%q) = %q, want empty", in, got)
+		}
 	}
 }
 
-// The result must stay inside the same limit Sanitize applies, or it would be
-// truncated on the way to disk — straight back into the collision it avoided.
-func TestEnsureUniqueStaysWithinTheNameLimit(t *testing.T) {
-	long := strings.Repeat("x", maxNameLen-4) + ".mp3" // Sanitize trims this to the limit
-	first := Sanitize(long)
-	taken := map[string]bool{first: true}
-	got := EnsureUnique(long, func(n string) bool { return taken[n] })
-	if len(got) > maxNameLen {
-		t.Fatalf("%d bytes, over the %d limit", len(got), maxNameLen)
+// The library on disk should be the shape that was uploaded.
+func TestIngestBuildsTheFolders(t *testing.T) {
+	root := t.TempDir()
+	st := NewStore(root)
+	if _, _, _, err := st.Ingest(strings.NewReader("aaa"), "Juz30/CD1/Track 01.mp3", 1<<20); err != nil {
+		t.Fatal(err)
 	}
-	if got == first {
-		t.Fatal("returned the taken name")
+	if _, err := os.Stat(filepath.Join(root, "Juz30", "CD1", "Track 01.mp3")); err != nil {
+		t.Fatalf("not stored under its folders: %v", err)
 	}
-	if Sanitize(got) != got {
-		t.Fatalf("%q would be changed again on the way to disk", got)
+	// Same name, different folder: both survive, which is the whole point of
+	// keeping the folders on disk.
+	if _, _, _, err := st.Ingest(strings.NewReader("bbb"), "Juz30/CD2/Track 01.mp3", 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(filepath.Join(root, "Juz30", "CD1", "Track 01.mp3"))
+	if err != nil || string(first) != "aaa" {
+		t.Fatalf("the first file was replaced: %q, %v", first, err)
+	}
+}
+
+// A traversal attempt must land inside the root, whatever it claims.
+func TestIngestCannotEscapeTheRoot(t *testing.T) {
+	root := t.TempDir()
+	st := NewStore(root)
+	_, path, _, err := st.Ingest(strings.NewReader("x"), "../../etc/evil.mp3", 1<<20)
+	if err != nil {
+		return // refusing outright is fine too
+	}
+	abs, _ := filepath.Abs(path)
+	absRoot, _ := filepath.Abs(root)
+	if !strings.HasPrefix(abs, absRoot+string(os.PathSeparator)) {
+		t.Fatalf("wrote to %q, outside %q", abs, absRoot)
+	}
+}
+
+// Deleting the last file in a folder should take the folder with it, or the
+// library fills up with the skeletons of folders that were emptied months ago.
+func TestDeleteClearsFoldersItEmpties(t *testing.T) {
+	root := t.TempDir()
+	st := NewStore(root)
+	st.Ingest(strings.NewReader("aaa"), "Juz30/CD1/Track 01.mp3", 1<<20)
+	st.Ingest(strings.NewReader("bbb"), "Juz30/CD1/Track 02.mp3", 1<<20)
+
+	if err := st.Delete("Juz30/CD1/Track 01.mp3"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "Juz30", "CD1")); err != nil {
+		t.Fatal("removed a folder that still had a file in it")
+	}
+	if err := st.Delete("Juz30/CD1/Track 02.mp3"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "Juz30")); !os.IsNotExist(err) {
+		t.Fatalf("empty folders were left behind: %v", err)
+	}
+	// And never the root itself.
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("the library root was removed: %v", err)
 	}
 }
