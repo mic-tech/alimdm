@@ -217,6 +217,14 @@ export const api = {
   listLibraryFiles: () => req("GET", "/files"),
   deleteLibraryFile: (name) => req("DELETE", "/files/" + encodeURIComponent(name)),
   pushLibraryFile: (name, body) => req("POST", "/files/" + encodeURIComponent(name) + "/push", body),
+
+  // Folder-level sends and deletes. The folder goes in the body (push) or a
+  // query parameter (delete) rather than the path, because it contains slashes
+  // and the server's router cannot hold those in a path segment.
+  pushLibraryFolder: (relPath, body) =>
+    req("POST", "/folders/push", { ...body, rel_path: relPath }),
+  deleteLibraryFolder: (relPath) =>
+    req("DELETE", "/folders?rel_path=" + encodeURIComponent(relPath)),
   fileDeliveries: (name) => req("GET", "/files/" + encodeURIComponent(name) + "/deliveries"),
   // relPath is the folder the file sits in, without the file name — set when a
   // whole folder is uploaded, empty for a single file.

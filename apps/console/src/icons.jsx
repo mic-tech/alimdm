@@ -44,6 +44,11 @@ export const IconSignOut = mk(<>
 </>);
 
 export const IconChevronLeft = mk(<path d="m14.5 5.5-6 6.5 6 6.5" />);
+export const IconChevronRight = mk(<path d="m9.5 5.5 6 6.5-6 6.5" />);
+
+export const IconFolder = mk(
+  <path d="M3.5 6.8A1.8 1.8 0 0 1 5.3 5h3.4a1.8 1.8 0 0 1 1.4.7l1 1.3H19a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 18.5H5A1.5 1.5 0 0 1 3.5 17z" />
+);
 
 export const IconRefresh = mk(<>
   <path d="M20 12a8 8 0 1 1-2.4-5.7" />

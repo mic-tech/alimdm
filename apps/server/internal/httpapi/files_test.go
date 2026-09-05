@@ -332,3 +332,193 @@ func TestDeleteQueuesACommandNamingTheFile(t *testing.T) {
 	}
 	t.Errorf("no delete_inbox_file command reached the tablet: %v", cmds)
 }
+
+// uploadInto posts a file the way the console does for a folder upload: the
+// same multipart form, plus the folder the file sat in on the operator's
+// machine.
+func (e *testEnv) uploadInto(t *testing.T, tok, relPath, name string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, err := mw.CreateFormFile("file", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("rel_path", relPath); err != nil {
+		t.Fatal(err)
+	}
+	mw.Close()
+
+	req := httptest.NewRequest("POST", "/api/v1/files", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	e.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// seedLibrary fills the catalogue with a small nested tree and returns the
+// login token, so the folder tests can say what they are actually about.
+func (e *testEnv) seedLibrary(t *testing.T) string {
+	t.Helper()
+	tok := e.login("admin@x.com", "adminpassword")
+	for _, f := range []struct{ rel, name string }{
+		{"Juz30/Surah-078", "track01.mp3"},
+		{"Juz30/Surah-078", "track02.mp3"},
+		{"Juz30/Surah-079", "track01.mp3"},
+		{"Handouts", "worksheet.pdf"},
+		{"", "notice.pdf"},
+	} {
+		if rec := e.uploadInto(t, tok, f.rel, f.name, []byte("body of "+f.rel+"/"+f.name)); rec.Code != http.StatusOK {
+			t.Fatalf("upload %s/%s: status %d (%s)", f.rel, f.name, rec.Code, rec.Body.String())
+		}
+	}
+	return tok
+}
+
+// The reason folder push exists: a folder of tracks was thirty trips through
+// the send dialog, and the one that got missed was invisible afterwards.
+func TestFolderPushSendsEveryFileBeneathIt(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.seedLibrary(t)
+	for _, id := range []string{"tablet-1", "tablet-2"} {
+		e.newDeviceKey(t, id)
+	}
+
+	rec, body := e.do("POST", "/api/v1/folders/push", tok, map[string]any{"rel_path": "Juz30"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("push: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	// Three files under Juz30, across two sub-folders — and not the handout or
+	// the notice sitting outside it.
+	if n, _ := body["files"].(float64); n != 3 {
+		t.Fatalf("files = %v, want 3", body["files"])
+	}
+	if q, _ := body["queued"].(float64); q != 6 {
+		t.Fatalf("queued = %v, want 6 (3 files × 2 tablets)", body["queued"])
+	}
+
+	ds, err := e.st.ClaimPendingFileDeliveries("tablet-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range ds {
+		if d.FileName == "notice.pdf" || d.FileName == "Handouts - worksheet.pdf" {
+			t.Fatalf("%s was queued, but it is not in the Juz30 folder", d.FileName)
+		}
+	}
+	if len(ds) != 3 {
+		t.Fatalf("tablet-1 has %d pending files, want 3", len(ds))
+	}
+}
+
+// A sub-folder is a folder too: sending one surah should not send the juz.
+func TestFolderPushCanTargetASubFolder(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.seedLibrary(t)
+	e.newDeviceKey(t, "tablet-1")
+
+	rec, body := e.do("POST", "/api/v1/folders/push", tok, map[string]any{"rel_path": "Juz30/Surah-078"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("push: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	if n, _ := body["files"].(float64); n != 2 {
+		t.Fatalf("files = %v, want 2", body["files"])
+	}
+}
+
+// A folder name that never existed should say so, rather than quietly reporting
+// a successful push of nothing.
+func TestFolderPushRejectsAnUnknownFolder(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.seedLibrary(t)
+	e.newDeviceKey(t, "tablet-1")
+
+	if rec, _ := e.do("POST", "/api/v1/folders/push", tok, map[string]any{"rel_path": "Juz29"}); rec.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want 404", rec.Code)
+	}
+	// "Juz3" is a prefix of "Juz30" as a string, but it is not a parent folder.
+	if rec, _ := e.do("POST", "/api/v1/folders/push", tok, map[string]any{"rel_path": "Juz3"}); rec.Code != http.StatusNotFound {
+		t.Fatalf("prefix match: status %d, want 404 — Juz3 is not a parent of Juz30", rec.Code)
+	}
+}
+
+func TestFolderDeleteLeavesTheRestOfTheLibraryAlone(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.seedLibrary(t)
+
+	rec, body := e.do("DELETE", "/api/v1/folders?rel_path=Juz30%2FSurah-078", tok, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	if n, _ := body["deleted"].(float64); n != 2 {
+		t.Fatalf("deleted = %v, want 2", body["deleted"])
+	}
+	files, err := e.st.ListFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("%d files left, want 3", len(files))
+	}
+	for _, f := range files {
+		if f.RelPath == "Juz30/Surah-078" {
+			t.Fatalf("%s survived the folder delete", f.Name)
+		}
+	}
+}
+
+// A rel_path is operator input like any other: it must not be able to reach
+// files outside the library, whatever it claims to be.
+func TestFolderPushCannotEscapeTheLibrary(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.seedLibrary(t)
+	e.newDeviceKey(t, "tablet-1")
+
+	for _, rel := range []string{"../..", "/", "..", "Juz30/../Handouts/.."} {
+		rec, _ := e.do("POST", "/api/v1/folders/push", tok, map[string]any{"rel_path": rel})
+		if rec.Code == http.StatusOK {
+			t.Fatalf("rel_path %q was accepted", rel)
+		}
+	}
+}
+
+// The console draws its folder tree from this field, and the list handler builds
+// its rows by hand rather than marshalling store.File — so a folder upload came
+// back looking flat. Guard the field, not the struct.
+func TestListReportsTheFolderEachFileIsIn(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.seedLibrary(t)
+
+	rec, _ := e.do("GET", "/api/v1/files", tok, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"Juz30 - Surah-078 - track01.mp3": "Juz30/Surah-078",
+		"Juz30 - Surah-078 - track02.mp3": "Juz30/Surah-078",
+		"Juz30 - Surah-079 - track01.mp3": "Juz30/Surah-079",
+		"Handouts - worksheet.pdf":        "Handouts",
+		"notice.pdf":                      "",
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("%d rows, want %d", len(rows), len(want))
+	}
+	for _, row := range rows {
+		name, _ := row["name"].(string)
+		rel, ok := row["rel_path"].(string)
+		if !ok {
+			t.Fatalf("%s has no rel_path — the console would draw it at the top level", name)
+		}
+		if w, known := want[name]; !known || rel != w {
+			t.Fatalf("%s: rel_path = %q, want %q", name, rel, w)
+		}
+	}
+}

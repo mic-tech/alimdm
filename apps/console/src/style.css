@@ -1125,3 +1125,19 @@ code.code, .code {
    nothing else on the page would ever tell you. */
 .unknown-note { color: var(--yellow-700); }
 .unknown-note .mono { font-weight: 600; }
+
+/* The file library is a tree, so a folder of thirty tracks reads as a folder
+   rather than thirty rows. Every row reserves the caret's width, which keeps
+   names in one column whether or not their level has anything to open. */
+.tree-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-toggle {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  padding: 0; border: 0; background: none; font: inherit; color: inherit;
+  cursor: pointer; text-align: left;
+}
+.tree-toggle:hover { color: var(--primary); }
+.tree-caret, .tree-caret-gap { flex: 0 0 16px; }
+.tree-caret { transition: transform .12s ease; }
+.tree-caret.is-open { transform: rotate(90deg); }
+.tree-icon { flex: 0 0 auto; opacity: 0.6; }

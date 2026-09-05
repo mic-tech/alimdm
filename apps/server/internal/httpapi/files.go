@@ -127,6 +127,11 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 			"content_type": f.ContentType, "uploaded_at": f.UploadedAt,
 			"delivered": done, "failed": failed, "pending": pending,
 			"targets": len(ds),
+			// The folder the file belongs to. This hand-built map does not
+			// marshal store.File, so a field added there does not appear here:
+			// leaving rel_path out is what made a folder upload come back as a
+			// flat list in the console however carefully it was uploaded.
+			"rel_path": f.RelPath,
 		})
 	}
 	writeJSON(w, out)
@@ -152,6 +157,73 @@ func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"name": name, "deleted": true})
 }
 
+// pushTargets resolves the audience of a push: an explicit device list, one
+// group, or — when neither is given — every enrolled device.
+func (s *Server) pushTargets(devices []string, groupID string) ([]string, error) {
+	if len(devices) > 0 {
+		return devices, nil
+	}
+	devs, err := s.st.ListDevices()
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, d := range devs {
+		// An empty group_id means the whole fleet.
+		if groupID == "" || d.GroupID == groupID {
+			out = append(out, d.ID)
+		}
+	}
+	return out, nil
+}
+
+// queueFiles queues every file for every target that exists, and returns how
+// many device/file pairs were queued.
+//
+// Each device is woken once at the end rather than once per file: sending a
+// folder of thirty tracks should be one nudge, not thirty.
+func (s *Server) queueFiles(targets, names []string) int {
+	queued := 0
+	for _, id := range targets {
+		if _, err := s.st.GetDevice(id); err != nil {
+			continue // skip unknown ids rather than failing the whole push
+		}
+		n := 0
+		for _, name := range names {
+			if s.st.QueueFileDelivery(id, name) == nil {
+				n++
+			}
+		}
+		if n > 0 {
+			// Wake the device so the files land in seconds rather than at the
+			// next heartbeat. Harmless when MQTT is not configured.
+			s.pokes.Enqueue(id, device.Poke{Type: "fetch_files"})
+		}
+		queued += n
+	}
+	return queued
+}
+
+// filesUnder returns every catalogue entry inside a folder, at any depth.
+//
+// The folders are metadata, not directories — storage stays flat — so this is a
+// scan and a prefix test rather than a walk. A school library is a few hundred
+// rows, and doing it here keeps the store free of a query that only one caller
+// would ever want.
+func (s *Server) filesUnder(rel string) ([]store.File, error) {
+	all, err := s.st.ListFiles()
+	if err != nil {
+		return nil, err
+	}
+	out := []store.File{}
+	for _, f := range all {
+		if f.RelPath == rel || strings.HasPrefix(f.RelPath, rel+"/") {
+			out = append(out, f)
+		}
+	}
+	return out, nil
+}
+
 // pushFile queues a file for a set of devices, a whole group, or the fleet.
 func (s *Server) pushFile(w http.ResponseWriter, r *http.Request) {
 	name := baseName(r.PathValue("name"))
@@ -165,40 +237,116 @@ func (s *Server) pushFile(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	targets := req.Devices
-	if len(targets) == 0 {
-		devs, err := s.st.ListDevices()
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "could not list devices")
-			return
-		}
-		for _, d := range devs {
-			// An empty group_id means the whole fleet.
-			if req.GroupID == "" || d.GroupID == req.GroupID {
-				targets = append(targets, d.ID)
-			}
-		}
+	targets, err := s.pushTargets(req.Devices, req.GroupID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not list devices")
+		return
 	}
 	if len(targets) == 0 {
 		writeErr(w, http.StatusBadRequest, "no devices to send to")
 		return
 	}
 
-	queued := 0
-	for _, id := range targets {
-		if _, err := s.st.GetDevice(id); err != nil {
-			continue // skip unknown ids rather than failing the whole push
-		}
-		if s.st.QueueFileDelivery(id, name) == nil {
-			queued++
-			// Wake the device so the file lands in seconds rather than at the
-			// next heartbeat. Harmless when MQTT is not configured.
-			s.pokes.Enqueue(id, device.Poke{Type: "fetch_files"})
-		}
-	}
+	queued := s.queueFiles(targets, []string{name})
 	s.record(r, "file_pushed", store.EventInfo, "",
 		fmt.Sprintf("Pushed %s to %s", name, plural(queued, "device", "devices")))
 	writeJSON(w, map[string]any{"name": name, "queued": queued, "targets": len(targets)})
+}
+
+// pushFolder queues every file in a folder, at any depth, in one request.
+//
+// This exists because the alternative is real work: a folder of thirty tracks
+// meant thirty trips through the send dialog, and the one an operator forgot
+// was invisible afterwards.
+//
+// The folder travels in the body rather than the path because it contains
+// slashes, and a ServeMux wildcard cannot hold those without swallowing the
+// rest of the route.
+func (s *Server) pushFolder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RelPath string   `json:"rel_path"`
+		Devices []string `json:"devices"`
+		GroupID string   `json:"group_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	rel := blob.SanitizeRelPath(req.RelPath)
+	if rel == "" {
+		writeErr(w, http.StatusBadRequest, "no folder given")
+		return
+	}
+	files, err := s.filesUnder(rel)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not read the file library")
+		return
+	}
+	if len(files) == 0 {
+		writeErr(w, http.StatusNotFound, "no files in that folder")
+		return
+	}
+
+	targets, err := s.pushTargets(req.Devices, req.GroupID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not list devices")
+		return
+	}
+	if len(targets) == 0 {
+		writeErr(w, http.StatusBadRequest, "no devices to send to")
+		return
+	}
+
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, f.Name)
+	}
+	queued := s.queueFiles(targets, names)
+	s.record(r, "file_pushed", store.EventInfo, "",
+		fmt.Sprintf("Pushed the %s folder (%s) to %s", rel,
+			plural(len(files), "file", "files"), plural(len(targets), "device", "devices")))
+	writeJSON(w, map[string]any{
+		"rel_path": rel, "files": len(files), "queued": queued, "targets": len(targets),
+	})
+}
+
+// deleteFolder removes every file in a folder, at any depth, from the library.
+//
+// Copies already on tablets stay where they are, exactly as with a single file:
+// the inbox is the pupil's folder, not a mirror of this one.
+func (s *Server) deleteFolder(w http.ResponseWriter, r *http.Request) {
+	rel := blob.SanitizeRelPath(r.URL.Query().Get("rel_path"))
+	if rel == "" {
+		writeErr(w, http.StatusBadRequest, "no folder given")
+		return
+	}
+	files, err := s.filesUnder(rel)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not read the file library")
+		return
+	}
+	if len(files) == 0 {
+		writeErr(w, http.StatusNotFound, "no files in that folder")
+		return
+	}
+	deleted := 0
+	for _, f := range files {
+		// Row first: a catalogue entry pointing at a missing file is worse than
+		// an orphaned file, which simply stops being listed.
+		if err := s.st.DeleteFile(f.Name); err != nil {
+			continue
+		}
+		if s.files != nil {
+			_ = s.files.Delete(f.Name)
+		}
+		deleted++
+	}
+	if deleted == 0 {
+		writeErr(w, http.StatusInternalServerError, "could not delete the folder")
+		return
+	}
+	s.record(r, "file_deleted", store.EventWarn, "",
+		fmt.Sprintf("Deleted the %s folder (%s) from the library "+
+			"(copies already on devices are left alone)", rel, plural(deleted, "file", "files")))
+	writeJSON(w, map[string]any{"rel_path": rel, "deleted": deleted})
 }
 
 // fileDeliveries reports per-device delivery state for one file.

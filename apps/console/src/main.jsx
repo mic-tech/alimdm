@@ -11,7 +11,7 @@ import {
   IconRefresh, IconPlus, IconTrash, IconEdit, IconPower, IconLock, IconUnlock,
   IconEject, IconCopy, IconCheck, IconUpload, IconInfo, IconWarning,
   IconUser, IconUsers, IconKey, IconSave, IconShield, IconFile, IconEye, IconRows, IconGrid,
-  IconSliders, IconMonitor, IconAndroid,
+  IconSliders, IconMonitor, IconAndroid, IconFolder, IconChevronRight,
 } from "./icons.jsx";
 
 // Compact "time ago" so the Last seen column stays narrow; the cell keeps the
@@ -629,6 +629,11 @@ function resendPrompt(label) {
 function DeviceFiles({ device, onErr }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Closed folders, not open ones. This tab exists to confirm that what was
+  // sent actually arrived and kept its shape, so folders start open — and
+  // tracking what has been shut keeps a folder that arrives on the next refresh
+  // visible instead of hidden.
+  const [collapsed, setCollapsed] = useState(() => new Set());
 
   const load = useCallback(async () => {
     try { setData(await api.deviceInbox(device.id)); }
@@ -653,7 +658,23 @@ function DeviceFiles({ device, onErr }) {
     setBusy(false);
   }
 
-  const entries = data?.entries ?? [];
+  function toggle(path) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(path) ? next.delete(path) : next.add(path);
+      return next;
+    });
+  }
+
+  // Memoised so the tree below is rebuilt when the listing changes, not on
+  // every render of a tab that polls every five seconds.
+  const entries = useMemo(() => data?.entries ?? [], [data]);
+  // The device reports each file with the folder it sits in; rebuild the tree so
+  // this reads like the tablet's own Files app rather than a flat dump.
+  const rows = useMemo(
+    () => treeRows(buildFileTree(entries, (f) => f.name), (p) => !collapsed.has(p)),
+    [entries, collapsed]);
+
   return (
     <CardTable
       title="Files"
@@ -685,24 +706,54 @@ function DeviceFiles({ device, onErr }) {
                   : "Send a document from the File library and it lands here, in Download/Ali MDM."} />
             </td></tr>
           )}
-          {entries.map((f) => (
-            <tr key={(f.rel_path ? f.rel_path + "/" : "") + f.name}>
-              <td className="small strong" data-label="File">
-                {f.name}
-                {f.rel_path && <div className="muted small mono">{f.rel_path}</div>}
-              </td>
-              <td className="small nowrap" data-label="Size">{fmtSize(f.size)}</td>
-              <td className="small muted nowrap" data-label="Modified">
-                {f.modified_at ? timeAgo(new Date(f.modified_at).toISOString()) : "—"}
-              </td>
-              <td className="cell-actions">
-                <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
-                  <button className="btn danger-outline sm icon" title="Delete from the device"
-                    disabled={busy} onClick={() => remove(f.name, f.rel_path)}><IconTrash /></button>
-                </div>
-              </td>
-            </tr>
-          ))}
+          {rows.map((row) => {
+            if (row.kind === "folder") {
+              const st = folderStats(row.node);
+              const open = !collapsed.has(row.node.path);
+              return (
+                <tr key={row.key}>
+                  <td className="small strong" data-label="Folder">
+                    <TreeCell depth={row.depth}>
+                      <button className="tree-toggle" aria-expanded={open}
+                        onClick={() => toggle(row.node.path)}>
+                        <IconChevronRight width="16" height="16"
+                          className={"tree-caret" + (open ? " is-open" : "")} />
+                        <IconFolder width="18" height="18" className="tree-icon" />
+                        <span className="tree-name">{row.node.name}</span>
+                      </button>
+                    </TreeCell>
+                  </td>
+                  <td className="small nowrap" data-label="Size">
+                    {fmtSize(st.size)} <span className="muted">· {st.files} file{st.files === 1 ? "" : "s"}</span>
+                  </td>
+                  <td className="small muted nowrap" data-label="Modified">—</td>
+                  <td className="cell-actions" />
+                </tr>
+              );
+            }
+            const f = row.file;
+            return (
+              <tr key={row.key}>
+                <td className="small strong" data-label="File">
+                  <TreeCell depth={row.depth}>
+                    <span className="tree-caret-gap" />
+                    <IconFile width="17" height="17" className="tree-icon" />
+                    <span className="tree-name">{f.label}</span>
+                  </TreeCell>
+                </td>
+                <td className="small nowrap" data-label="Size">{fmtSize(f.size)}</td>
+                <td className="small muted nowrap" data-label="Modified">
+                  {f.modified_at ? timeAgo(new Date(f.modified_at).toISOString()) : "—"}
+                </td>
+                <td className="cell-actions">
+                  <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
+                    <button className="btn danger-outline sm icon" title="Delete from the device"
+                      disabled={busy} onClick={() => remove(f.name, f.rel_path)}><IconTrash /></button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </CardTable>
@@ -2155,15 +2206,114 @@ function stripFolderPrefix(f) {
   return f.name.startsWith(prefix) ? f.name.slice(prefix.length) : f.name;
 }
 
+/* The library is stored flat — each file carries the folder it belongs to as
+   rel_path — so the shape the operator uploaded exists only here and on the
+   tablet. buildFileTree puts it back together for display. */
+function buildFileTree(files, labelOf) {
+  const root = { name: "", path: "", folders: new Map(), files: [] };
+  for (const f of files) {
+    let node = root;
+    for (const part of (f.rel_path || "").split("/").filter(Boolean)) {
+      let child = node.folders.get(part);
+      if (!child) {
+        child = {
+          name: part, path: node.path ? `${node.path}/${part}` : part,
+          folders: new Map(), files: [],
+        };
+        node.folders.set(part, child);
+      }
+      node = child;
+    }
+    node.files.push({ ...f, label: labelOf(f) });
+  }
+  return root;
+}
+
+/* What a folder is worth saying without opening it: how much is inside, and
+   whether it reached the tablets. Everything counts the whole subtree, so a
+   collapsed folder still tells the truth about what is under it.
+
+   Delivery is counted in files, not in devices: adding up the device counts of
+   thirty tracks gives "90 delivered", which is a true number and a useless one.
+   A file counts as delivered only once every device it was sent to has it. */
+function folderStats(node) {
+  const s = { files: 0, size: 0, sent: 0, complete: 0, pending: 0, failed: 0 };
+  (function walk(n) {
+    for (const f of n.files) {
+      s.files += 1;
+      s.size += f.size || 0;
+      if (!f.targets) continue;
+      s.sent += 1;
+      if (f.failed) s.failed += 1;
+      else if (f.pending) s.pending += 1;
+      else s.complete += 1;
+    }
+    for (const d of n.folders.values()) walk(d);
+  })(node);
+  return s;
+}
+
+// numeric so track2 sorts before track10, which is the whole point of naming
+// them that way.
+const byName = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+
+/* Flatten the tree into table rows, honouring which folders are open. Rows
+   carry their depth so the File column can indent them, and folders come before
+   files at each level, the way a file manager orders them. */
+function treeRows(node, isOpen, depth = 0, out = []) {
+  const folders = [...node.folders.values()].sort((a, b) => byName(a.name, b.name));
+  for (const d of folders) {
+    out.push({ kind: "folder", key: "d:" + d.path, node: d, depth });
+    if (isOpen(d.path)) treeRows(d, isOpen, depth + 1, out);
+  }
+  for (const f of [...node.files].sort((a, b) => byName(a.label, b.label))) {
+    out.push({ kind: "file", key: "f:" + f.name, file: f, depth });
+  }
+  return out;
+}
+
+/* One shared indent for folder and file rows. A file row keeps the caret's
+   width as a spacer, or names would jitter sideways as folders open. */
+function TreeCell({ depth, children }) {
+  return <div className="tree-cell" style={{ paddingLeft: depth * 20 }}>{children}</div>;
+}
+
+/* Delivery for one file, counted in devices. */
+function DeliveryCell({ targets, delivered, pending, failed }) {
+  if (!targets) return <span className="muted small">Not sent yet</span>;
+  return (
+    <span className="small">
+      <span className="badge success">{delivered} delivered</span>
+      {pending > 0 && <> <span className="badge warning">{pending} pending</span></>}
+      {failed > 0 && <> <span className="badge off">{failed} failed</span></>}
+    </span>
+  );
+}
+
+/* Delivery for a folder, counted in files — see folderStats for why. */
+function FolderDeliveryCell({ files, sent, complete, pending, failed }) {
+  if (!sent) return <span className="muted small">Not sent yet</span>;
+  return (
+    <span className="small">
+      <span className="badge success">{complete} of {files} delivered</span>
+      {pending > 0 && <> <span className="badge warning">{pending} in progress</span></>}
+      {failed > 0 && <> <span className="badge off">{failed} failed</span></>}
+    </span>
+  );
+}
+
 function Files({ onErr }) {
   const [files, setFiles] = useState(null);
   const [groups, setGroups] = useState([]);
   const [devices, setDevices] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [pushName, setPushName] = useState("");
+  // Which row has its send panel open — a file or a folder, so one bit of state
+  // cannot leave both open at once.
+  const [push, setPush] = useState(null);
   const [pushGroup, setPushGroup] = useState("");
   const [detail, setDetail] = useState(null);
   const [progress, setProgress] = useState("");
+  const [expanded, setExpanded] = useState(() => new Set());
 
   const load = useCallback(async () => {
     try {
@@ -2174,6 +2324,20 @@ function Files({ onErr }) {
   useEffect(() => { load(); }, [load]);
   // Deliveries land on the tablets' own schedule, so the counts move on their own.
   useEffect(() => { const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
+
+  // Rebuilt whenever the list refreshes; open folders live in their own state so
+  // a background refresh never collapses what the operator was looking at.
+  const rows = useMemo(
+    () => treeRows(buildFileTree(files ?? [], stripFolderPrefix), (p) => expanded.has(p)),
+    [files, expanded]);
+
+  function toggle(path) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(path) ? next.delete(path) : next.add(path);
+      return next;
+    });
+  }
 
   async function upload(e) {
     const file = e.target.files[0];
@@ -2200,10 +2364,13 @@ function Files({ onErr }) {
     setBusy(true);
     let done = 0;
     const failed = [];
+    const roots = new Set();
     for (const file of picked) {
       // webkitRelativePath is "RootFolder/Sub/track.mp3"; the folder part is
       // what the tablet recreates, so drop the file name from the end.
-      const rel = (file.webkitRelativePath || "").split("/").slice(0, -1).join("/");
+      const parts = (file.webkitRelativePath || "").split("/").slice(0, -1);
+      const rel = parts.join("/");
+      if (parts[0]) roots.add(parts[0]);
       setProgress(`Uploading ${done + 1} of ${picked.length}…`);
       try {
         await api.uploadLibraryFile(file, file.name, rel);
@@ -2214,6 +2381,9 @@ function Files({ onErr }) {
     }
     setProgress("");
     setBusy(false);
+    // Open what was just uploaded. Landing on a collapsed folder after watching
+    // thirty files go up reads as if nothing happened.
+    setExpanded((prev) => new Set([...prev, ...roots]));
     load();
 
     if (failed.length === 0) {
@@ -2226,12 +2396,19 @@ function Files({ onErr }) {
     }
   }
 
-  async function doPush(name) {
+  async function doPush(target) {
+    const where = pushGroup ? { group_id: pushGroup } : {};
     setBusy(true);
     try {
-      const r = await api.pushLibraryFile(name, pushGroup ? { group_id: pushGroup } : {});
-      toast(`Sending ${name} to ${r.queued} device${r.queued === 1 ? "" : "s"}`);
-      setPushName("");
+      if (target.kind === "folder") {
+        const r = await api.pushLibraryFolder(target.path, where);
+        toast(`Sending ${r.files} file${r.files === 1 ? "" : "s"} from ${target.path} ` +
+          `to ${r.targets} device${r.targets === 1 ? "" : "s"}`);
+      } else {
+        const r = await api.pushLibraryFile(target.name, where);
+        toast(`Sending ${target.name} to ${r.queued} device${r.queued === 1 ? "" : "s"}`);
+      }
+      setPush(null);
       load();
     } catch (e) { onErr(e.message); }
     setBusy(false);
@@ -2245,10 +2422,37 @@ function Files({ onErr }) {
     setBusy(false);
   }
 
+  async function removeFolder(path, count) {
+    if (!confirm(`Delete the folder ${path} and the ${count} file${count === 1 ? "" : "s"} in it from the library?\n\nCopies already on devices stay where they are — this only removes the server copies and stops future sends.`)) return;
+    setBusy(true);
+    try {
+      const r = await api.deleteLibraryFolder(path);
+      toast(`Deleted ${r.deleted} file${r.deleted === 1 ? "" : "s"} from ${path}`);
+      setDetail(null);
+      load();
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
   const deviceName = (id) => {
     const d = devices.find((x) => x.id === id);
     return d ? deviceLabel(d) : id;
   };
+
+  /* The send panel, shared by both row kinds: pick a group, confirm. It sits in
+     a row of its own directly under whatever it belongs to. */
+  const sendPanel = (target, label) => (
+    <tr><td colSpan={4} style={{ background: "var(--muted-bg, transparent)" }}>
+      <div className="btn-group" style={{ alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span className="small muted">Send to</span>
+        <select value={pushGroup} onChange={(e) => setPushGroup(e.target.value)}>
+          <option value="">Every enrolled device</option>
+          {groups.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
+        </select>
+        <button className="btn sm" disabled={busy} onClick={() => doPush(target)}>Send {label}</button>
+      </div>
+    </td></tr>
+  );
 
   if (!files) return <Loading label="Loading files…" />;
 
@@ -2273,10 +2477,11 @@ function Files({ onErr }) {
         </>}
         note={
           <Alert>
-            Upload a file or a whole folder, then send it to a group. Each device downloads it on its
-            next check-in into <span className="mono">Download/Ali MDM</span>, where the device’s own
-            Files app can open it — a folder upload keeps its structure there. Deleting a file here
-            does not remove copies already on devices.
+            Upload a file or a whole folder, then send it to a group — sending a folder sends
+            everything inside it, including its sub-folders. Each device downloads on its next
+            check-in into <span className="mono">Download/Ali MDM</span>, keeping the same folder
+            structure, where the device’s own Files app can open it. Deleting here does not remove
+            copies already on devices.
           </Alert>
         }
       >
@@ -2288,66 +2493,94 @@ function Files({ onErr }) {
             </tr>
           </thead>
           <tbody>
-            {files.length === 0 && (
+            {rows.length === 0 && (
               <tr><td colSpan={4} className="muted" style={{ textAlign: "center", padding: "24px 0" }}>
                 No files yet. Upload one to send it to a class.
               </td></tr>
             )}
-            {files.map((f) => (
-              <React.Fragment key={f.name}>
-                <tr>
-                  <td className="strong" data-label="File">
-                    {f.rel_path
-                      ? <>{f.rel_path.split("/").pop()}/<wbr />{stripFolderPrefix(f)}
-                          <div className="muted small mono">{f.rel_path}</div></>
-                      : f.name}
-                  </td>
-                  <td className="nowrap" data-label="Size">{fmtSize(f.size)}</td>
-                  <td className="nowrap" data-label="Delivery">
-                    {f.targets === 0 ? <span className="muted small">Not sent yet</span> : (
-                      <span className="small">
-                        <span className="badge success">{f.delivered} delivered</span>
-                        {f.pending > 0 && <> <span className="badge warning">{f.pending} pending</span></>}
-                        {f.failed > 0 && <> <span className="badge off">{f.failed} failed</span></>}
-                      </span>
-                    )}
-                  </td>
-                  <td className="cell-actions">
-                    <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
-                      {f.targets > 0 && (
-                        <button className="btn outline sm" onClick={() => setDetail(detail === f.name ? null : f.name)}>
-                          {detail === f.name ? "Hide" : "Details"}
-                        </button>
-                      )}
-                      {pushName === f.name ? (
-                        <button className="btn outline sm" onClick={() => setPushName("")}>Cancel</button>
-                      ) : (
-                        <button className="btn outline sm" onClick={() => { setPushName(f.name); setPushGroup(""); }}>
-                          <IconUpload />Send to devices
-                        </button>
-                      )}
-                      <button className="btn danger-outline sm icon" title="Delete from library"
-                        disabled={busy} onClick={() => removeFile(f.name)}><IconTrash /></button>
-                    </div>
-                  </td>
-                </tr>
-                {pushName === f.name && (
-                  <tr><td colSpan={4} style={{ background: "var(--muted-bg, transparent)" }}>
-                    <div className="btn-group" style={{ alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <span className="small muted">Send to</span>
-                      <select value={pushGroup} onChange={(e) => setPushGroup(e.target.value)}>
-                        <option value="">Every enrolled device</option>
-                        {groups.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
-                      </select>
-                      <button className="btn sm" disabled={busy} onClick={() => doPush(f.name)}>
-                        Send {f.name}
-                      </button>
-                    </div>
-                  </td></tr>
-                )}
-                {detail === f.name && <FileDeliveries name={f.name} deviceName={deviceName} onErr={onErr} />}
-              </React.Fragment>
-            ))}
+            {rows.map((row) => {
+              if (row.kind === "folder") {
+                const st = folderStats(row.node);
+                const open = expanded.has(row.node.path);
+                return (
+                  <React.Fragment key={row.key}>
+                    <tr>
+                      <td className="strong" data-label="Folder">
+                        <TreeCell depth={row.depth}>
+                          {/* The whole name is the toggle, so opening a folder
+                              does not mean hitting a 16px caret. */}
+                          <button className="tree-toggle" aria-expanded={open}
+                            onClick={() => toggle(row.node.path)}>
+                            <IconChevronRight width="16" height="16"
+                              className={"tree-caret" + (open ? " is-open" : "")} />
+                            <IconFolder width="18" height="18" className="tree-icon" />
+                            <span className="tree-name">{row.node.name}</span>
+                          </button>
+                        </TreeCell>
+                      </td>
+                      <td className="nowrap" data-label="Size">
+                        {fmtSize(st.size)}
+                        <div className="muted small">{st.files} file{st.files === 1 ? "" : "s"}</div>
+                      </td>
+                      <td className="nowrap" data-label="Delivery"><FolderDeliveryCell {...st} /></td>
+                      <td className="cell-actions">
+                        <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
+                          {push?.key === row.key ? (
+                            <button className="btn outline sm" onClick={() => setPush(null)}>Cancel</button>
+                          ) : (
+                            <button className="btn outline sm"
+                              onClick={() => { setPush({ kind: "folder", key: row.key, path: row.node.path }); setPushGroup(""); }}>
+                              <IconUpload />Send folder
+                            </button>
+                          )}
+                          <button className="btn danger-outline sm icon" title="Delete this folder from the library"
+                            disabled={busy} onClick={() => removeFolder(row.node.path, st.files)}><IconTrash /></button>
+                        </div>
+                      </td>
+                    </tr>
+                    {push?.key === row.key && sendPanel(push, `${st.files} file${st.files === 1 ? "" : "s"}`)}
+                  </React.Fragment>
+                );
+              }
+
+              const f = row.file;
+              return (
+                <React.Fragment key={row.key}>
+                  <tr>
+                    <td className="strong" data-label="File">
+                      <TreeCell depth={row.depth}>
+                        <span className="tree-caret-gap" />
+                        <IconFile width="17" height="17" className="tree-icon" />
+                        <span className="tree-name">{f.label}</span>
+                      </TreeCell>
+                    </td>
+                    <td className="nowrap" data-label="Size">{fmtSize(f.size)}</td>
+                    <td className="nowrap" data-label="Delivery"><DeliveryCell {...f} /></td>
+                    <td className="cell-actions">
+                      <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
+                        {f.targets > 0 && (
+                          <button className="btn outline sm" onClick={() => setDetail(detail === f.name ? null : f.name)}>
+                            {detail === f.name ? "Hide" : "Details"}
+                          </button>
+                        )}
+                        {push?.key === row.key ? (
+                          <button className="btn outline sm" onClick={() => setPush(null)}>Cancel</button>
+                        ) : (
+                          <button className="btn outline sm"
+                            onClick={() => { setPush({ kind: "file", key: row.key, name: f.name }); setPushGroup(""); }}>
+                            <IconUpload />Send to devices
+                          </button>
+                        )}
+                        <button className="btn danger-outline sm icon" title="Delete from library"
+                          disabled={busy} onClick={() => removeFile(f.name)}><IconTrash /></button>
+                      </div>
+                    </td>
+                  </tr>
+                  {push?.key === row.key && sendPanel(push, f.label)}
+                  {detail === f.name && <FileDeliveries name={f.name} deviceName={deviceName} onErr={onErr} />}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
       </CardTable>

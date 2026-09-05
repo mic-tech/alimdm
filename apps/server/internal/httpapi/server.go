@@ -191,6 +191,11 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/v1/files/{name}", s.requireOperator(s.deleteFile))
 	mux.HandleFunc("POST /api/v1/files/{name}/push", s.requireOperator(s.pushFile))
 	mux.HandleFunc("GET /api/v1/files/{name}/deliveries", s.requireOperator(s.fileDeliveries))
+	// Folder-level routes take the folder in the body (push) or a query
+	// parameter (delete) rather than the path: it contains slashes, which a
+	// ServeMux wildcard would swallow the rest of the route to hold.
+	mux.HandleFunc("POST /api/v1/folders/push", s.requireOperator(s.pushFolder))
+	mux.HandleFunc("DELETE /api/v1/folders", s.requireOperator(s.deleteFolder))
 	// Device-facing: the tablet fetches its own inbox and reports what it did.
 	mux.HandleFunc("GET /api/v1/devices/{id}/files", s.requireDevice(s.devicePendingFiles))
 	mux.HandleFunc("POST /api/v1/devices/{id}/files/{name}/result", s.requireDevice(s.fileDeliveryResult))
