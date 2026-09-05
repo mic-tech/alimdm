@@ -13,6 +13,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -171,8 +172,39 @@ func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"name": name, "deleted": true})
 }
 
-// pushTargets resolves the audience of a push: an explicit device list, one
+// pushRequest is the audience of a push: an explicit list of devices, one
 // group, or — when neither is given — every enrolled device.
+//
+// Devices is a pointer so that a list sent and empty can be told apart from no
+// list at all. They mean opposite things: an operator who picked devices and
+// somehow sent none meant *no* devices, and treating that as "everyone" is the
+// one mistake here that cannot be taken back.
+type pushRequest struct {
+	Devices *[]string `json:"devices"`
+	GroupID string    `json:"group_id"`
+}
+
+// audience reads a push request, or says why it cannot, with the status the
+// caller should answer with.
+func (s *Server) audience(req pushRequest) ([]string, int, error) {
+	if req.Devices != nil && len(*req.Devices) == 0 {
+		return nil, http.StatusBadRequest, errors.New("no devices chosen")
+	}
+	var devices []string
+	if req.Devices != nil {
+		devices = *req.Devices
+	}
+	targets, err := s.pushTargets(devices, req.GroupID)
+	if err != nil {
+		return nil, http.StatusInternalServerError, errors.New("could not list devices")
+	}
+	if len(targets) == 0 {
+		return nil, http.StatusBadRequest, errors.New("no devices to send to")
+	}
+	return targets, 0, nil
+}
+
+// pushTargets resolves an audience to device ids.
 func (s *Server) pushTargets(devices []string, groupID string) ([]string, error) {
 	if len(devices) > 0 {
 		return devices, nil
@@ -245,19 +277,12 @@ func (s *Server) pushFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "no such file")
 		return
 	}
-	var req struct {
-		Devices []string `json:"devices"`
-		GroupID string   `json:"group_id"`
-	}
+	var req pushRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	targets, err := s.pushTargets(req.Devices, req.GroupID)
+	targets, code, err := s.audience(req)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not list devices")
-		return
-	}
-	if len(targets) == 0 {
-		writeErr(w, http.StatusBadRequest, "no devices to send to")
+		writeErr(w, code, err.Error())
 		return
 	}
 
@@ -278,9 +303,8 @@ func (s *Server) pushFile(w http.ResponseWriter, r *http.Request) {
 // rest of the route.
 func (s *Server) pushFolder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RelPath string   `json:"rel_path"`
-		Devices []string `json:"devices"`
-		GroupID string   `json:"group_id"`
+		pushRequest
+		RelPath string `json:"rel_path"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
@@ -299,13 +323,9 @@ func (s *Server) pushFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targets, err := s.pushTargets(req.Devices, req.GroupID)
+	targets, code, err := s.audience(req.pushRequest)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "could not list devices")
-		return
-	}
-	if len(targets) == 0 {
-		writeErr(w, http.StatusBadRequest, "no devices to send to")
+		writeErr(w, code, err.Error())
 		return
 	}
 

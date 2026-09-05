@@ -2310,7 +2310,10 @@ function Files({ onErr }) {
   // Which row has its send panel open — a file or a folder, so one bit of state
   // cannot leave both open at once.
   const [push, setPush] = useState(null);
+  // The audience for the open send panel: everyone, one group, or a chosen few.
+  const [pushScope, setPushScope] = useState("all");
   const [pushGroup, setPushGroup] = useState("");
+  const [pushDevices, setPushDevices] = useState(() => new Set());
   const [detail, setDetail] = useState(null);
   const [progress, setProgress] = useState("");
   const [expanded, setExpanded] = useState(() => new Set());
@@ -2396,8 +2399,38 @@ function Files({ onErr }) {
     }
   }
 
+  /* Opening a panel starts from "everyone" every time. Carrying the last
+     choice over would mean a folder quietly going to whoever the previous send
+     happened to name. */
+  function openPush(target) {
+    setPush(target);
+    setPushScope("all");
+    setPushGroup("");
+    setPushDevices(new Set());
+  }
+
+  function toggleDevice(id) {
+    setPushDevices((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  // What the server is told, and what the button says it will do.
+  const audience =
+    pushScope === "group" ? { group_id: pushGroup }
+    : pushScope === "devices" ? { devices: [...pushDevices] }
+    : {};
+  const audienceCount =
+    pushScope === "group" ? devices.filter((d) => d.group_id === pushGroup).length
+    : pushScope === "devices" ? pushDevices.size
+    : devices.length;
+  // A group with nothing in it, or no group picked, is not a send worth making.
+  const canSend = audienceCount > 0 && (pushScope !== "group" || pushGroup !== "");
+
   async function doPush(target) {
-    const where = pushGroup ? { group_id: pushGroup } : {};
+    const where = audience;
     setBusy(true);
     try {
       if (target.kind === "folder") {
@@ -2443,13 +2476,50 @@ function Files({ onErr }) {
      a row of its own directly under whatever it belongs to. */
   const sendPanel = (target, label) => (
     <tr><td colSpan={4} style={{ background: "var(--muted-bg, transparent)" }}>
-      <div className="btn-group" style={{ alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span className="small muted">Send to</span>
-        <select value={pushGroup} onChange={(e) => setPushGroup(e.target.value)}>
-          <option value="">Every enrolled device</option>
-          {groups.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
-        </select>
-        <button className="btn sm" disabled={busy} onClick={() => doPush(target)}>Send {label}</button>
+      <div className="send-panel">
+        <div className="send-row">
+          <span className="small muted">Send to</span>
+          <select value={pushScope} onChange={(e) => setPushScope(e.target.value)}>
+            <option value="all">Every enrolled device</option>
+            <option value="group">A group</option>
+            <option value="devices">Chosen devices</option>
+          </select>
+          {pushScope === "group" && (
+            <select value={pushGroup} onChange={(e) => setPushGroup(e.target.value)}>
+              <option value="">Pick a group…</option>
+              {groups.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
+            </select>
+          )}
+          <button className="btn sm" disabled={busy || !canSend} onClick={() => doPush(target)}>
+            Send {label} to {audienceCount} device{audienceCount === 1 ? "" : "s"}
+          </button>
+          {!canSend && (
+            <span className="muted small">
+              {pushScope === "group" && pushGroup === "" ? "Pick a group first."
+                : pushScope === "devices" ? "Choose at least one device."
+                : "No devices are enrolled yet."}
+            </span>
+          )}
+        </div>
+        {pushScope === "devices" && (
+          <div className="device-picker">
+            {devices.length > 1 && (
+              <button className="linkish small" onClick={() => setPushDevices(
+                pushDevices.size === devices.length ? new Set() : new Set(devices.map((d) => d.id)))}>
+                {pushDevices.size === devices.length ? "Clear all" : "Select all"}
+              </button>
+            )}
+            {devices.map((d) => (
+              <label key={d.id} className={"device-pick" + (pushDevices.has(d.id) ? " is-on" : "")}>
+                <input type="checkbox" checked={pushDevices.has(d.id)}
+                  onChange={() => toggleDevice(d.id)} />
+                <span className={"dot " + (d.online ? "on" : "off")} />
+                <span className="tree-name">{deviceLabel(d)}</span>
+              </label>
+            ))}
+            {devices.length === 0 && <span className="muted small">No devices are enrolled yet.</span>}
+          </div>
+        )}
       </div>
     </td></tr>
   );
@@ -2530,7 +2600,7 @@ function Files({ onErr }) {
                             <button className="btn outline sm" onClick={() => setPush(null)}>Cancel</button>
                           ) : (
                             <button className="btn outline sm" title={`Send ${row.node.path} to devices`}
-                              onClick={() => { setPush({ kind: "folder", key: row.key, path: row.node.path }); setPushGroup(""); }}>
+                              onClick={() => openPush({ kind: "folder", key: row.key, path: row.node.path })}>
                               <IconUpload />Send folder
                             </button>
                           )}
@@ -2569,7 +2639,7 @@ function Files({ onErr }) {
                           <button className="btn outline sm" onClick={() => setPush(null)}>Cancel</button>
                         ) : (
                           <button className="btn outline sm" title={`Send ${f.label} to devices`}
-                            onClick={() => { setPush({ kind: "file", key: row.key, name: f.name }); setPushGroup(""); }}>
+                            onClick={() => openPush({ kind: "file", key: row.key, name: f.name })}>
                             <IconUpload />Send to devices
                           </button>
                         )}

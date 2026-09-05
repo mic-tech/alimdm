@@ -1141,3 +1141,34 @@ code.code, .code {
 .tree-caret { transition: transform .12s ease; }
 .tree-caret.is-open { transform: rotate(90deg); }
 .tree-icon { flex: 0 0 auto; opacity: 0.6; }
+
+/* Choosing which tablets a file goes to. Checkboxes rather than a multi-select
+   list box: the fleet is small enough to show at once, and picking three of
+   twelve should not need a held-down modifier key nobody remembers. */
+.device-picker {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 8px 0 2px;
+}
+.device-pick {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
+  padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px;
+  font-size: 0.8125rem; cursor: pointer; user-select: none;
+}
+.device-pick:hover { border-color: var(--primary); }
+.device-pick.is-on { border-color: var(--primary); color: var(--primary); }
+.device-pick input { margin: 0; cursor: pointer; }
+.device-pick .dot {
+  width: 6px; height: 6px; border-radius: 999px; flex-shrink: 0;
+}
+/* Whether the tablet is reachable now. It does not stop a send — the file is
+   queued and collected on the next check-in — but it does say how soon. */
+.device-pick .dot.on { background: var(--green-500); }
+.device-pick .dot.off { background: var(--border); }
+
+/* The send panel that opens under a file or folder. Selects are display:block
+   and width:100% globally, which inside a flex row resolves against the whole
+   row and pushes everything else onto its own line — so they are sized to their
+   content here. */
+.send-panel { display: flex; flex-direction: column; gap: 8px; }
+.send-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.send-row select { width: auto; min-width: 170px; }

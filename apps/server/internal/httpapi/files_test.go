@@ -661,3 +661,76 @@ func TestANestedKeyWorksOnEveryRouteThatTakesOne(t *testing.T) {
 		t.Fatal("the file is still in the catalogue after a delete")
 	}
 }
+
+// Sending to chosen devices is a separate intent from sending to the fleet, and
+// the wire has to keep them apart. An operator who picked devices and somehow
+// sent none meant no devices — quietly reading that as "everyone" is the one
+// mistake on this page that cannot be undone.
+func TestAnEmptyDeviceSelectionIsNotTheWholeFleet(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.seedLibrary(t)
+	for _, id := range []string{"tablet-1", "tablet-2", "tablet-3"} {
+		e.newDeviceKey(t, id)
+	}
+	esc := url.PathEscape("notice.pdf")
+
+	rec, body := e.do("POST", "/api/v1/files/"+esc+"/push", tok, map[string]any{"devices": []string{}})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d (%v), want 400 — an empty selection must not mean the fleet", rec.Code, body)
+	}
+	if n := len(e.pendingFor(t, "tablet-1")); n != 0 {
+		t.Fatalf("tablet-1 was queued %d files by a push that chose no devices", n)
+	}
+
+	// Same for a folder.
+	rec, _ = e.do("POST", "/api/v1/folders/push", tok,
+		map[string]any{"rel_path": "Juz30", "devices": []string{}})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("folder push: status %d, want 400", rec.Code)
+	}
+
+	// And no list at all still means everyone, as it always did.
+	if rec, _ := e.do("POST", "/api/v1/files/"+esc+"/push", tok, map[string]any{}); rec.Code != http.StatusOK {
+		t.Fatalf("push to the fleet: status %d", rec.Code)
+	}
+	if n := len(e.pendingFor(t, "tablet-1")); n != 1 {
+		t.Fatalf("tablet-1 has %d pending files after a fleet push, want 1", n)
+	}
+}
+
+// Choosing devices sends to exactly those, and to no one else.
+func TestAPushToChosenDevicesReachesOnlyThem(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.seedLibrary(t)
+	for _, id := range []string{"tablet-1", "tablet-2", "tablet-3"} {
+		e.newDeviceKey(t, id)
+	}
+
+	rec, body := e.do("POST", "/api/v1/folders/push", tok, map[string]any{
+		"rel_path": "Juz30", "devices": []string{"tablet-1", "tablet-3"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d (%s)", rec.Code, rec.Body.String())
+	}
+	if n, _ := body["targets"].(float64); n != 2 {
+		t.Fatalf("targets = %v, want 2", body["targets"])
+	}
+	for _, id := range []string{"tablet-1", "tablet-3"} {
+		if n := len(e.pendingFor(t, id)); n != 3 {
+			t.Fatalf("%s has %d pending files, want the folder's 3", id, n)
+		}
+	}
+	if n := len(e.pendingFor(t, "tablet-2")); n != 0 {
+		t.Fatalf("tablet-2 was sent %d files it was not chosen for", n)
+	}
+}
+
+// pendingFor claims what a device would be handed next.
+func (e *testEnv) pendingFor(t *testing.T, deviceID string) []store.FileDelivery {
+	t.Helper()
+	ds, err := e.st.ClaimPendingFileDeliveries(deviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ds
+}

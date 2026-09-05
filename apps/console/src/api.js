@@ -216,6 +216,9 @@ export const api = {
   // ── File library (console → device inbox) ──────────────────────────────────
   listLibraryFiles: () => req("GET", "/files"),
   deleteLibraryFile: (name) => req("DELETE", "/files/" + encodeURIComponent(name)),
+  // body carries the audience: {} for every enrolled device, {group_id} for a
+  // group, {devices: [...]} for a chosen few. An empty devices array is a
+  // choice of nobody and the server rejects it rather than reading it as all.
   pushLibraryFile: (name, body) => req("POST", "/files/" + encodeURIComponent(name) + "/push", body),
 
   // Folder-level sends and deletes. The folder goes in the body (push) or a
