@@ -1406,6 +1406,16 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
                 {d.last_seen ? timeAgo(d.last_seen) : "Never"}
               </span>
             </Fact>
+            {/* Whether a command lands in a second or waits for the next
+                check-in. Worth stating: the difference is otherwise only
+                visible by queuing something and watching a clock. */}
+            <Fact label="Commands">
+              {d.wake_stream
+                ? <span className="badge on" title="Holding the wake stream open">Land at once</span>
+                : <span className="badge off" title="No wake stream; the device collects work on its next heartbeat">
+                    Next check-in
+                  </span>}
+            </Fact>
             <Fact label="Battery">{d.battery != null && d.battery > 0 ? d.battery + "%" : "—"}</Fact>
             <Fact label="Android">{d.android_ver || "—"}</Fact>
             <Fact label="Model">{d.model || "—"}</Fact>

@@ -976,6 +976,11 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 		"online":           online,
 		"enrolled_at":      d.CreatedAt,
 		"pending_commands": pending,
+		// Whether this device is holding the wake stream open, and so whether a
+		// command will land in a second or at its next check-in. Without this
+		// the feature is invisible: the only way to tell it is working is to
+		// queue something and watch a clock.
+		"wake_stream": s.pokes.Waiting(d.ID) > 0,
 	})
 }
 

@@ -35,7 +35,7 @@ type WakeHandler = () => void;
 class CloudWakeStreamImpl {
   private running = false;
   private failures = 0;
-  private controller: AbortController | null = null;
+  private xhr: XMLHttpRequest | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
   private onWake: WakeHandler = () => {};
@@ -53,8 +53,8 @@ class CloudWakeStreamImpl {
   stop(): void {
     this.running = false;
     this.clearTimers();
-    this.controller?.abort();
-    this.controller = null;
+    this.xhr?.abort();
+    this.xhr = null;
     this.connected = false;
   }
 
@@ -74,7 +74,7 @@ class CloudWakeStreamImpl {
     if (this.silenceTimer) clearTimeout(this.silenceTimer);
     this.silenceTimer = setTimeout(() => {
       console.warn('[WakeStream] No keepalive for 70s — reconnecting');
-      this.controller?.abort();
+      this.xhr?.abort();
     }, SILENCE_TIMEOUT_MS);
   }
 
@@ -86,113 +86,104 @@ class CloudWakeStreamImpl {
     this.retryTimer = setTimeout(() => this.connect(), delay);
   }
 
-  private async connect(): Promise<void> {
+  private connect(): void {
     if (!this.running) return;
-    let c: CloudCredentials | null = null;
-    try {
-      c = await getCloudCredentials();
-    } catch {
-      c = null;
-    }
-    if (!c) {
-      // Not enrolled yet. Try again later rather than giving up for good.
-      this.failures++;
-      this.scheduleReconnect();
-      return;
-    }
+    getCloudCredentials()
+      .catch(() => null)
+      .then(c => {
+        if (!this.running) return;
+        if (!c) {
+          // Not enrolled yet. Try again later rather than giving up for good.
+          this.failures++;
+          this.scheduleReconnect();
+          return;
+        }
+        this.open(c);
+      });
+  }
 
-    const controller = new AbortController();
-    this.controller = controller;
-    try {
-      const res = await fetch(`${c.cloudUrl}/api/v1/devices/${c.deviceId}/events`, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${c.apiKey}`,
-          Accept: 'text/event-stream',
-          'Cache-Control': 'no-cache',
-        },
-        signal: controller.signal,
-        // React Native's fetch buffers the whole body by default, which would
-        // hold every notice until the connection ended. This asks for the raw
-        // stream instead.
-        reactNative: { textStreaming: true },
-      } as RequestInit);
+  /**
+   * Open the stream with XMLHttpRequest rather than fetch.
+   *
+   * React Native's fetch does not implement Response.body — there is no
+   * ReadableStream to read, so a streaming response is buffered whole and
+   * delivered only when the connection ends. For a stream deliberately held
+   * open for minutes that means every notice arrives minutes late, which is
+   * worse than not having it: from the outside it looks like it works.
+   *
+   * XHR exposes the partial body through responseText at readyState 3, which is
+   * how server-sent events have always been read on this platform.
+   */
+  private open(c: CloudCredentials): void {
+    const xhr = new XMLHttpRequest();
+    this.xhr = xhr;
+    let consumed = 0;
+    let settled = false;
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      // A 401 would keep repeating; anything else is worth counting as success
-      // for backoff purposes the moment the connection is established.
-      this.failures = 0;
-      this.connected = true;
-      this.heard();
-      await this.read(res);
-    } catch (error: any) {
-      if (controller.signal.aborted && !this.running) return; // deliberate stop
-      this.failures++;
-      if (this.failures === 1 || this.failures % 10 === 0) {
-        console.warn(`[WakeStream] Disconnected (${this.failures}): ${error?.message ?? error}`);
-      }
-    } finally {
+    const finish = (why: string) => {
+      if (settled) return;
+      settled = true;
       this.connected = false;
-      this.controller = null;
+      this.xhr = null;
       if (this.silenceTimer) {
         clearTimeout(this.silenceTimer);
         this.silenceTimer = null;
       }
-      this.scheduleReconnect();
-    }
-  }
-
-  /**
-   * Read the stream, firing onWake for every wake event.
-   *
-   * SSE frames are separated by a blank line and we only care about one event
-   * name, so this looks for the line rather than parsing the format properly.
-   * There is nothing else on this stream to misread.
-   */
-  private async read(res: Response): Promise<void> {
-    const body: any = (res as any).body;
-    if (!body?.getReader) {
-      // No streaming support in this environment: treat the whole response as
-      // one blob when it eventually ends, and let the reconnect loop carry on.
-      const text = await res.text();
-      if (text.includes('event: wake')) this.onWake();
-      return;
-    }
-    const reader = body.getReader();
-    let buffer = '';
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      this.heard();
-      // textStreaming hands back strings. Anything else is coerced rather than
-      // decoded: this stream is ASCII event names, so there is no multi-byte
-      // character to split across a chunk boundary.
-      buffer += typeof value === 'string' ? value : String.fromCharCode(...(value ?? []));
-
-      // Keep only the tail after the last frame boundary, so a frame split
-      // across two reads is still seen whole.
-      let boundary = buffer.indexOf('\n\n');
-      while (boundary !== -1) {
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        if (frame.includes('event: wake')) {
-          this.onWake();
+      if (!this.running) return;
+      if (why !== 'bye') {
+        this.failures++;
+        if (this.failures === 1 || this.failures % 10 === 0) {
+          console.warn(`[WakeStream] Disconnected (${this.failures}): ${why}`);
         }
-        // The server closes the connection after this; reconnect at once
-        // rather than waiting to discover a dead socket.
-        if (frame.includes('event: bye')) {
-          this.failures = 0;
-          return;
-        }
-        boundary = buffer.indexOf('\n\n');
       }
-      // A frame larger than anything this stream sends means something is
-      // wrong upstream; drop it rather than growing without bound.
-      if (buffer.length > 8192) buffer = '';
+      this.scheduleReconnect();
+    };
+
+    xhr.onreadystatechange = () => {
+      // 3 = LOADING: the body is arriving, and responseText grows with it.
+      if (xhr.readyState === 3 || xhr.readyState === 4) {
+        if (xhr.status === 200) {
+          if (!this.connected) {
+            this.connected = true;
+            this.failures = 0;
+          }
+          this.heard();
+          const text = xhr.responseText ?? '';
+          if (text.length > consumed) {
+            const fresh = text.slice(consumed);
+            consumed = text.length;
+            if (fresh.includes('event: wake')) this.onWake();
+            if (fresh.includes('event: bye')) {
+              // The server is recycling the connection. Reconnect at once
+              // rather than waiting to discover a dead socket.
+              this.failures = 0;
+              xhr.abort();
+              finish('bye');
+              return;
+            }
+          }
+        }
+      }
+      if (xhr.readyState === 4) {
+        finish(xhr.status === 200 ? 'closed' : `HTTP ${xhr.status}`);
+      }
+    };
+    xhr.onerror = () => finish('network error');
+    xhr.ontimeout = () => finish('timeout');
+    xhr.onabort = () => finish(this.running ? 'aborted' : 'stopped');
+
+    try {
+      xhr.open('GET', `${c.cloudUrl}/api/v1/devices/${c.deviceId}/events`);
+      xhr.setRequestHeader('Authorization', `Bearer ${c.apiKey}`);
+      xhr.setRequestHeader('Accept', 'text/event-stream');
+      xhr.setRequestHeader('Cache-Control', 'no-cache');
+      xhr.send();
+      this.heard();
+    } catch (error: any) {
+      finish(error?.message ?? String(error));
     }
   }
+
 }
 
 export const CloudWakeStream = new CloudWakeStreamImpl();
