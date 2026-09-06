@@ -91,7 +91,25 @@ type Operator struct {
 }
 
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	// WAL lets readers run while a write is in flight, which is most of what a
+	// console polling every few seconds does. busy_timeout makes a concurrent
+	// writer wait rather than fail outright.
+	//
+	// synchronous=NORMAL is the pairing WAL is designed for: commits stop
+	// waiting on an fsync every time, and the durability given up is a handful
+	// of the most recent transactions if the machine loses power — not
+	// corruption, which WAL still rules out. For heartbeats arriving every 30
+	// seconds from every tablet, that is the right trade.
+	//
+	// The cache and temp settings are small absolute numbers on a server with
+	// gigabytes: 16MB of page cache holds this whole database, and sorting in
+	// memory rather than in a temp file matters for the event feed's ORDER BY.
+	db, err := sql.Open("sqlite", path+
+		"?_pragma=journal_mode(WAL)"+
+		"&_pragma=busy_timeout(5000)"+
+		"&_pragma=synchronous(NORMAL)"+
+		"&_pragma=cache_size(-16000)"+
+		"&_pragma=temp_store(MEMORY)")
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +268,7 @@ func migrate(db *sql.DB) error {
 		summary TEXT NOT NULL
 	);
 	CREATE INDEX IF NOT EXISTS idx_events_id ON events(id DESC);
+
 	-- Transition state for the event log, kept apart from device_alerts on
 	-- purpose: that one only advances when a webhook delivery succeeds, so
 	-- reusing it would drop events whenever alerting was unconfigured or down.
@@ -265,6 +284,32 @@ func migrate(db *sql.DB) error {
 		last_error TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL
 	);
+	
+	-- Indexes for the queries that run on a schedule rather than on a click.
+	-- Without them every one of these is a full table scan, and they are the
+	-- ones that repeat: twice per heartbeat per device, and once per file every
+	-- time the Files page refreshes.
+	--
+	-- A heartbeat asks "anything pending for me?" of three tables.
+	CREATE INDEX IF NOT EXISTS idx_apk_updates_device
+		ON apk_updates(device_id, status);
+	CREATE INDEX IF NOT EXISTS idx_file_deliveries_device
+		ON file_deliveries(device_id, status);
+	CREATE INDEX IF NOT EXISTS idx_agent_updates_device
+		ON agent_updates(device_id);
+	-- The Files page asks "where did this one get to?" per file.
+	CREATE INDEX IF NOT EXISTS idx_file_deliveries_file
+		ON file_deliveries(file_name);
+	-- A device's own history, and the count beside its name.
+	CREATE INDEX IF NOT EXISTS idx_events_device
+		ON events(device_id, id DESC);
+	-- Group pages count their devices; moving a group rewrites them.
+	CREATE INDEX IF NOT EXISTS idx_devices_group
+		ON devices(group_id);
+	-- Every sign-in and every user edit matches on lower(email), which cannot
+	-- use an ordinary index on email.
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_operators_email_lower
+		ON operators(lower(email));
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return err
@@ -1349,6 +1394,53 @@ func (s *Store) CountPendingFileDeliveries(deviceID string) int {
 }
 
 // FileDeliveries reports where a push got to, per device.
+// DeliveryCounts is how far one file has got: how many devices it was sent to,
+// and where each of them ended up.
+type DeliveryCounts struct {
+	Targets   int `json:"targets"`
+	Delivered int `json:"delivered"`
+	Failed    int `json:"failed"`
+	Pending   int `json:"pending"`
+}
+
+// AllFileDeliveryCounts summarises every file in one query.
+//
+// The Files page used to ask per file, and it refreshes every fifteen seconds
+// while it is open: a library of two hundred tracks meant two hundred queries a
+// quarter-minute, and each one was a full table scan before file_deliveries was
+// indexed. The page needs four numbers per file, not the rows, so it should ask
+// for four numbers.
+func (s *Store) AllFileDeliveryCounts() (map[string]DeliveryCounts, error) {
+	rows, err := s.db.Query(
+		`SELECT file_name, status, COUNT(*) FROM file_deliveries GROUP BY file_name, status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]DeliveryCounts{}
+	for rows.Next() {
+		var name, status string
+		var n int
+		if err := rows.Scan(&name, &status, &n); err != nil {
+			return nil, err
+		}
+		c := out[name]
+		c.Targets += n
+		switch status {
+		case FileDeliveryDone:
+			c.Delivered += n
+		case FileDeliveryFailed:
+			c.Failed += n
+		default:
+			// Anything not finished counts as still on its way, which is what
+			// the console shows and what "sent but unconfirmed" really means.
+			c.Pending += n
+		}
+		out[name] = c
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) FileDeliveries(fileName string) ([]FileDelivery, error) {
 	rows, err := s.db.Query(
 		`SELECT id,device_id,file_name,status,attempts,last_error,updated_at

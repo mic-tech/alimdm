@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -131,5 +132,120 @@ func TestADeliveredFileIsNotReOffered(t *testing.T) {
 	}
 	if n := st.CountPendingFileDeliveries("tablet-1"); n != 0 {
 		t.Fatalf("a delivered file was offered again")
+	}
+}
+
+// The Files page reads these numbers instead of the rows. They have to agree
+// with what the per-file query would have said, or the page quietly starts
+// reporting a different fleet from the one the details panel shows.
+func TestDeliveryCountsMatchTheRows(t *testing.T) {
+	st := newDeliveryTestStore(t)
+	for _, dev := range []string{"tablet-1", "tablet-2", "tablet-3"} {
+		if err := st.QueueFileDelivery(dev, "track.mp3"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.QueueFileDelivery("tablet-1", "notes.pdf"); err != nil {
+		t.Fatal(err)
+	}
+	// One done, one failed, one left pending.
+	if err := st.SetFileDeliveryStatus("tablet-1", "track.mp3", FileDeliveryDone, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetFileDeliveryStatus("tablet-2", "track.mp3", FileDeliveryFailed, "no space"); err != nil {
+		t.Fatal(err)
+	}
+
+	counts, err := st.AllFileDeliveryCounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := counts["track.mp3"]
+	if got.Targets != 3 || got.Delivered != 1 || got.Failed != 1 || got.Pending != 1 {
+		t.Fatalf("track.mp3 counts = %+v, want 3/1/1/1", got)
+	}
+	if n := counts["notes.pdf"].Targets; n != 1 {
+		t.Fatalf("notes.pdf targets = %d, want 1", n)
+	}
+	if _, ok := counts["never-sent.pdf"]; ok {
+		t.Fatal("a file nobody was sent has counts")
+	}
+
+	// And they agree with counting the rows the old way, file by file.
+	for _, name := range []string{"track.mp3", "notes.pdf"} {
+		rows, err := st.FileDeliveries(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != counts[name].Targets {
+			t.Fatalf("%s: %d rows but targets=%d", name, len(rows), counts[name].Targets)
+		}
+		done, failed, pending := 0, 0, 0
+		for _, r := range rows {
+			switch r.Status {
+			case FileDeliveryDone:
+				done++
+			case FileDeliveryFailed:
+				failed++
+			default:
+				pending++
+			}
+		}
+		c := counts[name]
+		if done != c.Delivered || failed != c.Failed || pending != c.Pending {
+			t.Fatalf("%s: rows say %d/%d/%d, counts say %d/%d/%d",
+				name, done, failed, pending, c.Delivered, c.Failed, c.Pending)
+		}
+	}
+}
+
+// The indexes are part of the schema, so a database that has been through
+// migrate() must have them — a missing one is a silent full scan on a query
+// that runs on every heartbeat.
+func TestTheScheduledQueriesAreIndexed(t *testing.T) {
+	st := newDeliveryTestStore(t)
+	rows, err := st.db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	have := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		have[n] = true
+	}
+	for _, want := range []string{
+		"idx_apk_updates_device",
+		"idx_file_deliveries_device",
+		"idx_file_deliveries_file",
+		"idx_agent_updates_device",
+		"idx_events_device",
+		"idx_devices_group",
+		"idx_operators_email_lower",
+	} {
+		if !have[want] {
+			t.Errorf("missing index %s", want)
+		}
+	}
+}
+
+// An index is only useful if the planner reaches for it. This is the query a
+// heartbeat runs for every device, every thirty seconds.
+func TestTheHeartbeatQueryUsesItsIndex(t *testing.T) {
+	st := newDeliveryTestStore(t)
+	var detail string
+	err := st.db.QueryRow(
+		`EXPLAIN QUERY PLAN
+		 SELECT id FROM file_deliveries
+		 WHERE device_id=? AND attempts < ? AND status=?`,
+		"tablet-1", 3, FileDeliveryPending).Scan(new(int), new(int), new(int), &detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(detail, "idx_file_deliveries_device") {
+		t.Fatalf("the plan is %q — the heartbeat is scanning the whole table", detail)
 	}
 }

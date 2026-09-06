@@ -121,25 +121,24 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	// Each entry carries where its push got to, so the list itself answers
 	// "did that reach the tablets?" without a second click.
+	//
+	// Counted for every file in one query rather than one query per file: this
+	// page refreshes every fifteen seconds while it is open, and a library of a
+	// few hundred tracks made that a few hundred queries each time.
+	counts, err := s.st.AllFileDeliveryCounts()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not read deliveries")
+		return
+	}
 	out := make([]map[string]any, 0, len(files))
 	for _, f := range files {
-		ds, _ := s.st.FileDeliveries(f.Name)
-		done, failed, pending := 0, 0, 0
-		for _, d := range ds {
-			switch d.Status {
-			case store.FileDeliveryDone:
-				done++
-			case store.FileDeliveryFailed:
-				failed++
-			default:
-				pending++
-			}
-		}
+		c := counts[f.Name]
+		done, failed, pending := c.Delivered, c.Failed, c.Pending
 		out = append(out, map[string]any{
 			"name": f.Name, "sha256": f.SHA256, "size": f.Size,
 			"content_type": f.ContentType, "uploaded_at": f.UploadedAt,
 			"delivered": done, "failed": failed, "pending": pending,
-			"targets": len(ds),
+			"targets": c.Targets,
 			// What the device saves it as, which is not the catalogue key.
 			"file_name": fileNameFor(&f),
 			// The folder the file belongs to. This hand-built map does not

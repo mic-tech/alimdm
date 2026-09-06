@@ -184,6 +184,41 @@ A capture that comes back black is usually a device whose screen is off — send
 
 ---
 
+## Backing up
+
+Everything the console knows — devices, groups, policies, operators, the file
+catalogue — is one SQLite database. Back it up with:
+
+```bash
+./deploy/backup.sh
+```
+
+It writes a timestamped, verified snapshot to `~/backups` and keeps the last 14.
+Run it nightly with a systemd timer (a minimal cloud image often has systemd but
+no `crontab`):
+
+```bash
+sudo systemctl enable --now alimdm-backup.timer
+```
+
+The unit files are `alimdm-backup.service` and `alimdm-backup.timer` in
+`/etc/systemd/system/`. Check it with `systemctl list-timers alimdm-backup.timer`
+and force a run with `sudo systemctl start alimdm-backup.service`.
+
+> **Do not back it up with `cp`.** The database runs in WAL mode, which keeps
+> recent transactions in a separate `-wal` file until a checkpoint folds them
+> in. On a live server that file is routinely larger than the database itself,
+> and a plain copy takes the database *without* it — a valid file, restoring
+> cleanly, silently missing the most recent writes. Copy it mid-checkpoint and
+> it can be inconsistent outright. `backup.sh` uses `VACUUM INTO`, which takes a
+> consistent snapshot including the WAL while the server keeps running.
+
+Uploaded files and APKs live on disk next to the database, under `data/`. The
+database alone restores the console; `data/` as a whole restores the library
+with it.
+
+---
+
 ## Security reminders
 
 - **Keep your enroll token secret** — anyone with it can enroll a device.
