@@ -825,8 +825,10 @@ function DeviceApps({ device, onErr }) {
     catch (e) { onErr(e.message); }
   }, [device.id, onErr]);
   useEffect(() => { load(); }, [load]);
-  // The device answers on its next check-in, so keep looking while this is open.
-  useEffect(() => { const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+  // The device answers on its next check-in, so keep looking while this is
+  // open — but slowly. An inventory only changes when someone asks for it or
+  // uninstalls something, and the answer is 70KB.
+  useEffect(() => { const t = setInterval(load, 20000); return () => clearInterval(t); }, [load]);
 
   async function refresh() {
     setBusy(true);

@@ -38,7 +38,7 @@ func (s *Server) deviceApps(w http.ResponseWriter, r *http.Request) {
 	if json.Unmarshal([]byte(entriesJSON), &entries) != nil || entries == nil {
 		entries = []map[string]any{}
 	}
-	writeJSON(w, map[string]any{
+	writeJSONCached(w, r, map[string]any{
 		"device_id": id,
 		"entries":   entries,
 		// Empty until the tablet has answered once, which the console shows as

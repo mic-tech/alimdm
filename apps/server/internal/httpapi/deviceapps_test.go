@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -160,5 +161,73 @@ func TestAnOversizedInventoryIsTrimmed(t *testing.T) {
 	entries, _ := body["entries"].([]any)
 	if len(entries) != maxReportedApps {
 		t.Fatalf("stored %d entries, want the cap of %d", len(entries), maxReportedApps)
+	}
+}
+
+// The console polls, and most polls find nothing new. A large body repeated
+// every few seconds for data that changes once a day is the waste worth
+// removing — not the request itself, which is what keeps the console simple.
+func TestUnchangedPollsAnswerWithoutABody(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	devKey := e.newDeviceKey(t, "tablet-1")
+	e.reportApps(t, devKey, "tablet-1", []map[string]any{
+		{"package_name": "com.example.app", "label": "Example"},
+	})
+
+	first, _ := e.do("GET", "/api/v1/devices/tablet-1/apps", tok, nil)
+	if first.Code != http.StatusOK {
+		t.Fatalf("status %d", first.Code)
+	}
+	etag := first.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag — every poll would resend the whole inventory")
+	}
+	// no-store would forbid keeping a copy at all; no-cache keeps one and
+	// revalidates, which is what makes the 304 below useful.
+	if cc := first.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Fatalf("Cache-Control %q, want no-cache", cc)
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/devices/tablet-1/apps", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("If-None-Match", etag)
+	again := httptest.NewRecorder()
+	e.mux.ServeHTTP(again, req)
+	if again.Code != http.StatusNotModified {
+		t.Fatalf("status %d for an unchanged poll, want 304", again.Code)
+	}
+	if again.Body.Len() != 0 {
+		t.Fatalf("304 carried %d bytes", again.Body.Len())
+	}
+}
+
+// A stale validator must not suppress real changes.
+func TestAChangedInventoryIsSentAgain(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	devKey := e.newDeviceKey(t, "tablet-1")
+	e.reportApps(t, devKey, "tablet-1", []map[string]any{{"package_name": "com.example.one"}})
+
+	first, _ := e.do("GET", "/api/v1/devices/tablet-1/apps", tok, nil)
+	etag := first.Header().Get("ETag")
+
+	e.reportApps(t, devKey, "tablet-1", []map[string]any{
+		{"package_name": "com.example.one"}, {"package_name": "com.example.two"},
+	})
+
+	req := httptest.NewRequest("GET", "/api/v1/devices/tablet-1/apps", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("If-None-Match", etag)
+	rec := httptest.NewRecorder()
+	e.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d after the inventory changed, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "com.example.two") {
+		t.Fatal("the new package is missing from the response")
+	}
+	if rec.Header().Get("ETag") == etag {
+		t.Fatal("the ETag did not change with the body")
 	}
 }

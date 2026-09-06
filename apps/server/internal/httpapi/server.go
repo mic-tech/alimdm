@@ -682,8 +682,7 @@ func (s *Server) deviceUpdates(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, item)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	writeJSONCached(w, r, out)
 }
 
 func (s *Server) commandResult(w http.ResponseWriter, r *http.Request) {
@@ -902,7 +901,7 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		out = append(out, pub{d.ID, d.Name, d.GroupID, groupVersion[d.GroupID], d.Battery, d.AndroidVer, d.Model,
 			d.AppVersionCode, d.AppVersionName, stale, d.LastSeen, online})
 	}
-	json.NewEncoder(w).Encode(out)
+	writeJSONCached(w, r, out)
 }
 
 // deviceDetail is one device's full record, for its own page.
