@@ -682,7 +682,11 @@ func (s *Server) deviceUpdates(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, item)
 	}
-	writeJSONCached(w, r, out)
+	// Never cached. This hands work over and marks it claimed in the same
+	// breath, so a 304 would mean the installs were recorded as sent and never
+	// delivered. Only the console's read-only lists carry validators.
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 func (s *Server) commandResult(w http.ResponseWriter, r *http.Request) {
@@ -1488,7 +1492,7 @@ func (s *Server) listAPKs(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, item)
 	}
-	json.NewEncoder(w).Encode(out)
+	writeJSONCached(w, r, out)
 }
 
 // apkPathFor names the file whose manifest describes a catalogue entry: the APK

@@ -231,3 +231,25 @@ func TestAChangedInventoryIsSentAgain(t *testing.T) {
 		t.Fatal("the ETag did not change with the body")
 	}
 }
+
+// Only the console's read-only lists may carry validators. The device-facing
+// endpoints hand work over and mark it claimed in the same request, so a 304
+// would record installs as sent and deliver nothing.
+func TestDeviceFacingEndpointsAreNeverCached(t *testing.T) {
+	e := newTestEnv(t)
+	devKey := e.newDeviceKey(t, "tablet-1")
+
+	for _, path := range []string{
+		"/api/v1/devices/tablet-1/updates",
+		"/api/v1/devices/tablet-1/commands",
+		"/api/v1/devices/tablet-1/files",
+	} {
+		req := httptest.NewRequest("GET", path, nil)
+		req.Header.Set("Authorization", "Bearer "+devKey)
+		rec := httptest.NewRecorder()
+		e.mux.ServeHTTP(rec, req)
+		if tag := rec.Header().Get("ETag"); tag != "" {
+			t.Errorf("%s carries an ETag (%s) — a 304 here would claim work and never deliver it", path, tag)
+		}
+	}
+}

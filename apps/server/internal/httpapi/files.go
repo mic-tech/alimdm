@@ -148,7 +148,7 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 			"rel_path": f.RelPath,
 		})
 	}
-	writeJSON(w, out)
+	writeJSONCached(w, r, out)
 }
 
 func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
