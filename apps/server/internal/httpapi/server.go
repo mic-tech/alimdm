@@ -229,6 +229,10 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/v1/devices/{id}/apps/{package}", s.requireOperator(s.uninstallDeviceApp))
 	mux.HandleFunc("POST /api/v1/devices/{id}/apps", s.requireDevice(s.reportDeviceApps))
 
+	// The wake stream. Held open by the device; the server writes a line when
+	// work is queued, and the device heartbeats in response.
+	mux.HandleFunc("GET /api/v1/devices/{id}/events", s.requireDevice(s.deviceEvents))
+
 	// The notification feed is readable by any signed-in operator: it is how
 	// they see what the fleet and their colleagues have been doing.
 	mux.HandleFunc("GET /api/v1/events", s.requireOperator(s.listEvents))

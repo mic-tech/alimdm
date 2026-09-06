@@ -9,6 +9,7 @@ import { ScreenStreamService } from './ScreenStreamService';
 import AgentUpdateService, { AgentUpdateOffer } from './AgentUpdateService';
 import { getCapabilities } from './capabilities';
 import KioskModule from './KioskModule';
+import CloudWakeStream from './CloudWakeStream';
 import {
   CloudCredentials,
   SensitiveConfig,
@@ -165,9 +166,17 @@ class CloudSyncServiceClass {
       () => getCloudCredentials().then(c => c && this.sendHeartbeat(c)),
       HEARTBEAT_INTERVAL_MS,
     );
+    // The wake stream shortens the wait for work from up to thirty seconds to
+    // under one. It answers every notice by doing what the timer above would
+    // have done anyway, so if it never connects — a school firewall, a proxy
+    // that will not stream — nothing breaks and the timer carries on alone.
+    CloudWakeStream.start(() => {
+      getCloudCredentials().then(c => c && this.sendHeartbeat(c, { force: true }));
+    });
   }
 
   stop(): void {
+    CloudWakeStream.stop();
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
