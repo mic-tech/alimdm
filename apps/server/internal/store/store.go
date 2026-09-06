@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -587,10 +588,62 @@ func (s *Store) SetDeviceName(deviceID, name string) error {
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
+const (
+	// maxCommandsPerDevice is how much of a device's command history is kept.
+	// The console shows the last 100; the rest is only ever weight. Without a
+	// cap these rows lived until the device was unenrolled, which for a tablet
+	// in daily service means for ever — a screenshot, a lock, a log request and
+	// a config resend all leave one behind.
+	maxCommandsPerDevice = 200
+	// maxAPKUpdatesPerDevice is the same idea for install records.
+	maxAPKUpdatesPerDevice = 100
+	// pruneEvery spaces the tidying out so the common path stays one INSERT.
+	pruneEvery = 50
+)
+
+// writes counts inserts across both history tables, so pruning happens on a
+// steady cadence rather than on every call.
+var writes atomic.Uint64
+
 func (s *Store) EnqueueCommand(c *Command) error {
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO commands(id,device_id,type,params,status,result,err_msg,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)`,
 		c.ID, c.DeviceID, c.Type, c.Params, c.Status, c.Result, c.ErrMsg, c.CreatedAt, c.ExpiresAt)
+	if err == nil && writes.Add(1)%pruneEvery == 0 {
+		s.pruneDeviceHistory(c.DeviceID)
+	}
 	return err
+}
+
+// pruneDeviceHistory drops the oldest finished records for one device.
+//
+// Finished only: a pending or sent command is work the device has not done yet,
+// and deleting it would silently cancel it. Everything still outstanding stays
+// however old it is, which is also the honest thing — a command that has sat
+// unsent for a week is a fact worth being able to see.
+func (s *Store) pruneDeviceHistory(deviceID string) {
+	if deviceID == "" {
+		return
+	}
+	_, _ = s.db.Exec(
+		`DELETE FROM commands
+		  WHERE device_id = ?
+		    AND status NOT IN ('pending','sent')
+		    AND rowid NOT IN (
+		      SELECT rowid FROM commands WHERE device_id = ?
+		       ORDER BY created_at DESC LIMIT ?
+		    )`,
+		deviceID, deviceID, maxCommandsPerDevice)
+	// apk_updates has no timestamp of its own; rowid is insertion order, which
+	// is the same thing for a table nothing ever rewrites in place.
+	_, _ = s.db.Exec(
+		`DELETE FROM apk_updates
+		  WHERE device_id = ?
+		    AND status NOT IN ('pending','sent')
+		    AND rowid NOT IN (
+		      SELECT rowid FROM apk_updates WHERE device_id = ?
+		       ORDER BY rowid DESC LIMIT ?
+		    )`,
+		deviceID, deviceID, maxAPKUpdatesPerDevice)
 }
 
 // PendingCommands returns unsent commands for a device and marks them 'sent'.
@@ -641,6 +694,9 @@ func (s *Store) ListCommands(deviceID string) ([]Command, error) {
 func (s *Store) EnqueueAPKUpdate(u *APKUpdate) error {
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO apk_updates(command_id,device_id,package_name,version_name,apk_path,status) VALUES(?,?,?,?,?,?)`,
 		u.CommandID, u.DeviceID, u.PackageName, u.VersionName, u.APKPath, u.Status)
+	if err == nil && writes.Add(1)%pruneEvery == 0 {
+		s.pruneDeviceHistory(u.DeviceID)
+	}
 	return err
 }
 

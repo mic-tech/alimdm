@@ -249,3 +249,95 @@ func TestTheHeartbeatQueryUsesItsIndex(t *testing.T) {
 		t.Fatalf("the plan is %q — the heartbeat is scanning the whole table", detail)
 	}
 }
+
+// A device in daily service accumulates a command for every screenshot, lock,
+// log request and config resend. Nothing used to remove them short of
+// unenrolling the device, so the table grew for the life of the tablet.
+func TestCommandHistoryIsCapped(t *testing.T) {
+	st := newDeliveryTestStore(t)
+	// Well past the cap, and past several prune cycles.
+	for i := 0; i < maxCommandsPerDevice+pruneEvery*4; i++ {
+		if err := st.EnqueueCommand(&Command{
+			ID: fmt.Sprintf("cmd-%05d", i), DeviceID: "tablet-1", Type: "screenshot",
+			Status: "success", CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Second).Format(time.RFC3339),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var n int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM commands WHERE device_id='tablet-1'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n > maxCommandsPerDevice+pruneEvery {
+		t.Fatalf("%d commands kept — the history is not being trimmed", n)
+	}
+	// The newest survive; the oldest are the ones that went.
+	var newest string
+	st.db.QueryRow(`SELECT id FROM commands WHERE device_id='tablet-1' ORDER BY created_at DESC LIMIT 1`).Scan(&newest)
+	if newest != fmt.Sprintf("cmd-%05d", maxCommandsPerDevice+pruneEvery*4-1) {
+		t.Fatalf("newest kept is %s — trimming took the wrong end", newest)
+	}
+}
+
+// Work the device has not done yet is not history. Trimming must never cancel a
+// command by deleting it.
+func TestTrimmingNeverDropsOutstandingWork(t *testing.T) {
+	st := newDeliveryTestStore(t)
+	// One very old command still waiting to be collected.
+	if err := st.EnqueueCommand(&Command{
+		ID: "cmd-ancient", DeviceID: "tablet-1", Type: "reboot",
+		Status: "pending", CreatedAt: "2020-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxCommandsPerDevice+pruneEvery*3; i++ {
+		st.EnqueueCommand(&Command{
+			ID: fmt.Sprintf("cmd-%05d", i), DeviceID: "tablet-1", Type: "screenshot",
+			Status: "success", CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Second).Format(time.RFC3339),
+		})
+	}
+	var n int
+	st.db.QueryRow(`SELECT COUNT(*) FROM commands WHERE id='cmd-ancient'`).Scan(&n)
+	if n != 1 {
+		t.Fatal("a pending command was deleted by trimming — that silently cancels it")
+	}
+}
+
+// One device's history must not be trimmed away by another device's traffic.
+func TestTrimmingIsPerDevice(t *testing.T) {
+	st := newDeliveryTestStore(t)
+	if err := st.EnqueueCommand(&Command{
+		ID: "cmd-quiet", DeviceID: "tablet-2", Type: "lock",
+		Status: "success", CreatedAt: "2024-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxCommandsPerDevice+pruneEvery*3; i++ {
+		st.EnqueueCommand(&Command{
+			ID: fmt.Sprintf("cmd-%05d", i), DeviceID: "tablet-1", Type: "screenshot",
+			Status: "success", CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Second).Format(time.RFC3339),
+		})
+	}
+	var n int
+	st.db.QueryRow(`SELECT COUNT(*) FROM commands WHERE device_id='tablet-2'`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("tablet-2 has %d commands — a busy device trimmed a quiet one's history", n)
+	}
+}
+
+// The unique index on (device_id, file_name) is what makes re-pushing a file
+// reset the existing row instead of piling up duplicates. It looks redundant
+// next to the plain index on the same leading column, and it is not.
+func TestRePushingAFileReplacesItsDelivery(t *testing.T) {
+	st := newDeliveryTestStore(t)
+	for i := 0; i < 3; i++ {
+		if err := st.QueueFileDelivery("tablet-1", "track.mp3"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var n int
+	st.db.QueryRow(`SELECT COUNT(*) FROM file_deliveries WHERE device_id='tablet-1' AND file_name='track.mp3'`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("%d delivery rows for one file on one device, want 1", n)
+	}
+}
