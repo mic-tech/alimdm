@@ -185,6 +185,70 @@ class AppLauncherModule(reactContext: ReactApplicationContext) : ReactContextBas
     }
 
     /**
+     * Everything installed, for the console's inventory.
+     *
+     * Deliberately unfiltered where the other two listings are not. Those exist
+     * to offer an operator apps worth launching or whitelisting; this exists to
+     * answer "what is actually on this tablet", and the answers that matter most
+     * are the ones nobody would have thought to look for — the OEM file picker
+     * whose package name is not the one the policy guessed, the app left behind
+     * after being dropped from the whitelist. Filtering those out would remove
+     * the reason for asking.
+     *
+     * System packages are flagged rather than hidden, because Device Owner
+     * cannot uninstall them and the console needs to say so rather than offer a
+     * button that always fails.
+     */
+    @ReactMethod
+    fun getAppInventory(promise: Promise) {
+        executor.execute {
+            try {
+                val pm = reactApplicationContext.packageManager
+                val out = Arguments.createArray()
+                for (info in pm.getInstalledApplications(0)) {
+                    val pkg = info.packageName
+                    val entry = Arguments.createMap()
+                    entry.putString("package_name", pkg)
+                    entry.putString("label", runCatching { pm.getApplicationLabel(info).toString() }
+                        .getOrDefault(pkg))
+                    entry.putBoolean(
+                        "system",
+                        (info.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0,
+                    )
+                    // An app that shipped with the device but has since been
+                    // updated has a real APK of its own, and behaves like a user
+                    // app for most purposes even though it is flagged system.
+                    entry.putBoolean(
+                        "updated_system_app",
+                        (info.flags and android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0,
+                    )
+                    entry.putBoolean("enabled", info.enabled)
+                    entry.putBoolean("has_launcher", pm.getLaunchIntentForPackage(pkg) != null)
+                    runCatching { pm.getPackageInfo(pkg, 0) }.getOrNull()?.let { pi ->
+                        entry.putString("version_name", pi.versionName ?: "")
+                        entry.putDouble("version_code", longVersionCode(pi).toDouble())
+                        entry.putDouble("updated_at", pi.lastUpdateTime.toDouble())
+                    }
+                    out.pushMap(entry)
+                }
+                DebugLog.i("AppLauncherModule", "Reporting an inventory of ${out.size()} packages")
+                promise.resolve(out)
+            } catch (e: Exception) {
+                DebugLog.errorProduction("AppLauncherModule", "Failed to build the app inventory: ${e.message}")
+                promise.reject("ERROR_GET_APPS", "Failed to build the app inventory: ${e.message}")
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun longVersionCode(pi: android.content.pm.PackageInfo): Long =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            pi.longVersionCode
+        } else {
+            pi.versionCode.toLong()
+        }
+
+    /**
      * Returns all installed apps including non-UI packages (services, VPNs, etc.).
      * User-installed apps without a launcher activity are included so they can be
      * whitelisted in lock task mode (fixes #112 - e.g. gnirehtet VPN).

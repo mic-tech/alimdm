@@ -603,6 +603,10 @@ function commandName(type) {
 /* What to call a device in something a person reads. The label if it has one,
    the id if nobody has named it — the same rule the device list, the kiosk
    screen and the server's own notifications follow. */
+// numeric so track2 sorts before track10, which is the whole point of naming
+// them that way.
+const byName = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+
 function deviceLabel(d) {
   return d.label || d.name || d.id;
 }
@@ -765,6 +769,150 @@ function DeviceFiles({ device, onErr }) {
    to the one device. Every entry the fleet feed holds for it is here — what was
    sent to it, when it went quiet, when it came back — without the noise of the
    other eleven. */
+/* What is actually installed on one tablet.
+
+   The policy says what a group should run; this says what one device really
+   has. The gap between them is where the awkward problems live — an OEM package
+   whose name is not the one the policy guessed, an app left behind after being
+   dropped from the whitelist and still taking a gigabyte. Like the Files tab,
+   the tablet answers on its own schedule, so the listing is cached and stamped
+   with when it was taken. */
+function DeviceApps({ device, onErr }) {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [q, setQ] = useState("");
+  const [showSystem, setShowSystem] = useState(false);
+
+  const load = useCallback(async () => {
+    try { setData(await api.deviceApps(device.id)); }
+    catch (e) { onErr(e.message); }
+  }, [device.id, onErr]);
+  useEffect(() => { load(); }, [load]);
+  // The device answers on its next check-in, so keep looking while this is open.
+  useEffect(() => { const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+
+  async function refresh() {
+    setBusy(true);
+    try { await api.refreshDeviceApps(device.id); toast("Asked the device what it has installed"); }
+    catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  async function uninstall(app) {
+    const label = app.label && app.label !== app.package_name
+      ? `${app.label} (${app.package_name})` : app.package_name;
+    if (!confirm(`Uninstall ${label} from ${deviceLabel(device)}?\n\n` +
+      "The app and its data are removed from the tablet. Anything the policy still " +
+      "lists is installed again on a later check-in.")) return;
+    setBusy(true);
+    try {
+      await api.uninstallDeviceApp(device.id, app.package_name);
+      toast(`Asked the device to uninstall ${app.package_name}`);
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
+  const entries = useMemo(() => data?.entries ?? [], [data]);
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return entries
+      .filter((a) => showSystem || !a.system || a.updated_system_app)
+      .filter((a) => !needle ||
+        (a.package_name || "").toLowerCase().includes(needle) ||
+        (a.label || "").toLowerCase().includes(needle))
+      .sort((a, b) => byName(a.label || a.package_name, b.label || b.package_name));
+  }, [entries, q, showSystem]);
+  const systemCount = entries.filter((a) => a.system && !a.updated_system_app).length;
+
+  return (
+    <CardTable
+      title="Apps"
+      actions={<>
+        <input className="search-input" placeholder="Search apps…" value={q}
+          onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 200 }} />
+        <span className="muted small">
+          {!data ? "Loading…"
+            : data.fetched_at ? `Checked ${timeAgo(data.fetched_at) || "just now"}`
+            : "Never checked"}
+        </span>
+        <button className="btn outline sm" disabled={busy} onClick={refresh}
+          title={device.online
+            ? "The device answers on its next check-in"
+            : "The device is offline; it will answer when it checks in"}>
+          <IconRefresh />Ask the device
+        </button>
+      </>}
+      note={
+        <Alert>
+          What this tablet reports it has installed. System packages are hidden by
+          default and cannot be uninstalled — Device Owner can only roll back an
+          update to one, not remove it. Uninstalling an app the policy still lists
+          only frees the space until the next check-in reinstalls it.
+        </Alert>
+      }
+    >
+      <table className="stacked">
+        <thead>
+          <tr><th>App</th><th>Version</th><th>Kind</th><th style={{ textAlign: "right" }}>Actions</th></tr>
+        </thead>
+        <tbody>
+          {shown.length === 0 && (
+            <tr><td colSpan="4" style={{ padding: 0 }}>
+              <Empty icon={IconPackage}
+                title={!data ? "Loading…"
+                  : !data.fetched_at ? "No inventory yet"
+                  : q ? "Nothing matches that"
+                  : "Nothing to show"}
+                desc={data && !data.fetched_at
+                  ? "Ask the device what it has installed and it will answer on its next check-in."
+                  : systemCount > 0 && !showSystem
+                  ? `${systemCount} system packages are hidden.`
+                  : "This device reported no apps."} />
+            </td></tr>
+          )}
+          {shown.map((a) => (
+            <tr key={a.package_name}>
+              <td className="small strong" data-label="App">
+                {a.label || a.package_name}
+                <div className="muted small mono">{a.package_name}</div>
+              </td>
+              <td className="small nowrap" data-label="Version">{a.version_name || "—"}</td>
+              <td className="small nowrap" data-label="Kind">
+                {a.system && !a.updated_system_app
+                  ? <span className="badge off">System</span>
+                  : a.updated_system_app
+                  ? <span className="badge info">Updated system</span>
+                  : <span className="badge on">Installed</span>}
+                {a.enabled === false && <> <span className="badge warning">Disabled</span></>}
+              </td>
+              <td className="cell-actions">
+                <div className="btn-group" style={{ justifyContent: "flex-end", width: "100%" }}>
+                  {/* Not offered where it cannot work: Device Owner cannot remove
+                      a package that shipped with the device, and a button that
+                      always fails is worse than no button. */}
+                  {a.system && !a.updated_system_app ? (
+                    <span className="muted small">Cannot be removed</span>
+                  ) : (
+                    <button className="btn danger-outline sm icon" title={`Uninstall ${a.package_name}`}
+                      disabled={busy} onClick={() => uninstall(a)}><IconTrash /></button>
+                  )}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {systemCount > 0 && (
+        <div style={{ padding: "10px 20px" }}>
+          <button className="linkish small" onClick={() => setShowSystem((v) => !v)}>
+            {showSystem ? "Hide" : "Show"} {systemCount} system package{systemCount === 1 ? "" : "s"}
+          </button>
+        </div>
+      )}
+    </CardTable>
+  );
+}
+
 function DeviceHistory({ deviceId, onErr }) {
   const [events, setEvents] = useState(null);
   const [hasMore, setHasMore] = useState(false);
@@ -1284,6 +1432,8 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
           onClick={() => setTab("history")}><IconBell />History</button>
         <button className={tab === "files" ? "on" : ""} aria-pressed={tab === "files"}
           onClick={() => setTab("files")}><IconFile />Files</button>
+        <button className={tab === "apps" ? "on" : ""} aria-pressed={tab === "apps"}
+          onClick={() => setTab("apps")}><IconPackage />Apps</button>
         <button className={tab === "commands" ? "on" : ""} aria-pressed={tab === "commands"}
           onClick={() => setTab("commands")}><IconSliders />Commands</button>
         {/* Administrators only, matching what the server will allow. */}
@@ -1295,6 +1445,7 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
 
       {tab === "history" && <DeviceHistory deviceId={d.id} onErr={onErr} />}
       {tab === "files" && <DeviceFiles device={d} onErr={onErr} />}
+      {tab === "apps" && <DeviceApps device={d} onErr={onErr} />}
       {tab === "commands" && <DeviceCommands deviceId={d.id} onErr={onErr} />}
       {tab === "logs" && me?.role === "admin" && <DeviceLogs deviceId={d.id} onErr={onErr} />}
 
@@ -2292,9 +2443,6 @@ function folderStats(node) {
   return s;
 }
 
-// numeric so track2 sorts before track10, which is the whole point of naming
-// them that way.
-const byName = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 
 /* Flatten the tree into table rows, honouring which folders are open. Rows
    carry their depth so the File column can indent them, and folders come before

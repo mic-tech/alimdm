@@ -224,6 +224,11 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/v1/devices/{id}/inbox/{name}", s.requireOperator(s.deleteDeviceFile))
 	mux.HandleFunc("POST /api/v1/devices/{id}/inbox", s.requireDevice(s.reportDeviceInbox))
 
+	mux.HandleFunc("GET /api/v1/devices/{id}/apps", s.requireOperator(s.deviceApps))
+	mux.HandleFunc("POST /api/v1/devices/{id}/apps/refresh", s.requireOperator(s.refreshDeviceApps))
+	mux.HandleFunc("DELETE /api/v1/devices/{id}/apps/{package}", s.requireOperator(s.uninstallDeviceApp))
+	mux.HandleFunc("POST /api/v1/devices/{id}/apps", s.requireDevice(s.reportDeviceApps))
+
 	// The notification feed is readable by any signed-in operator: it is how
 	// they see what the fleet and their colleagues have been doing.
 	mux.HandleFunc("GET /api/v1/events", s.requireOperator(s.listEvents))

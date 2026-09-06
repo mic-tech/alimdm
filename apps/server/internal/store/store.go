@@ -230,6 +230,16 @@ func migrate(db *sql.DB) error {
 		entries TEXT NOT NULL DEFAULT '[]',
 		fetched_at TEXT NOT NULL DEFAULT ''
 	);
+	-- What is actually installed on a tablet, as opposed to what its policy says
+	-- should be. The two drift: an app installed before enrollment, one left
+	-- behind after being dropped from the whitelist, or an OEM package whose
+	-- name differs from the one the policy names. Same shape as device_inbox and
+	-- for the same reason — the answer arrives on the device's own schedule.
+	CREATE TABLE IF NOT EXISTS device_apps(
+		device_id TEXT PRIMARY KEY,
+		entries TEXT NOT NULL DEFAULT '[]',
+		fetched_at TEXT NOT NULL DEFAULT ''
+	);
 	CREATE TABLE IF NOT EXISTS events(
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		at TEXT NOT NULL,
@@ -512,6 +522,7 @@ func (s *Store) DeleteDevice(deviceID string) error {
 		`DELETE FROM device_event_state WHERE device_id=?`,
 		`DELETE FROM file_deliveries WHERE device_id=?`,
 		`DELETE FROM device_inbox WHERE device_id=?`,
+		`DELETE FROM device_apps WHERE device_id=?`,
 		`DELETE FROM devices WHERE id=?`,
 	} {
 		if _, err := tx.Exec(q, deviceID); err != nil {
@@ -1371,6 +1382,24 @@ func (s *Store) SetDeviceInbox(deviceID, entriesJSON string) error {
 func (s *Store) DeviceInbox(deviceID string) (entriesJSON, fetchedAt string) {
 	entriesJSON, fetchedAt = "[]", ""
 	_ = s.db.QueryRow(`SELECT entries, fetched_at FROM device_inbox WHERE device_id=?`, deviceID).
+		Scan(&entriesJSON, &fetchedAt)
+	return entriesJSON, fetchedAt
+}
+
+// SetDeviceApps stores what a tablet reported it has installed.
+func (s *Store) SetDeviceApps(deviceID, entriesJSON string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO device_apps(device_id, entries, fetched_at) VALUES(?,?,?)
+		 ON CONFLICT(device_id) DO UPDATE SET entries=excluded.entries, fetched_at=excluded.fetched_at`,
+		deviceID, entriesJSON, nowISO())
+	return err
+}
+
+// DeviceApps returns the cached inventory and when it was taken. An empty
+// timestamp means the device has never reported.
+func (s *Store) DeviceApps(deviceID string) (entriesJSON, fetchedAt string) {
+	entriesJSON, fetchedAt = "[]", ""
+	_ = s.db.QueryRow(`SELECT entries, fetched_at FROM device_apps WHERE device_id=?`, deviceID).
 		Scan(&entriesJSON, &fetchedAt)
 	return entriesJSON, fetchedAt
 }

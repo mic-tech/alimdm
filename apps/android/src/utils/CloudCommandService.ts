@@ -26,6 +26,7 @@ import DiagnosticsModule from './DiagnosticsModule';
 import ManagedAppInstaller from './ManagedAppInstaller';
 import KioskModule from './KioskModule';
 import { CloudFileService } from './CloudFileService';
+import AppLauncherModule from './AppLauncherModule';
 
 const { HttpServerModule } = NativeModules;
 
@@ -275,6 +276,22 @@ class CloudCommandServiceClass {
     if (cmd.type === 'list_inbox') {
       return this.uploadInboxListing(c);
     }
+    if (cmd.type === 'list_apps') {
+      return this.uploadAppInventory(c);
+    }
+    if (cmd.type === 'uninstall_app') {
+      const pkg = String((cmd.params || {}).package ?? '');
+      if (!pkg) return { ok: false, error: 'No package named' };
+      try {
+        const result = await ManagedAppInstaller.uninstallPackage(pkg);
+        // Re-report straight away so the console stops offering an app that is
+        // no longer there, rather than waiting for someone to press refresh.
+        await this.uploadAppInventory(c);
+        return { ok: true, result: { package: pkg, uninstall_status: result?.status ?? 'success' } };
+      } catch (error: any) {
+        return { ok: false, error: error?.message ?? String(error) };
+      }
+    }
     if (cmd.type === 'delete_inbox_file') {
       const name = String((cmd.params || {}).name ?? '');
       if (!name) return { ok: false, error: 'No file name given' };
@@ -489,6 +506,25 @@ class CloudCommandServiceClass {
       });
       if (!res.ok) return { ok: false, error: `Listing upload failed: HTTP ${res.status}` };
       return { ok: true, result: { files: entries.length } };
+    } catch (error: any) {
+      return { ok: false, error: error?.message ?? String(error) };
+    }
+  }
+
+  /** Report what is installed, so the console can show it against the policy. */
+  private async uploadAppInventory(c: CloudCredentials): Promise<ActionResult> {
+    try {
+      const entries = (await AppLauncherModule.getAppInventory?.()) ?? [];
+      const res = await fetch(`${c.cloudUrl}/api/v1/devices/${c.deviceId}/apps`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${c.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ entries }),
+      });
+      if (!res.ok) return { ok: false, error: `Inventory upload failed: HTTP ${res.status}` };
+      return { ok: true, result: { apps: entries.length } };
     } catch (error: any) {
       return { ok: false, error: error?.message ?? String(error) };
     }

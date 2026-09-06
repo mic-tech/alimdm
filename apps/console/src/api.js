@@ -205,6 +205,13 @@ export const api = {
   },
 
   // ── Per-device file manager ────────────────────────────────────────────────
+  // What a device actually has installed, as opposed to what its policy says.
+  deviceApps: (id) => req("GET", "/devices/" + encodeURIComponent(id) + "/apps"),
+  refreshDeviceApps: (id) =>
+    req("POST", "/devices/" + encodeURIComponent(id) + "/apps/refresh", {}),
+  uninstallDeviceApp: (id, pkg) =>
+    req("DELETE", "/devices/" + encodeURIComponent(id) + "/apps/" + encodeURIComponent(pkg)),
+
   deviceInbox: (id) => req("GET", "/devices/" + encodeURIComponent(id) + "/inbox"),
   refreshDeviceInbox: (id) => req("POST", "/devices/" + encodeURIComponent(id) + "/inbox/refresh", {}),
   // relPath identifies which folder the file sits in, since a folder upload can

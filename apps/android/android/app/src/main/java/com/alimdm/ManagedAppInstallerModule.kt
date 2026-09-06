@@ -36,6 +36,7 @@ class ManagedAppInstallerModule(reactContext: ReactApplicationContext) :
     companion object {
         private const val TAG = "ManagedAppInstaller"
         private const val INSTALL_ACTION = "com.alimdm.MANAGED_APP_INSTALL_RESULT"
+        private const val UNINSTALL_ACTION = "com.alimdm.MANAGED_APP_UNINSTALL_RESULT"
         private const val MIN_APK_BYTES = 50_000L // anything smaller is almost certainly an HTML error page
 
         // A config split can legitimately be a few kilobytes — one language's
@@ -100,6 +101,106 @@ class ManagedAppInstallerModule(reactContext: ReactApplicationContext) :
                 android.util.Log.e(TAG, "Install error: ${e.message}", e)
                 apkFile?.delete()
                 promise.reject("INSTALL_ERROR", e.message ?: "Unknown install error", e)
+            }
+        }.start()
+    }
+
+    /**
+     * Uninstall a package silently.
+     *
+     * Device Owner can remove a user-installed app without a prompt. It cannot
+     * remove one that shipped with the device: for those the most Android will
+     * do is roll back an update, leaving the original factory version behind,
+     * and for many it refuses outright. The result carries Android's own status
+     * message either way, so the console can say what happened rather than
+     * reporting a silent no-op.
+     *
+     * Refusing to uninstall AliMDM is not defence in depth for its own sake:
+     * with the agent gone from a Device Owner tablet, nothing is left that could
+     * enroll it again and the device has to be factory reset by hand. The server
+     * refuses this too; both matter, because either could be the one called.
+     */
+    @ReactMethod
+    fun uninstallPackage(packageName: String, promise: Promise) {
+        Thread {
+            try {
+                val context = reactApplicationContext
+                val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                if (!dpm.isDeviceOwnerApp(context.packageName)) {
+                    promise.reject("NOT_DEVICE_OWNER", "Silent uninstall requires Device Owner mode.")
+                    return@Thread
+                }
+                if (packageName.isEmpty()) {
+                    promise.reject("BAD_PACKAGE", "No package named.")
+                    return@Thread
+                }
+                if (packageName == context.packageName) {
+                    promise.reject(
+                        "REFUSED",
+                        "Ali MDM will not uninstall itself — the tablet would need a factory reset to come back.",
+                    )
+                    return@Thread
+                }
+                // Nothing to do, and worth saying so plainly: an operator acting
+                // on a stale inventory should not see a failure for an app that
+                // is already gone.
+                val installed = runCatching {
+                    context.packageManager.getPackageInfo(packageName, 0)
+                }.isSuccess
+                if (!installed) {
+                    val result = Arguments.createMap().apply {
+                        putString("status", "not_installed")
+                        putString("package", packageName)
+                    }
+                    promise.resolve(result)
+                    return@Thread
+                }
+
+                val installer = context.packageManager.packageInstaller
+                val action = "$UNINSTALL_ACTION.${packageName.hashCode()}"
+                val settled = AtomicBoolean(false)
+                val receiver = object : BroadcastReceiver() {
+                    override fun onReceive(c: Context?, intent: Intent?) {
+                        if (!settled.compareAndSet(false, true)) return
+                        try { context.unregisterReceiver(this) } catch (_: Exception) {}
+                        val status = intent?.getIntExtra(
+                            PackageInstaller.EXTRA_STATUS,
+                            PackageInstaller.STATUS_FAILURE,
+                        ) ?: PackageInstaller.STATUS_FAILURE
+                        val message = intent?.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: ""
+                        if (status == PackageInstaller.STATUS_SUCCESS) {
+                            DebugLog.i(TAG, "Uninstalled $packageName")
+                            val result = Arguments.createMap().apply {
+                                putString("status", "success")
+                                putString("package", packageName)
+                            }
+                            promise.resolve(result)
+                        } else {
+                            DebugLog.i(TAG, "Uninstall of $packageName failed (status $status): $message")
+                            promise.reject(
+                                "UNINSTALL_FAILED",
+                                "Uninstall failed (status $status): $message",
+                            )
+                        }
+                    }
+                }
+                val filter = IntentFilter(action)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                } else {
+                    context.registerReceiver(receiver, filter)
+                }
+                val intent = Intent(action).setPackage(context.packageName)
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    PendingIntent.FLAG_MUTABLE
+                } else {
+                    0
+                }
+                val pending = PendingIntent.getBroadcast(context, packageName.hashCode(), intent, flags)
+                installer.uninstall(packageName, pending.intentSender)
+            } catch (e: Exception) {
+                DebugLog.errorProduction(TAG, "Uninstall error: ${e.message}")
+                promise.reject("UNINSTALL_ERROR", e.message ?: "Unknown uninstall error", e)
             }
         }.start()
     }

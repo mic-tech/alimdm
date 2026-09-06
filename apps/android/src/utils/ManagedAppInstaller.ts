@@ -57,6 +57,19 @@ export const ManagedAppInstaller = {
     }
     return Native.installSplitsFromUrls(urls, authToken, expectedPackage);
   },
+
+  /**
+   * Remove a package silently. Device Owner only, and never Ali MDM itself —
+   * with the agent gone there is nothing left to enroll the tablet again.
+   */
+  uninstallPackage(packageName: string): Promise<ManagedInstallResult> {
+    if (!Native?.uninstallPackage) {
+      return Promise.reject(
+        new Error('This build cannot uninstall apps; update Ali MDM first.'),
+      );
+    }
+    return Native.uninstallPackage(packageName);
+  },
 };
 
 export default ManagedAppInstaller;
