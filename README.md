@@ -52,7 +52,8 @@ apps/
   android/         # Ali MDM device agent (React Native) — the app on the tablets
   enroll/          # ADB enrollment scripts (enroll_tablet.sh, enroll.py)
 brand/             # logo kit: generated SVGs, Android vector icons, + their generator
-deploy/            # docker-compose.yml, Caddyfile (TLS), deploy.sh, .env.example
+deploy/            # docker-compose.yml, Caddyfile (TLS), deploy.sh, backup.sh,
+                   # systemd backup units, .env.example
 docs/              # SPEC.md, build-android.md + howto/ guides
 tools/             # misc helper scripts
 ```
@@ -105,6 +106,44 @@ cd apps/android/android
 ```
 (Requires the Android SDK. The QR enrollment path doesn't need this if the
 tablet can install Ali MDM during setup.)
+
+## Backups
+The whole console — devices, groups, policies, operators, the file catalogue —
+is one SQLite database.
+
+```
+./deploy/backup.sh          # verified snapshot to ~/backups, keeps the last 14
+```
+
+Do **not** back it up with `cp`. The database runs in WAL mode, so recent
+transactions live in a separate `-wal` file until a checkpoint folds them in —
+on a busy server that file is routinely larger than the database. A plain copy
+takes the database without it: a valid file that restores cleanly and quietly
+lacks the newest writes. `backup.sh` uses `VACUUM INTO`, which snapshots
+everything consistently while the server keeps running, and verifies the result
+before rotating anything.
+
+Run it nightly with the units in `deploy/` (`alimdm-backup.service` and
+`.timer` — copy them to `/etc/systemd/system/`, adjusting `User=` and the path,
+then `systemctl enable --now alimdm-backup.timer`), or any scheduler you like.
+Uploaded files and APKs sit beside the database under `data/`; the database
+alone restores the console, `data/` as a whole restores the library with it.
+
+## If you put your own proxy in front
+The bundled Caddy config is already right (see `deploy/Caddyfile`). Swapping in
+nginx needs three things Caddy does by default, and each one fails in a way that
+looks like an application bug:
+
+- **`http2`** on the `listen` line (nginx before 1.25.1) or `http2 on;`. Without
+  it every device call is HTTP/1.1 and a large download blocks the calls behind
+  it.
+- **`client_max_body_size`** large enough for a split package — nginx's 1MB
+  default rejects them with a bare `413` before the API ever sees the upload.
+  2G matches the ceiling the API enforces for itself.
+- **`proxy_request_buffering off`** so a large upload streams through instead of
+  being written to the proxy's own disk first, and
+  **`proxy_buffering off`** (or the app's `X-Accel-Buffering: no`) so streamed
+  responses are not held back.
 
 ## Security notes
 - **HTTPS is mandatory** — Ali MDM's cloud client requires it; Caddy provides

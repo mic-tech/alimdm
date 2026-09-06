@@ -5,8 +5,32 @@
 {$CLOUD_DOMAIN} {
 	encode gzip zstd
 
-	# API + console
-	reverse_proxy api:8080
+	# API + console.
+	#
+	# Three things this deliberately does NOT configure, because Caddy already
+	# does them and a well-meant addition would break the fleet:
+	#
+	# HTTP/2 is on by default over TLS (HTTP/3 too). Tablets negotiate it and
+	# carry every call — heartbeat, command fetch, a 700MB package download —
+	# over one multiplexed connection instead of serialising them. On nginx this
+	# has to be asked for; here, asking for it is unnecessary.
+	#
+	# There is no request body limit. Do not add one without knowing the number:
+	# a split .xapk of an app whose content ships as asset packs runs to
+	# hundreds of megabytes, and one real upload here was 732MB. The API applies
+	# its own 2GB ceiling and rejects anything larger with an explanation, which
+	# is a better answer than a bare 413 from the proxy.
+	#
+	# Request bodies stream straight through rather than being spooled to disk
+	# first, so a large upload starts reaching the API immediately.
+	reverse_proxy api:8080 {
+		# Forward each byte as it arrives instead of buffering the response.
+		# Live view is an MJPEG stream that only makes sense frame by frame, and
+		# anything push-shaped added later — a server-sent event telling a
+		# tablet to check in now — is silently broken by buffering: it works on
+		# a developer's machine and lags behind a proxy.
+		flush_interval -1
+	}
 
 	# Basic hardening headers
 	header {
