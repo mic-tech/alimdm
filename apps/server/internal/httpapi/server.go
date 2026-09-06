@@ -879,6 +879,11 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		Stale          bool   `json:"stale"`
 		LastSeen       string `json:"last_seen"`
 		Online         bool   `json:"online"`
+		// Whether this device is holding the wake stream open, and so whether a
+		// command reaches it in a second or at its next check-in. In the list as
+		// well as on the device page: across a fleet, the useful question is
+		// which tablets are on the fast path, not whether one is.
+		WakeStream bool `json:"wake_stream"`
 	}
 	// The staged release is what every tablet is expected to converge on.
 	staged := 0
@@ -903,7 +908,7 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		// enrolled but not yet checked in — it does not have the build either.
 		stale := staged > 0 && d.AppVersionCode < staged
 		out = append(out, pub{d.ID, d.Name, d.GroupID, groupVersion[d.GroupID], d.Battery, d.AndroidVer, d.Model,
-			d.AppVersionCode, d.AppVersionName, stale, d.LastSeen, online})
+			d.AppVersionCode, d.AppVersionName, stale, d.LastSeen, online, s.pokes.Waiting(d.ID) > 0})
 	}
 	writeJSONCached(w, r, out)
 }

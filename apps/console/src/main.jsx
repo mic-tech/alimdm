@@ -1894,6 +1894,15 @@ function Devices({ onErr, navigate }) {
                   <span className={"badge " + (d.online ? "on" : "off")}>
                     <span className="dot" />{d.online ? "Online" : "Offline"}
                   </span>
+                  {/* Only worth marking when it is true. A fleet where most
+                      tablets are on the fast path should draw the eye to the
+                      one that is not, and an online device without the stream
+                      is simply the ordinary case working. */}
+                  {d.online && d.wake_stream && (
+                    <div className="muted small" title="Holding the wake stream open — commands land at once">
+                      instant
+                    </div>
+                  )}
                 </td>
                 <td className="nowrap" data-label="Battery">{d.battery != null ? d.battery + "%" : <span className="muted">—</span>}</td>
                 <td className="nowrap" data-label="Android">{d.android_ver || <span className="muted">—</span>}</td>
