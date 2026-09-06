@@ -188,6 +188,17 @@ export const api = {
   // ── Snapshots ──────────────────────────────────────────────────────────────
   requestSnapshot: (id) => req("POST", "/devices/" + encodeURIComponent(id) + "/snapshot/request", {}),
   /**
+   * When the device last sent a still, without downloading the image. Cheap
+   * enough to poll while waiting for a fresh one to land.
+   */
+  snapshotMeta: (id, signal) => {
+    const tok = getToken();
+    return fetch("/api/v1/devices/" + encodeURIComponent(id) + "/snapshot/meta", {
+      headers: tok ? { Authorization: "Bearer " + tok } : {},
+      signal,
+    }).then((r) => (r.ok ? r.json() : null));
+  },
+  /**
    * Fetch the latest still as a Blob. Read with fetch rather than pointed at
    * with <img src> because an <img> cannot send an Authorization header, and a
    * token in the URL would end up in logs and history.

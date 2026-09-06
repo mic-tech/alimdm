@@ -503,6 +503,9 @@ function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
   const urlRef = useRef(null);
   const [state, setState] = useState("waiting");
   const [takenAt, setTakenAt] = useState(null);
+  // Read inside the polling loop, where the state value would be the one
+  // captured when the effect ran rather than the current one.
+  const takenAtRef = useRef(null);
   // Bumped to ask for a fresh still outside the timer.
   const [manual, setManual] = useState(0);
 
@@ -518,6 +521,7 @@ function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
         if (imgRef.current) imgRef.current.src = url;
         if (urlRef.current) URL.revokeObjectURL(urlRef.current);
         urlRef.current = url;
+        takenAtRef.current = got.at;
         setTakenAt(got.at);
         setState("shown");
       } catch (e) {
@@ -525,13 +529,46 @@ function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
       }
     };
 
-    const cycle = () => {
+    /* Wait for a still newer than the one already on screen.
+
+       This used to sleep twelve seconds, which was right when a queued command
+       took up to a heartbeat to reach the device. A tablet holding the wake
+       stream open now acts within a second, so a fixed wait spends most of its
+       time doing nothing. Poll for the answer instead: fast at first, easing
+       off, and giving up well before the next cycle so the two never overlap. */
+    const awaitFresh = async (previousAt) => {
+      const deadline = Date.now() + 20000;
+      let wait = 300;
+      while (!cancelled && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, wait));
+        wait = Math.min(wait * 1.5, 2000);
+        if (cancelled) return;
+        try {
+          const meta = await api.snapshotMeta(deviceId, controller.signal);
+          if (meta?.has_snapshot && meta.at !== previousAt) {
+            await show();
+            return;
+          }
+        } catch (e) {
+          if (e.name === "AbortError") return;
+          // A failed check is not a failed screenshot; keep waiting.
+        }
+      }
+      // Nothing arrived. The still already on screen stays, with its own
+      // timestamp, rather than being replaced by an error.
+    };
+
+    const cycle = async () => {
       // Offline tablets cannot answer; keep showing the last still rather than
       // queuing commands that will pile up until they return.
       if (!online) return;
-      api.requestSnapshot(deviceId).catch(() => {/* retried on the next cycle */});
-      // Give the tablet a check-in to act on it before looking for the result.
-      setTimeout(() => { if (!cancelled) show(); }, 12000);
+      const before = takenAtRef.current;
+      try {
+        await api.requestSnapshot(deviceId);
+      } catch {
+        return; // retried on the next cycle
+      }
+      awaitFresh(before);
     };
 
     show();          // whatever is already there, immediately
