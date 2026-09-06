@@ -1118,6 +1118,7 @@ function DeviceLogs({ deviceId, onErr }) {
           {state && (
             <dl className="facts">
               <Fact label="Android">{state.android || "—"} on {state.model || "—"}</Fact>
+              <Fact label="Storage"><Storage state={state} /></Fact>
               <Fact label="Device Owner"><YesNo ok={state.device_owner} /></Fact>
               {/* Only meaningful while the screen is on — the device says so
                   itself rather than leaving the reader to wonder. */}
@@ -1174,6 +1175,26 @@ function YesNo({ ok, why }) {
     return <span className="badge off" title={why || "The device did not report this"}>Unknown</span>;
   }
   return <span className={"badge " + (ok ? "on" : "off")}>{ok ? "Yes" : "No"}</span>;
+}
+
+/* Free space, and how tight it is. An install that fails for want of storage
+   says nothing an operator can see, so the number is worth showing before
+   anyone starts guessing. */
+function Storage({ state }) {
+  const free = state.storage_free_bytes;
+  const total = state.storage_total_bytes;
+  if (!free && free !== 0) return <span className="muted">Unknown</span>;
+  const gb = (n) => (n / 1024 / 1024 / 1024).toFixed(1) + " GB";
+  const pct = total ? Math.round((free / total) * 100) : null;
+  // Below a couple of gigabytes an app of any size starts failing to install,
+  // and that is worth colouring rather than leaving to arithmetic.
+  const tone = free < 2 * 1024 ** 3 ? "off" : "on";
+  return (
+    <>
+      <span className={"badge " + tone}>{gb(free)} free</span>
+      {total ? <span className="muted small"> of {gb(total)}{pct !== null ? ` · ${pct}%` : ""}</span> : null}
+    </>
+  );
 }
 
 function Fact({ label, children }) {

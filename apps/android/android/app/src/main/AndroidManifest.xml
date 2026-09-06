@@ -247,6 +247,16 @@
         android:enabled="true"
         android:exported="false" />
 
+      <!-- Where PackageInstaller reports the outcome of replacing this app.
+           Declared here rather than registered at runtime because a self-update
+           kills its own process at commit: a runtime receiver dies with it and
+           the reason is lost, which is exactly what made a failed update
+           undiagnosable. Not exported — it is addressed explicitly. -->
+      <receiver
+        android:name=".AgentUpdateResultReceiver"
+        android:enabled="true"
+        android:exported="false" />
+
       <!-- AccessibilityService pour injection clavier dans les apps externes
            Disabled in Play Store builds (-Pplaystore) to avoid BIND_ACCESSIBILITY_SERVICE policy violation -->
       <service

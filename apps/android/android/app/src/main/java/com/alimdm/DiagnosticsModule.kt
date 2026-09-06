@@ -82,6 +82,17 @@ class DiagnosticsModule(private val reactContext: ReactApplicationContext) :
             as android.app.admin.DevicePolicyManager
         m.putBoolean("device_owner", dpm.isDeviceOwnerApp(reactContext.packageName))
 
+        // Free space, because an install that fails for want of it fails with no
+        // explanation an operator can see, and the first guess is always wrong
+        // without a number to check it against.
+        try {
+            val stat = android.os.StatFs(android.os.Environment.getDataDirectory().absolutePath)
+            m.putDouble("storage_free_bytes", stat.availableBytes.toDouble())
+            m.putDouble("storage_total_bytes", stat.totalBytes.toDouble())
+        } catch (e: Exception) {
+            DebugLog.d("Diagnostics", "Cannot read free storage: ${e.message}")
+        }
+
         // Whether the display is awake, which decides whether the next answer
         // means anything.
         val pm = reactContext.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager

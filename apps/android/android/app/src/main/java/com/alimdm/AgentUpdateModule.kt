@@ -48,7 +48,6 @@ class AgentUpdateModule(reactContext: ReactApplicationContext) :
         private const val KEY_TARGET = "pending_target_version_code"
         private const val KEY_FROM = "pending_from_version_code"
         private const val KEY_AT = "pending_started_at"
-        private const val INSTALL_ACTION = "com.alimdm.AGENT_UPDATE_RESULT"
 
         // Anything smaller is an error page, not an APK.
         private const val MIN_APK_BYTES = 50_000L
@@ -108,7 +107,14 @@ class AgentUpdateModule(reactContext: ReactApplicationContext) :
             }
             val from = p.getLong(KEY_FROM, -1L)
             val now = currentVersionCode()
-            p.edit().remove(KEY_TARGET).remove(KEY_FROM).remove(KEY_AT).commit()
+            // What Android said, if the result arrived. It is written by a
+            // manifest receiver, so it survives the process this update killed.
+            val reason = p.getString(AgentUpdateResultReceiver.KEY_RESULT_MESSAGE, null)
+            p.edit()
+                .remove(KEY_TARGET).remove(KEY_FROM).remove(KEY_AT)
+                .remove(AgentUpdateResultReceiver.KEY_RESULT_STATUS)
+                .remove(AgentUpdateResultReceiver.KEY_RESULT_MESSAGE)
+                .commit()
 
             val result: WritableMap = Arguments.createMap().apply {
                 putDouble("targetVersionCode", target.toDouble())
@@ -118,9 +124,18 @@ class AgentUpdateModule(reactContext: ReactApplicationContext) :
                 result.putString("status", "success")
             } else {
                 result.putString("status", "failed")
+                // Lead with Android's own reason when there is one. The version
+                // comparison is the fallback for the case the reason never
+                // arrived — the app was killed for some other cause, or the
+                // install never got as far as a verdict.
+                val detail = if (!reason.isNullOrEmpty() && reason != "success") {
+                    reason
+                } else {
+                    "no reason reported by Android — the update may not have reached the installer"
+                }
                 result.putString(
                     "error",
-                    "Restarted on versionCode $now after attempting $target (was $from).",
+                    "Still on versionCode $now after attempting $target (was $from): $detail",
                 )
             }
             promise.resolve(result)
@@ -186,6 +201,10 @@ class AgentUpdateModule(reactContext: ReactApplicationContext) :
                     .putLong(KEY_TARGET, target)
                     .putLong(KEY_FROM, currentVersionCode())
                     .putLong(KEY_AT, System.currentTimeMillis())
+                    // Whatever Android said about the last attempt is not about
+                    // this one.
+                    .remove(AgentUpdateResultReceiver.KEY_RESULT_STATUS)
+                    .remove(AgentUpdateResultReceiver.KEY_RESULT_MESSAGE)
                     .commit()
                 commitInstall(apk)
                 promise.resolve(
@@ -349,7 +368,11 @@ class AgentUpdateModule(reactContext: ReactApplicationContext) :
                 apk.inputStream().use { input -> input.copyTo(output) }
                 session.fsync(output)
             }
-            val intent = Intent("$INSTALL_ACTION.$sessionId").setPackage(ctx.packageName)
+            // Explicitly addressed to a receiver declared in the manifest. A
+            // runtime receiver would die with this process the instant the
+            // session commits, which is why every failed self-update used to be
+            // reported as "came back on the old version" and nothing more.
+            val intent = Intent(ctx, AgentUpdateResultReceiver::class.java)
             val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 PendingIntent.FLAG_MUTABLE
             } else {
