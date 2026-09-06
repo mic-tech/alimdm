@@ -15,19 +15,24 @@ protocol**. The app stays 100% stock — you can keep updating it upstream witho
 breaking your setup.
 
 ```
-┌────────────┐   HTTPS (JWT / API key)   ┌─────────────────────────────┐
-│  Tablet    │ ─────────────────────────▶│  VPS                        │
-│ Ali MDM  │  heartbeat / commands /   │  ┌─────────┐  ┌──────────┐  │
-│ (Device    │  config / APK updates     │  │ Go API  │  │ React    │  │
-│  Owner)    │ ◀─────────────────────────│  │ :8080   │  │ console  │  │
-└────────────┘   config / poke           │  └────┬────┘  │  at /   │  │
-                                          │       │SQLite │  └──────────┘  │
-                                          │  ┌────┴────┐ ┌──────────┐      │
-                                          │  │  Caddy  │ │  (MQTT)  │      │
-                                          │  │  TLS    │ │  optional│      │
-                                          │  └─────────┘ └──────────┘      │
-                                          └─────────────────────────────┘
+                        one HTTP/2 connection, always opened by the tablet
+┌────────────┐  ───────────────────────────────▶  ┌──────────────────────────┐
+│  Tablet    │   enrol · heartbeat · fetch work    │  VPS                     │
+│  Ali MDM   │   download apks and files           │  ┌─────────┐ ┌─────────┐ │
+│  (Device   │   post results and frames           │  │ Go API  │ │ React   │ │
+│   Owner)   │                                     │  │ :8080   │ │ console │ │
+│            │  ◀ · · · · · · · · · · · · · · · ·  │  └────┬────┘ └─────────┘ │
+│  behind    │   wake: "there is work" (SSE),      │       │ SQLite           │
+│  NAT       │   and replies to the above          │  ┌────┴────────────────┐ │
+└────────────┘                                     │  │ Caddy — TLS, HTTP/2 │ │
+                                                   │  └─────────────────────┘ │
+                                                   └──────────────────────────┘
 ```
+
+Nothing can connect *to* a tablet, so the device opens everything. The wake
+stream is a shortcut, not a channel: it says only "there is work", the device
+answers by heartbeating, and if it never connects the 30-second poll does the
+same job more slowly. See [docs/architecture.md](docs/architecture.md).
 
 ## What it does
 - **Lockdown** — each tablet is a Ali MDM **Device Owner**: kiosk/lock-task,
@@ -54,6 +59,8 @@ apps/
 brand/             # logo kit: generated SVGs, Android vector icons, + their generator
 deploy/            # docker-compose.yml, Caddyfile (TLS), deploy.sh, backup.sh,
                    # systemd backup units, .env.example
+docs/              # architecture.md (how devices and the server talk),
+                   # SPEC.md, howto/
 docs/              # SPEC.md, build-android.md + howto/ guides
 tools/             # misc helper scripts
 ```

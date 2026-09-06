@@ -13,6 +13,11 @@ whitelist, managed from a self-hosted cloud console on a VPS.
 - Free / open-source. Non-profit budget.
 
 ## 2. Architecture
+
+> This section records what was planned. For how devices and the server
+> actually talk today — the wake stream, HTTP/2, the full endpoint list — see
+> [architecture.md](architecture.md), which is the authoritative description.
+> Two things below were superseded and are corrected inline.
 - DEVICE: fork of Ali MDM (MIT). Already has the primitives we need:
   - KioskModule.kt: Device Owner policies, startLockTask,
     setScreenCaptureDisabled(true), cloud wake-lock (PARTIAL_WAKE_LOCK + WifiLock).
@@ -23,9 +28,14 @@ whitelist, managed from a self-hosted cloud console on a VPS.
 - SERVER (VPS): lightweight API we build.
   - Data model borrowed from Headwind (Apache-2.0): Groups -> Config -> Devices.
   - Config format = standard Android Enterprise policy JSON (borrowed from Fleet).
-  - Protocol: device heartbeats (poll ~60s) + optional MQTT poke for instant push.
-    SSE on the console for live enrollment status.
+  - Protocol: device heartbeats + a poke for instant push.
+    SUPERSEDED: the poll is 30s, not 60s, and the push is a server-sent events
+    stream the device holds open — not MQTT. The MQTT bridge that exists runs
+    the other way: it lets an outside system (Home Assistant) flag work for a
+    device, and the device never subscribes to it.
   - Auth: per-device JWT. Operator console: email+password JWT (SSO later).
+    SUPERSEDED by §9: the device credential is an opaque per-device API key,
+    not a JWT. Only the operator console uses JWTs.
   - APKs served over HTTPS, SHA-256 verified on device.
 - CONSOLE: small React dashboard (enroll, groups, config, device status).
 
@@ -94,6 +104,10 @@ Ali MDM (MIT) ALREADY ships a complete, enabled cloud client (`CLOUD_ENABLED=tru
    App stays stock (easy to keep updating). All customization = server + a config template.
 
 ### Ali MDM cloud protocol (the contract our server must implement)
+<!-- The list below is the original contract. The server has grown since:
+     file delivery, app inventory, split packages, agent self-update and the
+     wake stream are all missing from it. architecture.md has the current
+     endpoint list. -->
 Auth: `Authorization: Bearer <apiKey>` (opaque per-device key, NOT JWT).
 - POST /api/v1/devices/enroll/        {token, device_info} -> {device_id, api_key, organization_name}
 - POST /api/v1/devices/{id}/heartbeat/ {telemetry, config, config_version, config_updated_at, sensitive_config}
