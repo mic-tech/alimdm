@@ -268,3 +268,72 @@ func TestIsArchiveName(t *testing.T) {
 		}
 	}
 }
+
+// The exact shape mic-tech/app-packager writes: a base, splits named after
+// their own split id, an icon, and an XAPK v2 manifest.json. Its APK entries
+// are stored uncompressed, which is a different zip method from the deflated
+// archives elsewhere in these tests.
+func TestUnpacksAppPackagerOutput(t *testing.T) {
+	root := t.TempDir()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	store := func(name, body string) {
+		t.Helper()
+		w, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store("base.apk", "the base")
+	store("config.arm64_v8a.apk", "native libraries")
+	store("config.en.apk", "english strings")
+	store("config.xxhdpi.apk", "drawables")
+	deflated, _ := zw.Create("icon.png")
+	deflated.Write([]byte("PNG"))
+	deflated, _ = zw.Create("manifest.json")
+	deflated.Write([]byte(`{"package_name":"com.example.app","split_apks":[{"id":"base","file":"base.apk"}]}`))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	set, err := UnpackArchive(bytes.NewReader(buf.Bytes()), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.Base != "base.apk" {
+		t.Fatalf("base = %q, want base.apk", set.Base)
+	}
+	if len(set.Parts) != 4 {
+		t.Fatalf("parts = %v, want the four APKs and neither the icon nor the manifest", set.Parts)
+	}
+	if set.Parts[0] != "base.apk" {
+		t.Fatalf("parts[0] = %q, want the base first", set.Parts[0])
+	}
+	got, err := os.ReadFile(filepath.Join(set.Dir, "config.en.apk"))
+	if err != nil || string(got) != "english strings" {
+		t.Fatalf("uncompressed entry did not survive extraction: %q, %v", got, err)
+	}
+}
+
+// The same tool, with OBB expansion files included. Refused, and the message
+// has to say why — the APKs alone would install an app that starts and cannot
+// find its data, which is worse than not installing it.
+func TestRefusesAppPackagerOutputWithOBB(t *testing.T) {
+	root := t.TempDir()
+	_, err := UnpackArchive(zipOf(t, map[string]string{
+		"base.apk":             "the base",
+		"config.arm64_v8a.apk": "native libraries",
+		"icon.png":             "PNG",
+		"manifest.json":        `{"package_name":"com.example.app","expansions":[{"file":"main.1.obb"}]}`,
+		"Android/obb/com.example.app/main.1.com.example.app.obb": "the app's data",
+	}), root)
+	if err == nil {
+		t.Fatal("accepted an archive whose expansion data cannot be installed")
+	}
+	if !strings.Contains(err.Error(), "OBB") {
+		t.Fatalf("error %q does not name the problem", err)
+	}
+}
