@@ -7,9 +7,14 @@ Once your tablets are enrolled, this is how you manage them from the console
 
 | Tab | What you do there |
 |---|---|
-| **Devices** | See all tablets live (online, battery, Android version). Send commands. |
+| **Devices** | Every tablet live — online, battery, Android version, free storage. Open one for its screen, its files, its installed apps and its history. Send commands. |
 | **Groups** | Edit a policy: managed apps, kiosk mode, return gesture, everything a group's tablets follow. |
-| **Activity** | What has happened across the fleet, newest first. |
+| **Activity** | What the fleet and its operators have done, newest first. An admin can clear it; the clear itself stays on the record. |
+| **Enroll** | Generate a provisioning QR (group + label baked in), or the ADB command for a tablet on a cable. |
+| **Packages** | Upload APKs and split bundles (`.xapk`/`.apks`), then push silent installs. |
+| **Files** | The document library. Upload a folder and it keeps its shape all the way to the tablet's inbox. |
+| **App update** | Stage a build of Ali MDM itself and roll it out over the air. The staged build is also what a scanned QR installs. |
+| **Users** *(admin)* | Who can sign in, and what they may do. |
 | **Enroll** | Generate a QR to enroll new or replacement tablets. |
 | **Packages** | Upload APKs to install on devices. |
 | **Files** | Upload documents and audio, and send them to tablets. |

@@ -68,14 +68,19 @@ When the setup wizard scans it:
 ## Step-by-step
 
 ### 1. Generate the QR in the console
-1. Open the console → **Enroll (QR)** tab
-2. Enter:
-   - **Cloud URL** — `http://192.168.1.100:8090` (local) or your HTTPS domain
-   - **Organization ID** — e.g. `mic-tech`
-   - **Enroll token** — your server's `ALIMDM_ENROLL_TOKEN`
-3. Leave **Zero-touch** checked (the APK download URL + checksum auto-fill)
-4. *(Optional)* Enter your Wi-Fi SSID + password so the tablet connects on its own
-5. Click **Generate QR** → **Download PNG**
+1. Open the console → **Enroll** tab → *Enroll by QR (no cable)*
+2. Fill in what the code should carry. The cloud URL, org and enrol token come
+   from the server's own config — you never type them:
+   - **Enroll into group** — the policy group the tablet lands in. Leave it on
+     *(server default)* and it goes to `default`.
+   - **Device label** *(optional)* — names the tablet in the console from the
+     moment it enrols. One code carries one label, so a per-tablet name means a
+     code per tablet; left blank the tablet shows as its id until renamed.
+   - **Wi-Fi SSID / password** *(optional)* — lets the tablet reach the server
+     before anyone has typed anything into it. Both are embedded in the QR.
+3. Click **Generate QR**. The code is only drawn when it would actually work: if
+   no build is staged or the checksum is unset, the page says so instead, rather
+   than handing you a code that fails after the download.
 
 ### 2. Factory-reset the tablet
 - Settings → System → Reset → **Erase all data (factory reset)**
@@ -86,7 +91,8 @@ When the setup wizard scans it:
 - When it asks for Wi-Fi, either:
   - connect manually, **or**
   - if you put Wi-Fi creds in the QR, it may connect automatically
-- Open the **camera** (or the setup wizard's "scan QR" step) and **scan the QR**
+- On the **very first setup screen, tap six times** — that opens the QR scanner
+  (there is no visible button for it) — then **scan the QR**
 - The wizard will:
   - download + install Ali MDM
   - set it as Device Owner
@@ -96,7 +102,9 @@ When the setup wizard scans it:
 ### 4. Verify enrollment
 - Watch the **Devices** tab in the console — the tablet should appear **online**
   within ~30 seconds
-- The tablet should be **locked to your 3 apps** (kiosk mode)
+- The tablet should be **locked to the apps in its group's whitelist**. A fresh
+  install starts with an empty whitelist, so add the packages first if you want
+  to see the lockdown on the first tablet.
 
 ## What to check if it doesn't work
 
@@ -108,36 +116,29 @@ When the setup wizard scans it:
 | Tablet enrolls but apps don't install | APKs not uploaded to console | Upload the 3 school APKs in the **APKs** tab, add to whitelist, Save & push |
 | QR won't scan | Low-res print / screen too small | Print larger, or use error-correction level H |
 
-## Regenerating the signature checksum for a different APK
+## The signing-cert checksum
 
-If you build/sign your **own** Ali MDM APK (instead of the official Rushb
-one), the checksum must match *your* signing cert:
+The QR carries the SHA-256 of the **signing certificate** of the APK the wizard
+downloads. It is not a hash of the APK file — that is a different provisioning
+field — and a wrong value fails only *after* the tablet has pulled everything
+down, which looks exactly like a network fault.
+
+You do not set it per QR. It comes from `ALIMDM_PROVISION_CHECKSUM` on the
+server, and the console refuses to draw a scannable code without it. Whoever
+signs the APK you stage decides the value, so it changes only when you change
+signing keys.
+
+To work it out for a build:
 
 ```bash
-# 1. Get the signing cert's SHA-256 digest (hex)
+# 1. The signing cert's SHA-256 digest, in hex
 apksigner verify --print-certs your-alimdm.apk | grep -oP '(?<=SHA-256 digest: )\S+'
 
-# 2. Convert hex -> raw bytes -> URL-safe base64
-python3 - <<'PY'
-import base64
-hexdigest = "PASTE-HEX-DIGEST-HERE"
-raw = bytes.fromhex(hexcipher if False else hexdigest)
-b64 = base64.b64encode(raw).decode()
-print(b64.replace("+","-").replace("/","_").rstrip("="))
-PY
+# 2. hex -> raw bytes -> url-safe base64, no padding
+python3 -c 'import base64,sys; print(base64.urlsafe_b64encode(bytes.fromhex(sys.argv[1])).decode().rstrip("="))' <HEX-DIGEST>
 ```
 
-Paste that value into the console's **APK signing-cert checksum** field.
-
-## The official Ali MDM signing cert (pre-filled)
-
-The official Rushb-signed Ali MDM APK is signed by:
-- **CN=Valentin GOMY, O=Rushb, OU=Dev, L=Mougins, ST=FRANCE, C=33**
-- SHA-256 fingerprint: `5E:B3:BB:83:BE:74:FA:F6:EE:DD:2A:22:03:DE:EA:33:61:CC:E8:6D:26:DB:85:9F:24:8D:C4:CC:09:03:07:61`
-- **URL-safe base64 checksum (what goes in the QR):** `XrO7g750-vbu3SoiA97qM2HM6G0m24WfJI3EzAkDB2E`
-
-This is pre-filled in the console, so if you use the official APK you don't
-need to change anything.
+Set that as `ALIMDM_PROVISION_CHECKSUM` and restart the API.
 
 ## ADB fallback
 

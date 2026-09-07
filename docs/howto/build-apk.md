@@ -1,83 +1,65 @@
 # Building the Ali MDM APK
 
-You need the Ali MDM APK to install on the tablets. Two ways to get it:
+There is no release to download. Ali MDM is a private fork of FreeKiosk with
+its own signing key, and the key is what everything else hangs off: the QR's
+`ALIMDM_PROVISION_CHECKSUM` is the SHA-256 of that certificate, and Android
+refuses an update signed by anything else. An upstream FreeKiosk release would
+install, fail the provisioning checksum, and never be able to update a tablet
+already running your build. Build it here.
 
-## Option 1 — Download the official release (easiest, recommended to start)
-
-Ali MDM publishes signed release APKs on GitHub:
-
-1. Go to **https://github.com/RushB-fr/alimdm/releases**
-2. Download the latest **`Ali MDM-vX.X.X.apk`** (the Android one).
-3. That's your APK — use it with `enroll-one.sh` / `adb install`.
-
-> This is the stock app. It already has the cloud client enabled, so it works
-> with our server out of the box. Start here.
-
-## Option 2 — Build your own (if you want to customize)
-
-Only do this if you need to change something (add a logo, tweak defaults, etc.).
-Building requires the **Android SDK** + **JDK 17** + **Node**.
+Building requires the **Android SDK**, **JDK 17** and **Node 20+**.
 
 ### Prerequisites
 ```bash
-# JDK 17
-# Android SDK (set ANDROID_HOME)
-# Node 18+
 echo $ANDROID_HOME   # should be set
+java -version        # 17
 ```
 
 ### Build
 ```bash
-cd alimdm/android
+cd apps/android/android
 ./gradlew assembleRelease
 ```
 
 The signed release APK lands at:
 ```
-alimdm/android/app/build/outputs/apk/release/app-release.apk
+apps/android/android/app/build/outputs/apk/release/app-release.apk
 ```
 
 ### Signing
-`assembleRelease` needs a signing config. Either:
-- Use your own keystore (set `signingConfigs.release` in
-  `android/app/build.gradle`), or
-- Build a **debug** APK for testing (auto-signed, not for production):
-  ```bash
-  ./gradlew assembleDebug
-  # -> android/app/build/outputs/apk/debug/app-debug.apk
-  ```
-  Debug APKs work for testing enrollment but aren't suitable for a permanent
-  production deployment (they expire / can't be updated cleanly).
 
-> **Recommendation:** use the **official release APK** (Option 1) for your
-> school. It's signed, tested, and already has the cloud client. Building your
-> own only makes sense if you're modifying the app.
+`assembleRelease` reads `apps/android/android/keystore.properties`, which names
+a keystore kept outside the repo. See `keystore.properties.example`. If that
+file is absent the build falls back to the debug keystore; if it is present but
+does not name a keystore the build fails on purpose, because silently producing
+a debug-signed APK gives you something that installs fine and can then never
+upgrade a single release-signed tablet.
 
-## Where to keep the APK
+**Back the keystore up somewhere off this machine.** Losing it means no tablet
+you have already shipped can ever be updated again.
 
-Keep a copy somewhere handy for enrollment, e.g.:
+For throwaway testing only:
+```bash
+./gradlew assembleDebug
+# -> app/build/outputs/apk/debug/app-debug.apk
 ```
-~/tablets/alimdm-release.apk
-```
-Then:
+
+## Getting it onto tablets
+
+**By QR (no cable).** Upload the APK on the console's **App update** page. That
+staged build is what a scanned QR downloads and installs, and what an over-the-air
+rollout sends to tablets already enrolled. This is wired up and is how the fleet
+is built — see [`zero-touch-qr.md`](zero-touch-qr.md).
+
+**By cable.** Keep a copy handy and pass it to the enrol script:
 ```bash
 ./docs/howto/enroll-one.sh https://cloud.yourdomain.com "$ALIMDM_ENROLL_TOKEN" ~/tablets/alimdm-release.apk
 ```
 
-## Hosting the APK (for the full zero-touch QR path)
+## After changing signing keys
 
-If you later want the QR to install the app automatically, host the APK at a
-public HTTPS URL on your VPS, e.g. `https://cloud.yourdomain.com/apk/alimdm.apk`.
-(Ask me to wire that up — it's a small addition to the server + QR generator.)
-
-## Note on the pre-downloaded APK
-
-A copy of the official release APK is kept locally at `apk/alimdm-v1.2.20-beta.6.apk`
-for testing, but it is **not committed to git** (it's a 61 MB binary — the repo holds
-source only). To re-download it anytime:
-
-```bash
-mkdir -p apk && cd apk
-curl -L -o alimdm-v1.2.20-beta.6.apk \
-  "https://github.com/RushB-fr/alimdm/releases/download/v1.2.20-beta.6/alimdm-v2.2.20-beta.6.apk"
-```
+If you ever sign with a different key, the provisioning checksum must change
+with it or QR enrolment fails *after* the tablet has downloaded the APK — which
+looks like a network fault. Regenerate it as described in
+[`zero-touch-qr.md`](zero-touch-qr.md), and remember that existing tablets
+cannot be updated across a key change at all.

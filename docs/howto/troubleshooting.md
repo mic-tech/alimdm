@@ -68,8 +68,10 @@ Work through this list:
 1. **Does the tablet have Wi-Fi / internet?** It must reach your cloud URL.
 2. **Is the cloud URL correct and HTTPS?** (Ali MDM requires HTTPS.)
 3. **Is the enroll token exactly right?** A single wrong character = 401.
-4. **Wait up to 30s** — the app heartbeats every 30s; it may just not have
-   ticked yet. Refresh the console.
+4. **Wait up to 30s** — the app heartbeats every 30s, and that poll is the
+   guarantee. An enrolled tablet usually also holds a wake stream open and
+   reacts in under a second, but a tablet that has not appeared at all has no
+   stream yet, so 30s is the number that matters here. Refresh the console.
 5. Check the app is actually running (it should be the home screen).
 
 ### Console shows the device but it's not locked

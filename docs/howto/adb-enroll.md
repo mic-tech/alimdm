@@ -1,6 +1,9 @@
-# Enrolling a Tablet with ADB (the main path)
+# Enrolling a Tablet with ADB
 
-This is the most reliable way to lock down a tablet.
+The cable route. Use it for a tablet already past its setup wizard, or when QR
+provisioning is blocked on a particular Android build — for a factory-fresh
+tablet, [`zero-touch-qr.md`](zero-touch-qr.md) needs no cable and is the path
+the fleet is enrolled with.
 ## TL;DR — one command
 
 Once `adb` is installed and the tablet is connected + authorized:

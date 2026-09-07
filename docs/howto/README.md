@@ -4,22 +4,26 @@ Practical, copy-paste guides for getting your Android tablets locked down and
 managed by Ali MDM Cloud. Read this top-to-bottom once; then use the specific
 guide that fits your situation.
 
-## The two big decisions
+## How do you enroll?
 
-**1. How do you enroll?**
-- **ADB (recommended for you)** — `adb-enroll.md`. One USB session per tablet.
-- **zero-touch-qr.md** — zero-touch QR (scan during setup, auto-download + install, no ADB)
-  Most reliable. Best when you have a computer + USB cable and ~12 tablets.
-- **QR / zero-touch** — `qr-enroll.md`. Scan a QR at first setup. No ADB.
-  Cleanest for a teacher to do unattended, but the app must be installable.
+- **QR at first setup** — [`zero-touch-qr.md`](zero-touch-qr.md). The tablet's
+  setup wizard downloads Ali MDM from your own server, makes it Device Owner and
+  enrols it, carrying the group and label you picked. No cable, no ADB, and a
+  teacher can run it unattended. **Start here.**
+- **ADB over USB** — [`adb-enroll.md`](adb-enroll.md). One USB session per
+  tablet. What you need for a tablet already past its setup wizard, or when the
+  QR path is blocked on a particular Android build.
 
-**2. Where does the Ali MDM APK come from?**
-- **Official release** — download from Ali MDM's GitHub Releases. Easiest.
-- **Your own build** — build from source if you want to customize. See
-  `build-apk.md`.
+## Where does the APK come from?
 
-> You almost always want **ADB + official release APK** to start. Use QR once
-> you've confirmed the ADB path works on one tablet.
+There is no public release to download — this is a private fork, and the app is
+built from this repo. Two ways it reaches a tablet:
+
+- **The QR path fetches it for you.** Whatever build is staged on the console's
+  **App update** page is what a scanned tablet installs, so a new tablet arrives
+  on the same version as the rest of the fleet. Nothing to download by hand.
+- **The ADB path needs a file.** Build one — see
+  [`build-apk.md`](build-apk.md) — and pass it to the enrol script.
 
 ## The 5 things every tablet needs (in order)
 
@@ -39,19 +43,22 @@ The guides below are just different ways to accomplish steps 1–4.
 | File | What it's for |
 |---|---|
 | `README.md` | This overview — read first |
-| `adb-enroll.md` | **Main path**: enroll one tablet over USB (step by step) |
+| `zero-touch-qr.md` | **Main path**: QR enrollment at first setup, no cable |
+| `adb-enroll.md` | Enroll one tablet over USB, step by step |
 | `enroll-one.sh` | The ADB steps as a copy-paste script (one tablet) |
 | `enroll-all.sh` | Loop to enroll many tablets at once |
-| `qr-enroll.md` | Zero-touch QR enrollment (from the website) |
-| `build-apk.md` | Build your own Ali MDM release APK |
+| `first-tablet-test.md` | Click-by-click first enrollment + app push, end to end |
+| `build-apk.md` | Build an Ali MDM release APK |
+| `publish-image.md` | Build and publish the server image |
 | `troubleshooting.md` | Fix the common problems |
 | `day-to-day.md` | Managing tablets after enrollment (change apps, unenroll, etc.) |
+| `qr-enroll.md` | Superseded — points at `zero-touch-qr.md` |
 
 ## Prerequisites (do these once)
 
 - **ADB installed** on your computer — see `adb-enroll.md` §1.
-- **The Ali MDM APK** downloaded — see `build-apk.md` (or grab the official
-  release).
+- **A build staged** on the console's App update page (for the QR path), or an
+  APK built locally (for ADB) — see `build-apk.md`.
 - **Your cloud is live** — you can log in to `https://cloud.yourdomain.com`.
 - **Your enroll token** — the `ALIMDM_ENROLL_TOKEN` value from your server's `.env`.
 
@@ -59,11 +66,14 @@ The guides below are just different ways to accomplish steps 1–4.
 
 ```
 1. Factory-reset the tablet (no accounts, no SIM)
-2. Enable USB debugging, connect to your computer, allow the prompt
-3. Run:  ./docs/howto/enroll-one.sh <cloud-url> <enroll-token> <path-to-apk>
+2. Console -> Enroll -> pick the group and label -> Generate QR
+3. Power on the tablet, tap the first setup screen six times, scan the QR
 4. Watch it appear online in the console within ~30s
 ```
 
-That's it for one tablet. Repeat per tablet (or use `enroll-all.sh`).
+That's it for one tablet, and the same code works for the next one if you leave
+the label blank. For the ADB route instead:
 
-- [first-tablet-test.md](first-tablet-test.md) — click-by-click first-tablet enrollment + app push test
+```
+./docs/howto/enroll-one.sh <cloud-url> <enroll-token> <path-to-apk>
+```

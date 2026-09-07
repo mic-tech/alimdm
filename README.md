@@ -37,16 +37,31 @@ answers by heartbeating, and if it never connects the 30-second poll does the
 same job more slowly. See [docs/architecture.md](docs/architecture.md).
 
 ## What it does
-- **Lockdown** — each tablet is a Ali MDM **Device Owner**: kiosk/lock-task,
+- **Lockdown** — each tablet runs Ali MDM as **Device Owner**: kiosk/lock-task,
   factory reset blocked, Ali MDM pinned as the home launcher. Only the apps in
   the whitelist run.
-- **Central management** — the operator console shows live device status
-  (online, battery, Android version), lets you **change the app whitelist**
-  (pushes to all devices within ~30s, no factory resets), upload APKs for
-  silent install, and send commands (reboot / lock / unlock / unenroll).
-- **Zero-touch enrollment** — a QR scanned at the tablet's first setup makes it
-  a Device Owner and auto-enrolls it to the cloud. (Or ADB-push for tablets
-  already past setup.)
+- **Central management** — the console shows live device status (online,
+  battery, Android version, free storage), and a policy group defines the
+  whitelist and kiosk behaviour for a whole set of tablets at once. Changes
+  reach a connected device in under a second, and within 30s otherwise — no
+  factory resets.
+- **Enrollment** — a QR scanned at the tablet's first setup downloads the app,
+  makes it Device Owner, and enrols it into the group and under the label you
+  chose when generating the code. ADB enrolment covers tablets already past
+  setup.
+- **Apps** — upload an APK or a split bundle (`.xapk`/`.apks`, base + config
+  splits committed as one install session) and push a silent install. The
+  console can also list what a tablet actually has installed and uninstall
+  remotely.
+- **Files** — a document library that keeps its folder structure, sent to the
+  tablets' inbox folder and readable there in the pupil's own Files app.
+- **Ali MDM updates itself** — stage a build and roll it out over the air; the
+  same build is what a newly scanned QR installs, so a new tablet never arrives
+  older than the fleet.
+- **Seeing what happened** — screenshots and a live view with remote input, and
+  an activity feed recording every operator action and everything the server
+  noticed on its own.
+- **Commands** — reboot, lock/unlock, screen on/off, request logs, unenroll.
 
 ## Repository layout
 
@@ -62,25 +77,25 @@ brand/             # logo kit: generated SVGs, Android vector icons, + their gen
 deploy/            # docker-compose.yml, Caddyfile (TLS), deploy.sh, backup.sh,
                    # systemd backup units, .env.example
 docs/              # architecture.md (how devices and the server talk),
-                   # SPEC.md, howto/
-docs/              # SPEC.md, build-android.md + howto/ guides
+                   # SPEC.md, build-android.md, howto/ guides
 tools/             # misc helper scripts
 ```
 
 Build and deploy are driven from the repo root:
 
 ```
-docker build -f apps/server/Dockerfile -t ali-mdm-cloud .
+docker build -f apps/server/Dockerfile -t alimdm-cloud .
 ```
 
 ## Quick start (on your VPS)
 1. **DNS** — point `cloud.yourdomain.com` (A/AAAA) at the VPS IP.
 2. **Install** Docker + the compose plugin.
 3. **Clone** this repo on the VPS.
-4. **Configure**
+4. **Configure** — the env file lives in `deploy/`, and `deploy.sh` creates it
+   from the example on first run, then stops so you can fill it in.
    ```
-   cp .env.example .env
-   # edit .env: CLOUD_DOMAIN, ALIMDM_BASE_URL, and generate:
+   cp deploy/.env.example deploy/.env
+   # edit it: CLOUD_DOMAIN, ALIMDM_BASE_URL, and generate:
    export ALIMDM_SECRET=*** rand -hex 32)
    export ALIMDM_ENROLL_TOKEN=*** rand -hex 24)
    ```
@@ -91,9 +106,9 @@ docker build -f apps/server/Dockerfile -t ali-mdm-cloud .
    It builds the images, starts API + Caddy (automatic HTTPS), and creates your
    first operator + the default 3-app lockdown group.
 6. **Open the console** — `https://cloud.yourdomain.com` and sign in.
-7. **Enroll tablets** — see `enroll/README.md`:
+7. **Enroll tablets** — see [`apps/enroll/README.md`](apps/enroll/README.md):
    ```
-   python3 enroll/enroll.py --cloud https://cloud.yourdomain.com \
+   python3 apps/enroll/enroll.py --cloud https://cloud.yourdomain.com \
        --token "$ALIMDM_ENROLL_TOKEN" --org your-org --mode qr
    ```
    Scan the QR at each tablet's first setup. They appear online in the console
@@ -111,7 +126,7 @@ Add packages in the console → **Apps & Lockdown**, by package name (for exampl
 ```
 cd apps/android/android
 ./gradlew assembleRelease
-# -> android/app/build/outputs/apk/release/app-release.apk
+# -> app/build/outputs/apk/release/app-release.apk
 ```
 (Requires the Android SDK. The QR enrollment path doesn't need this if the
 tablet can install Ali MDM during setup.)
