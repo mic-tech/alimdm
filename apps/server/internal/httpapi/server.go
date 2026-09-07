@@ -437,8 +437,26 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	// tablet enrolls, the config syncs (grid appears), and the apps start
 	// downloading + installing immediately — no manual "Install to devices" click.
 	autoQueued := s.autoQueueInstalls(d.ID, d.GroupID, now)
-	s.recordAs("device", "device_enrolled", store.EventInfo, id,
-		"Enrolled "+id+" into "+groupID)
+	// Say what the tablet actually asked for, not just where it ended up.
+	// A QR carries the group and label the operator chose, and until now a
+	// tablet that arrived without them looked exactly like one that arrived
+	// with them and was ignored: both read "Enrolled X into default". That is
+	// the difference between a QR generated without a group and an extra lost
+	// on the way, and it is the one thing the feed could not answer.
+	sev := store.EventInfo
+	summary := "Enrolled " + id
+	if label != "" {
+		summary += " as \u201c" + label + "\u201d"
+	}
+	summary += " into " + groupID
+	switch {
+	case req.GroupID != "" && req.GroupID != groupID:
+		sev = store.EventWarn
+		summary += " \u2014 it asked for group \u201c" + req.GroupID + "\u201d, which does not exist"
+	case req.GroupID == "" && label == "":
+		summary += " \u2014 it asked for no group and no label"
+	}
+	s.recordAs("device", "device_enrolled", sev, id, summary)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"device_id":         id,

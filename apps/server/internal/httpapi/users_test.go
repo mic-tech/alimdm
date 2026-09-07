@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"ali-mdm/server/internal/apk"
 	"ali-mdm/server/internal/auth"
 	"ali-mdm/server/internal/blob"
 	"ali-mdm/server/internal/store"
@@ -42,10 +43,15 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 
-	// A real file store: the inbox tests move actual bytes, and a nil store
-	// would make them pass by refusing every upload.
+	// Real stores throughout: the inbox tests move actual bytes, and a nil one
+	// would make them pass by refusing every upload. The APK stores are never
+	// nil in a running server either — enrolling into a group whose config
+	// parses walks straight into apks.List(), so a nil there is a panic no
+	// production path can reach and every test would have to route around.
 	files := blob.NewStore(filepath.Join(t.TempDir(), "files"))
-	srv := New(st, auth.NewSigner("test-secret"), nil, nil, files, NewPokeQueue(), "enroll", "http://x", "")
+	apks := apk.NewStore(filepath.Join(t.TempDir(), "apks"))
+	agents := apk.NewStore(filepath.Join(t.TempDir(), "agent-apks"))
+	srv := New(st, auth.NewSigner("test-secret"), apks, agents, files, NewPokeQueue(), "enroll", "http://x", "")
 	return &testEnv{t: t, mux: srv.Routes(), st: st, srv: srv}
 }
 
