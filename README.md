@@ -176,6 +176,34 @@ looks like an application bug:
   **`proxy_buffering off`** (or the app's `X-Accel-Buffering: no`) so streamed
   responses are not held back.
 
+One thing worth adding rather than merely not breaking: a per-address cap on
+sign-in attempts. The API locks a single account after a few failures, but that
+lock is keyed by email and cannot see one guess each across many accounts. Only
+the proxy knows the real client address — the API sees `127.0.0.1` — so the
+per-address half belongs there.
+
+```nginx
+# http level, outside the server block
+limit_req_zone $binary_remote_addr zone=alimdm_login:10m rate=10r/m;
+
+# inside the server block, before `location /`
+location = /api/v1/operator/login {
+    limit_req zone=alimdm_login burst=5 nodelay;
+    limit_req_status 429;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_pass http://127.0.0.1:8080;
+}
+```
+
+Signing in is one request, so 10 a minute is far above any person and far below
+anything worth an attacker's time. Caddy has no equivalent in a stock build —
+see the note in `deploy/Caddyfile`.
+
 The security headers are set by the application, not by the proxy, so they
 survive a proxy swap: `X-Frame-Options: DENY` and `frame-ancestors 'none'`
 (an operator console must never be framable), `nosniff`, a referrer policy, and

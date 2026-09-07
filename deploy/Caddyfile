@@ -5,6 +5,34 @@
 {$CLOUD_DOMAIN} {
 	encode gzip zstd
 
+	# Rate-limiting sign-in attempts is worth doing, and Caddy cannot do it as
+	# shipped: there is no rate_limit directive in a stock build. It comes from
+	# a third-party module, so the block below is commented out — uncommented
+	# against a stock binary, Caddy refuses to start on an unknown directive.
+	#
+	# To use it, build Caddy with the module and swap the image in
+	# docker-compose.yml for your own:
+	#
+	#   xcaddy build --with github.com/mholt/caddy-ratelimit
+	#
+	#   rate_limit {
+	#       zone alimdm_login {
+	#           match {
+	#               method POST
+	#               path /api/v1/operator/login
+	#           }
+	#           key    {remote_host}
+	#           events 10
+	#           window 1m
+	#       }
+	#   }
+	#
+	# Without it you are not unprotected: the API locks a single account after a
+	# few failed attempts on its own. What the proxy adds is the per-address cap
+	# that catches one guess each across many accounts, which an account-keyed
+	# lockout cannot see. The nginx equivalent is in the README, and needs no
+	# plugin.
+
 	# API + console.
 	#
 	# Three things this deliberately does NOT configure, because Caddy already
