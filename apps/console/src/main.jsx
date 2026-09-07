@@ -2548,7 +2548,15 @@ function folderStats(node) {
 
 /* Flatten the tree into table rows, honouring which folders are open. Rows
    carry their depth so the File column can indent them, and folders come before
-   files at each level, the way a file manager orders them. */
+   files at each level, the way a file manager orders them.
+
+   A row key is its full path, composed from the folder it sits in. The device
+   listing reports a file by its bare name, so keying on that alone gave all
+   five "Track 01.mp3" the same key — 144 of 242 rows collided, and React
+   cannot tell colliding rows apart to remove them. Collapsing a folder dropped
+   the right rows from this array and left the wrong ones on screen, which read
+   as the folders not collapsing at all. The library keys the same way and is
+   unaffected: there a name is already the full path. */
 function treeRows(node, isOpen, depth = 0, out = []) {
   const folders = [...node.folders.values()].sort((a, b) => byName(a.name, b.name));
   for (const d of folders) {
@@ -2556,7 +2564,7 @@ function treeRows(node, isOpen, depth = 0, out = []) {
     if (isOpen(d.path)) treeRows(d, isOpen, depth + 1, out);
   }
   for (const f of [...node.files].sort((a, b) => byName(a.label, b.label))) {
-    out.push({ kind: "file", key: "f:" + f.name, file: f, depth });
+    out.push({ kind: "file", key: "f:" + (node.path ? node.path + "/" : "") + f.label, file: f, depth });
   }
   return out;
 }
