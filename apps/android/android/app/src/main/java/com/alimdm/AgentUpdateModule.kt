@@ -319,36 +319,58 @@ class AgentUpdateModule(reactContext: ReactApplicationContext) :
                 "Agent update versionCode mismatch: APK is $apkVersion, rollout expected $target.",
             )
         }
-        if (!signaturesMatchSelf(apk)) {
+        // Read both sides before judging. Saying "different key" when the
+        // signature could not be read at all is what sent a working rollout to
+        // a dead end: the certificates were provably identical and the message
+        // insisted otherwise.
+        val mine = signersOf(installed = true, apk = null)
+            ?: throw RuntimeException("Cannot read this app's own signature; refusing to install an update blind.")
+        val theirs = signersOf(installed = false, apk = apk)
+            ?: throw RuntimeException("Cannot read the signature of the downloaded update; refusing to install it.")
+        if (theirs.isEmpty() || !mine.containsAll(theirs)) {
             throw RuntimeException("Agent update is signed with a different key; refusing to install.")
         }
     }
 
+    /**
+     * The signing certificates of either this installed app or an APK file, or
+     * null when they cannot be read at all.
+     *
+     * Both APIs are tried on every Android version rather than switching on
+     * SDK_INT. getPackageArchiveInfo with GET_SIGNING_CERTIFICATES returns a
+     * null signingInfo on Android 9 and 10 — the flag is honoured for installed
+     * packages but not for archives — so a tablet on those releases could read
+     * its own certificate, read nothing for the update, and conclude the two
+     * differed. Both APKs there were signed by the same key. The deprecated
+     * GET_SIGNATURES call still works on those releases and is the fallback.
+     */
     @Suppress("DEPRECATION")
-    private fun signaturesMatchSelf(apk: File): Boolean {
+    private fun signersOf(installed: Boolean, apk: File?): Set<String>? {
         val ctx = reactApplicationContext
         val pm = ctx.packageManager
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val mine = pm.getPackageInfo(ctx.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
-                    .signingInfo?.apkContentsSigners ?: return false
-                val theirs = pm.getPackageArchiveInfo(
-                    apk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES,
-                )?.signingInfo?.apkContentsSigners ?: return false
-                val mineSet = mine.map { it.toCharsString() }.toSet()
-                theirs.isNotEmpty() && theirs.all { mineSet.contains(it.toCharsString()) }
-            } else {
-                val mine = pm.getPackageInfo(ctx.packageName, PackageManager.GET_SIGNATURES)
-                    .signatures ?: return false
-                val theirs = pm.getPackageArchiveInfo(
-                    apk.absolutePath, PackageManager.GET_SIGNATURES,
-                )?.signatures ?: return false
-                val mineSet = mine.map { it.toCharsString() }.toSet()
-                theirs.isNotEmpty() && theirs.all { mineSet.contains(it.toCharsString()) }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val info = try {
+                if (installed) pm.getPackageInfo(ctx.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+                else pm.getPackageArchiveInfo(apk!!.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+            } catch (_: Exception) {
+                null
             }
-        } catch (_: Exception) {
-            false
+            val signers = info?.signingInfo?.apkContentsSigners
+            if (signers != null && signers.isNotEmpty()) {
+                return signers.map { it.toCharsString() }.toSet()
+            }
         }
+
+        val info = try {
+            if (installed) pm.getPackageInfo(ctx.packageName, PackageManager.GET_SIGNATURES)
+            else pm.getPackageArchiveInfo(apk!!.absolutePath, PackageManager.GET_SIGNATURES)
+        } catch (_: Exception) {
+            null
+        }
+        val signatures = info?.signatures
+        if (signatures == null || signatures.isEmpty()) return null
+        return signatures.map { it.toCharsString() }.toSet()
     }
 
     /**
