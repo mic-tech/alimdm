@@ -180,7 +180,8 @@ function Groups({ onErr }) {
     const n = countFor(g.id);
     if (!confirm(
       `Re-apply the "${g.name}" policy to ${n === 1 ? "1 device" : `all ${n} devices`}?\n\n` +
-      "Each one is sent the whole policy again on its next check-in, within about 30 seconds, " +
+      "Each one is sent the whole policy again — at once for devices holding the wake " +
+      "stream open, and on their next check-in within 30 seconds for the rest — " +
       "and any setting changed on the device itself goes back to what the policy says.",
     )) return;
     setBusy(true);
@@ -340,8 +341,9 @@ function Groups({ onErr }) {
    because the tablet is in a cupboard. */
 /* Live view. Frames travel tablet → server → here, because nothing can open a
    connection to a tablet behind school NAT. The tablet only learns it is being
-   watched on its next heartbeat, so the first frame can be up to 30 seconds
-   away; the panel says so rather than showing a spinner that looks broken. */
+   watched when it next heartbeats — immediately if it is holding the wake
+   stream open, otherwise up to 30 seconds later. The panel says so rather than
+   showing a spinner that looks broken. */
 function LiveView({ device, onErr }) {
   const imgRef = useRef(null);
   const [state, setState] = useState("starting");
@@ -465,7 +467,7 @@ function LiveView({ device, onErr }) {
         {state !== "live" && (
           <span className="muted small" style={{ padding: 40, textAlign: "center" }}>
             {state === "error" ? "The stream stopped."
-              : "Waiting for the first frame — the device starts on its next check-in, up to 30s."}
+              : "Waiting for the first frame — the device starts on its next check-in, usually at once, up to 30s if it is not on the wake stream."}
           </span>
         )}
       </div>
@@ -653,7 +655,8 @@ function deviceLabel(d) {
    about to go back to what the policy says. */
 function resendPrompt(label) {
   return `Re-apply the policy to ${label}?\n\n` +
-    "It is sent the whole policy again on its next check-in, within about 30 seconds, " +
+    "It is sent the whole policy again — at once if the device is holding the wake " +
+    "stream open, otherwise on its next check-in within 30 seconds — " +
     "and any setting changed on the device itself goes back to what the policy says.";
 }
 
@@ -1980,7 +1983,7 @@ function Devices({ onErr, navigate }) {
                   icon={IconDevices}
                   title={devices.length === 0 ? "No devices enrolled yet" : "No devices match that search"}
                   desc={devices.length === 0
-                    ? "Enroll a device over ADB and it will appear here within a few seconds."
+                    ? "Enroll a device — scan the QR at its first setup, or use ADB over USB — and it will appear here within about 30 seconds."
                     : "Try a different device id, model, or Android version."} />
               </td></tr>
             )}
@@ -3389,8 +3392,12 @@ function Users({ me, onErr, onMeChange }) {
         </>}
         note={
           <Alert>
-            Administrators manage user accounts as well as devices. Operators can do
-            everything except add, modify, or remove users.
+            Administrators manage user accounts as well as devices. An operator does
+            everything to the fleet — policies, commands, packages, files, app
+            rollouts — but four things are admin-only: user accounts, device logs
+            (a minute-by-minute account of a classroom’s tablet), the offline-alert
+            webhook, and clearing the activity feed, which is the fleet’s record of
+            who did what.
           </Alert>
         }
       >
@@ -3609,7 +3616,7 @@ const NAV = [
   { id: "notifications", path: "activity", icon: IconBell, txt: "Activity", title: "Activity",
     desc: "What the fleet has done, and who to tell when a device goes quiet" },
   { id: "enroll", path: "enroll", icon: IconEnroll, txt: "Enroll", title: "Enroll a device",
-    desc: "Bring a new device under management over ADB" },
+    desc: "Bring a new device under management \u2014 by QR at first setup, or over ADB" },
   { id: "apks", path: "packages", icon: IconPackage, txt: "Packages", title: "App packages",
     desc: "Upload APKs and push silent installs to your fleet" },
   { id: "files", path: "files", icon: IconFile, txt: "Files", title: "File library",

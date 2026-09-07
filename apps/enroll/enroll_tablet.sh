@@ -1,13 +1,15 @@
 #!/bin/bash
 # ============================================================
 # Ali MDM ADB enrollment - one tablet at a time
-# Usage: ./enroll_tablet.sh <adb-serial> [--group <group-id>]
+# Usage: ./enroll_tablet.sh <adb-serial> [--group <group-id>] [--label "<name>"]
 #   e.g. ./enroll_tablet.sh HA273Z07
-#   e.g. ./enroll_tablet.sh HA273Z07 --group classroom-a
+#   e.g. ./enroll_tablet.sh HA273Z07 --group classroom-a --label "Library tablet"
 #
 #   --group <id>  Enroll the tablet into a specific policy group instead of
 #                 "default". The group must already exist (create it in the
 #                 console Groups tab). Omit to use "default".
+#   --label <s>   Name the tablet in the console from the moment it enrols.
+#                 Omit and it shows as its device id until someone renames it.
 #
 # Prereqs (done on the tablet BEFORE running this):
 #   1. Factory reset + complete basic setup (language, Wi-Fi) to home screen

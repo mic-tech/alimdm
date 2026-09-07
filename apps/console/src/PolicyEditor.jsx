@@ -550,7 +550,7 @@ export default function PolicyEditor({ groupId, onErr, onClose }) {
       setDirty(false);
       const el = document.getElementById("toast");
       if (el) {
-        el.textContent = `Policy saved (v${g.config_version}). Devices re-sync within ~30s.`;
+        el.textContent = `Policy saved (v${g.config_version}). Devices re-sync at once, or within 30s if offline.`;
         el.className = "toast ok"; el.style.display = "flex";
         setTimeout(() => (el.style.display = "none"), 3600);
       }
