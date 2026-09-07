@@ -242,3 +242,102 @@ func TestSeverityFilterCoversWarningsAndErrors(t *testing.T) {
 		}
 	}
 }
+
+// Clearing the feed is the one action on it that an operator must not have.
+// The feed is the answer to "who did this", so anyone able to wipe it can
+// cover their own tracks — which is the whole reason it is server-side.
+func TestClearingTheFeedIsAdminOnly(t *testing.T) {
+	e := newTestEnv(t)
+	adminTok := e.login("admin@x.com", "adminpassword")
+	e.do("POST", "/api/v1/users", adminTok, map[string]string{
+		"email": "op@x.com", "name": "Op", "role": "operator", "password": "operatorpw1",
+	})
+	opTok := e.login("op@x.com", "operatorpw1")
+
+	// Something worth keeping.
+	e.do("PUT", "/api/v1/groups/default", adminTok, map[string]any{
+		"name": "Default", "config": map[string]any{"general": map[string]any{"displayMode": "webview"}},
+	})
+	before, _ := e.feed(t, opTok)
+	if len(before) == 0 {
+		t.Fatal("nothing was recorded, so this test would pass for the wrong reason")
+	}
+
+	rec, _ := e.do("DELETE", "/api/v1/events", opTok, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("operator clearing the feed: status %d, want 403", rec.Code)
+	}
+	if after, _ := e.feed(t, opTok); len(after) != len(before) {
+		t.Fatalf("feed went from %d to %d entries on a refused clear", len(before), len(after))
+	}
+}
+
+// An admin can clear it, and exactly one entry survives: the one saying it was
+// cleared, and by whom. A record that can be wiped without a trace is not one.
+func TestClearingTheFeedLeavesTheClearItself(t *testing.T) {
+	e := newTestEnv(t)
+	adminTok := e.login("admin@x.com", "adminpassword")
+	e.do("PUT", "/api/v1/groups/default", adminTok, map[string]any{
+		"name": "Default", "config": map[string]any{"general": map[string]any{"displayMode": "webview"}},
+	})
+	before, _ := e.feed(t, adminTok)
+	if len(before) == 0 {
+		t.Fatal("nothing to clear")
+	}
+
+	rec, body := e.do("DELETE", "/api/v1/events", adminTok, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	if removed, _ := body["removed"].(float64); int(removed) != len(before) {
+		t.Errorf("removed = %v, want %d", body["removed"], len(before))
+	}
+
+	after, _ := e.feed(t, adminTok)
+	if len(after) != 1 {
+		t.Fatalf("%d entries after clearing, want just the record of the clear", len(after))
+	}
+	entry, _ := after[0].(map[string]any)
+	if entry["kind"] != "events_cleared" {
+		t.Errorf("surviving entry kind = %v, want events_cleared", entry["kind"])
+	}
+	if entry["actor"] != "Admin" {
+		t.Errorf("actor = %v, want the admin who cleared it", entry["actor"])
+	}
+}
+
+// Ids must keep climbing across a clear.
+//
+// Read markers are ids, and emptying a table sends an ordinary SQLite rowid
+// back to 1 — only the AUTOINCREMENT on events.id keeps it climbing. Without
+// it the first event after a clear would land below every operator's marker
+// and arrive already counted as read: a fleet-wide notification nobody is
+// told about.
+func TestClearingDoesNotRestartEventIds(t *testing.T) {
+	e := newTestEnv(t)
+	adminTok := e.login("admin@x.com", "adminpassword")
+	e.do("PUT", "/api/v1/groups/default", adminTok, map[string]any{
+		"name": "Default", "config": map[string]any{"general": map[string]any{"displayMode": "webview"}},
+	})
+	before, _ := e.feed(t, adminTok)
+	highest, _ := before[0].(map[string]any)["id"].(float64)
+
+	// Read everything, so the badge is at zero to begin with.
+	e.do("POST", "/api/v1/events/read", adminTok, map[string]any{"up_to": 0})
+	if _, unread := e.feed(t, adminTok); unread != 0 {
+		t.Fatalf("unread = %v before the clear, want 0", unread)
+	}
+
+	if rec, _ := e.do("DELETE", "/api/v1/events", adminTok, nil); rec.Code != http.StatusOK {
+		t.Fatalf("clear: status %d", rec.Code)
+	}
+
+	after, unread := e.feed(t, adminTok)
+	next, _ := after[0].(map[string]any)["id"].(float64)
+	if next <= highest {
+		t.Fatalf("first event after clearing has id %v, not past the old high of %v — ids restarted", next, highest)
+	}
+	if unread != 1 {
+		t.Errorf("unread = %v after the clear, want 1 — the clear itself", unread)
+	}
+}

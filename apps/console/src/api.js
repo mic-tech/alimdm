@@ -45,6 +45,8 @@ export const api = {
     return req("GET", "/events?" + q.toString());
   },
   markEventsRead: (upTo) => req("POST", "/events/read", { up_to: upTo }),
+  /** Empties the feed for everyone. Admin-only; leaves a record of the clear. */
+  clearEvents: () => req("DELETE", "/events"),
   /** One device in full, for its own page. */
   getDevice: (id) => req("GET", "/devices/" + encodeURIComponent(id)),
   /** What has been queued for a device, and how it went. */

@@ -1184,6 +1184,36 @@ func (s *Store) CountDeviceEvents(deviceID string) int {
 // older entries are not there rather than looking like it lost them.
 func MaxEventsKept() int { return maxEvents }
 
+// ClearEvents empties the feed and reports how many entries went.
+//
+// Bounded by the newest id at the moment it runs, rather than an unqualified
+// DELETE: an event recorded while the clear is in flight — a tablet going
+// quiet, another operator mid-action — is newer than what the admin asked to
+// clear, and survives it.
+//
+// Ids must not be reused across this. Read markers are ids, so an event
+// numbered below one would arrive already counted as read. The AUTOINCREMENT
+// on events.id is what guarantees that and is the reason it is there; drop it
+// and emptying the table sends the next id back to 1.
+func (s *Store) ClearEvents() (int64, error) {
+	var upTo sql.NullInt64
+	if err := s.db.QueryRow(`SELECT MAX(id) FROM events`).Scan(&upTo); err != nil {
+		return 0, err
+	}
+	if !upTo.Valid {
+		return 0, nil
+	}
+	res, err := s.db.Exec(`DELETE FROM events WHERE id <= ?`, upTo.Int64)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, nil
+	}
+	return n, nil
+}
+
 // CountEventsAfter reports how many entries are newer than the given id, which
 // is what the console's unread badge shows.
 func (s *Store) CountEventsAfter(id int64) (int, error) {

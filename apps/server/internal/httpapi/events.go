@@ -145,6 +145,23 @@ func (s *Server) markEventsRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "read_up_to": body.UpTo})
 }
 
+// clearEvents empties the feed. Admin-only: this is the fleet's only record of
+// who did what, and an operator must not be able to erase their own tracks.
+//
+// One entry survives — the one saying it was cleared, and by whom. A record
+// that can be wiped without a trace is not a record, and the alternative,
+// refusing to clear at all, just leaves admins deleting rows by hand.
+func (s *Server) clearEvents(w http.ResponseWriter, r *http.Request) {
+	n, err := s.st.ClearEvents()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not clear the activity feed")
+		return
+	}
+	s.record(r, "events_cleared", store.EventWarn, "",
+		"Cleared the activity feed \u2014 "+plural(int(n), "entry", "entries")+" removed")
+	writeJSON(w, map[string]any{"ok": true, "removed": n})
+}
+
 // deviceLabel prefers the operator's label, falling back to the id, so a feed
 // entry reads "Library tablet went quiet" rather than an opaque serial.
 func deviceLabel(id, name string) string {

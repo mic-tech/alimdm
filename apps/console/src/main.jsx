@@ -1601,6 +1601,23 @@ function Notifications({ me, onErr }) {
     setBusy(false);
   }
 
+  /* Admin-only, and deliberately blunt about it: this is the fleet's only
+     record of who did what, and it does not come back. */
+  async function clearAll() {
+    if (!confirm(
+      `Clear the activity feed?\n\n` +
+      `All ${total} entr${total === 1 ? "y" : "ies"} are removed, for every operator, ` +
+      `and cannot be recovered. A single entry recording that you cleared it stays behind.`
+    )) return;
+    setBusy(true);
+    try {
+      const r = await api.clearEvents();
+      toast(`Cleared ${r.removed} entr${r.removed === 1 ? "y" : "ies"}`);
+      await load();
+    } catch (e) { onErr(e.message); }
+    setBusy(false);
+  }
+
   if (!events) return <Loading label="Loading notifications…" />;
 
   return (
@@ -1619,6 +1636,12 @@ function Notifications({ me, onErr }) {
             <option value="error">Failures only</option>
           </select>
           <button className="btn outline sm" disabled={busy} onClick={markAllRead}>Mark all read</button>
+          {me?.role === "admin" && (
+            <button className="btn danger-outline sm" disabled={busy || total === 0}
+              title="Remove every entry, for every operator" onClick={clearAll}>
+              Clear activity
+            </button>
+          )}
           <button className="btn outline sm" onClick={load}><IconRefresh />Refresh</button>
         </>}
         note={

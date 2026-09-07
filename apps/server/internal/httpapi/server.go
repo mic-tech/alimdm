@@ -237,6 +237,9 @@ func (s *Server) Routes() *http.ServeMux {
 	// they see what the fleet and their colleagues have been doing.
 	mux.HandleFunc("GET /api/v1/events", s.requireOperator(s.listEvents))
 	mux.HandleFunc("POST /api/v1/events/read", s.requireOperator(s.markEventsRead))
+	// Admin-only: the feed is the record of who did what, so clearing it is not
+	// something an operator does to their own tracks.
+	mux.HandleFunc("DELETE /api/v1/events", s.requireAdmin(s.clearEvents))
 
 	mux.HandleFunc("GET /api/v1/settings/alerts", s.requireAdmin(s.getAlertSettings))
 	mux.HandleFunc("PUT /api/v1/settings/alerts", s.requireAdmin(s.updateAlertSettings))
