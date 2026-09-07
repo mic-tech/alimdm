@@ -18,7 +18,8 @@ whitelist, managed from a self-hosted cloud console on a VPS.
 > actually talk today — the wake stream, HTTP/2, the full endpoint list — see
 > [architecture.md](architecture.md), which is the authoritative description.
 > Two things below were superseded and are corrected inline.
-- DEVICE: fork of Ali MDM (MIT). Already has the primitives we need:
+- DEVICE: fork of FreeKiosk (https://github.com/rushb-fr/freekiosk, MIT, © 2025
+  Rushb), rebranded as Ali MDM. Already has the primitives we need:
   - KioskModule.kt: Device Owner policies, startLockTask,
     setScreenCaptureDisabled(true), cloud wake-lock (PARTIAL_WAKE_LOCK + WifiLock).
   - ManagedAppInstallerModule.kt: silent OTA APK install w/ Bearer token auth,
@@ -91,8 +92,10 @@ whitelist, managed from a self-hosted cloud console on a VPS.
 - APK storage: plain disk on VPS, served over HTTPS by the API
 - Operator auth: email+password JWT (SSO can be layered on later)
 
-## 9. ARCHITECTURE PIVOT (major) — discovered during Ali MDM source analysis
-Ali MDM (MIT) ALREADY ships a complete, enabled cloud client (`CLOUD_ENABLED=true`):
+## 9. ARCHITECTURE PIVOT (major) — discovered during FreeKiosk source analysis
+FreeKiosk (MIT, © 2025 Rushb) ALREADY ships a complete, enabled cloud client
+(`CLOUD_ENABLED=true`). Everything in this list is upstream's work, and it is
+why the whole project is shaped the way it is:
   - src/utils/CloudSyncService.ts   — 30s heartbeat, SHA-256 config-hash change detection,
                                       sync_action:apply config import, enroll/unenroll/wipe
   - src/utils/CloudCommandService.ts— command queue poll + APK-update channel + result reporting
@@ -100,10 +103,10 @@ Ali MDM (MIT) ALREADY ships a complete, enabled cloud client (`CLOUD_ENABLED=tru
   - android/.../CloudHeartbeatTaskService.kt — headless heartbeat while backgrounded
   - src/utils/storage.ts exportConfig/importConfig — structured {general,display,security,advanced}
 
-=> We do NOT patch the app. We make OUR Go server speak Ali MDM's existing cloud protocol.
+=> We do NOT patch the app. We make OUR Go server speak FreeKiosk's existing cloud protocol.
    App stays stock (easy to keep updating). All customization = server + a config template.
 
-### Ali MDM cloud protocol (the contract our server must implement)
+### FreeKiosk cloud protocol (the contract our server must implement)
 <!-- The list below is the original contract. The server has grown since:
      file delivery, app inventory, split packages, agent self-update and the
      wake stream are all missing from it. architecture.md has the current

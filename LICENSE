@@ -19,3 +19,19 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+Third-party components
+----------------------
+
+The Android app in `apps/android/` is a fork of FreeKiosk
+(https://github.com/rushb-fr/freekiosk), Copyright (c) 2025 Rushb, licensed
+under the MIT License. The upstream copyright notice and licence text are kept
+verbatim at `apps/android/LICENSE`, and both apply to that code in addition to
+the notice above.
+
+`brand/build/fonts/` contains the Outfit typeface, Copyright 2021 The Outfit
+Project Authors (https://github.com/Outfitio/Outfit-Fonts), licensed under the
+SIL Open Font License 1.1. Its licence text is kept alongside it at
+`brand/build/fonts/OFL.txt`.

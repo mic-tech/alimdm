@@ -4,15 +4,17 @@ A self-hosted cloud to **lock down and manage a fleet of Android tablets** —
 built for a part-time school running ~12 tablets locked to a fixed app whitelist
 (no Settings, no Play Store, no factory reset, no Google account fiddling).
 
-It is **Ali MDM** (MIT, the per-device kiosk app) + a **custom Go cloud** + a
-**React operator console**, all self-hosted on your own VPS. No per-seat fees.
+It is the **Ali MDM app** (the per-device kiosk, a fork of
+[FreeKiosk](https://github.com/rushb-fr/freekiosk) — MIT, © 2025 Rushb) + a
+**custom Go cloud** + a **React operator console**, all self-hosted on your own
+VPS. No per-seat fees.
 
 ## Why this design
-Ali MDM already ships a **complete, enabled cloud client** (heartbeat, config
+FreeKiosk already ships a **complete, enabled cloud client** (heartbeat, config
 sync, command queue, silent APK install, enrollment). So instead of patching the
-app, this project makes a lightweight Go server **speak Ali MDM's existing
-protocol**. The app stays 100% stock — you can keep updating it upstream without
-breaking your setup.
+app, this project makes a lightweight Go server **speak that existing
+protocol**. The app stays close to stock — you can keep pulling upstream changes
+without breaking your setup.
 
 ```
                         one HTTP/2 connection, always opened by the tablet
@@ -161,7 +163,18 @@ looks like an application bug:
 - The API port (8080) is bound to `127.0.0.1` inside the compose network; only
   Caddy (443) is public.
 
-## License
-Ali MDM is **MIT**. This project's server/console/enroll code is yours to use
-and modify. See `docs/SPEC.md` §9 for the full provenance and the Apache-2.0
+## License and attribution
+This project is **MIT** (© 2026 mic-tech) — the server, console and enroll code
+are yours to use and modify. See [LICENSE](LICENSE).
+
+The Android app in `apps/android/` is a fork of
+**[FreeKiosk](https://github.com/rushb-fr/freekiosk)**, MIT, © 2025 Rushb. Its
+copyright notice and licence are kept verbatim at
+[`apps/android/LICENSE`](apps/android/LICENSE) and apply to that code; the
+cloud client this whole design is built around is upstream's work, not ours.
+
+The Outfit typeface under `brand/build/fonts/` is © 2021 The Outfit Project
+Authors, SIL Open Font License 1.1, with its licence alongside it.
+
+`docs/SPEC.md` §9 records the fuller provenance, including the Apache-2.0
 (Headwind/Fleet) design influences.
