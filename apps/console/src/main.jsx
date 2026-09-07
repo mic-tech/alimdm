@@ -3078,7 +3078,7 @@ function Enroll({ onErr }) {
           <li><span><b>USB is more reliable than Wi-Fi ADB</b> for the enrollment step — Wi-Fi ADB pairing does not survive a reboot.</span></li>
           <li><span>The <span className="mono">enroll_tablet.sh</span> script lives on the enrollment machine and reads the enroll token and cloud URL from its config — you only supply the device serial.</span></li>
           <li><span>Each device enrolls independently; the same cloud and group config applies to all of them.</span></li>
-          <li><span><b>One-click helper (coming soon):</b> a Windows/macOS enrollment app will automate steps 4–6. Until then, the command above is all you need.</span></li>
+          <li><span><b>Skipping steps 3–6 entirely:</b> the QR card above needs no cable, no USB debugging and no reset beyond the factory one — it is how this fleet was enrolled. Reach for ADB when a device is already past its setup wizard.</span></li>
         </ul>
       </Card>
     </div>
