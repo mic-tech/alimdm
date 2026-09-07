@@ -176,6 +176,11 @@ looks like an application bug:
   **`proxy_buffering off`** (or the app's `X-Accel-Buffering: no`) so streamed
   responses are not held back.
 
+The security headers are set by the application, not by the proxy, so they
+survive a proxy swap: `X-Frame-Options: DENY` and `frame-ancestors 'none'`
+(an operator console must never be framable), `nosniff`, a referrer policy, and
+HSTS on requests the proxy marks `X-Forwarded-Proto: https`.
+
 ## Security notes
 - **HTTPS is mandatory** — Ali MDM's cloud client requires it; Caddy provides
   automatic Let's Encrypt certs.
@@ -184,6 +189,19 @@ looks like an application bug:
 - Device API keys are stored **SHA-256-hashed** in the DB (never plaintext).
 - The API port (8080) is bound to `127.0.0.1` inside the compose network; only
   Caddy (443) is public.
+- **Operator passwords** are PBKDF2-HMAC-SHA256, 100k iterations, per-account
+  salt. Repeated failures lock an account for a growing interval, and an
+  unknown email is hashed against a throwaway so it cannot be told apart from a
+  real one by how long the answer takes.
+- **Sessions** are 12-hour HS256 tokens. The role is read live from the
+  database rather than trusted from the token, so a demotion or deletion takes
+  effect on the next request; changing a password ends every session it opened.
+- **Devices** authenticate with a 192-bit random key, stored SHA-256-hashed. A
+  device may only act for itself: reporting a command or install result is
+  scoped to the device the key belongs to.
+- The only unauthenticated endpoints are `/healthz` and the two that serve the
+  Ali MDM build itself (`/api/v1/provision/apk`, `/api/v1/agent/apk`) — a
+  factory-fresh tablet has to fetch it before it has any credential to present.
 
 ## License and attribution
 This project is **MIT** (© 2026 mic-tech) — the server, console and enroll code

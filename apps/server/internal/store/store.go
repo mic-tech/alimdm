@@ -89,6 +89,11 @@ type Operator struct {
 	Role         string `json:"role"`
 	PasswordHash string `json:"-"`
 	CreatedAt    string `json:"created_at"`
+	// PasswordChangedAt is a unix second. Session tokens issued before it are
+	// refused, so changing a password — or an admin resetting one — ends every
+	// session it opened instead of leaving a stolen token valid for its full
+	// twelve hours. Zero means "never changed", which accepts any token.
+	PasswordChangedAt int64 `json:"-"`
 }
 
 func Open(path string) (*Store, error) {
@@ -322,6 +327,7 @@ func migrate(db *sql.DB) error {
 		{"name", `ALTER TABLE operators ADD COLUMN name TEXT NOT NULL DEFAULT ''`},
 		{"role", `ALTER TABLE operators ADD COLUMN role TEXT NOT NULL DEFAULT 'operator'`},
 		{"created_at", `ALTER TABLE operators ADD COLUMN created_at TEXT NOT NULL DEFAULT ''`},
+		{"password_changed_at", `ALTER TABLE operators ADD COLUMN password_changed_at INTEGER NOT NULL DEFAULT 0`},
 	} {
 		has, err := hasColumn(db, "operators", c.name)
 		if err != nil {
@@ -667,9 +673,49 @@ func (s *Store) ClaimPendingCommands(deviceID string) ([]Command, error) {
 	return out, nil
 }
 
-func (s *Store) ReportCommandResult(id, status, result, errMsg string) error {
-	_, err := s.db.Exec(`UPDATE commands SET status=?, result=?, err_msg=? WHERE id=?`, status, result, errMsg, id)
-	return err
+// ReportCommandResult records what a device did with one of its own commands.
+//
+// Scoped by device on purpose. The command id is the only thing identifying the
+// row, and it is handed to the device that must run it — but nothing stopped a
+// second device presenting a valid key of its own and writing a result for a
+// command that was never theirs. The WHERE clause makes that a no-op, and the
+// caller turns a no-op into 404 rather than a silent success.
+func (s *Store) ReportCommandResult(id, deviceID, reportStatus, result, errMsg string) error {
+	res, err := s.db.Exec(
+		`UPDATE commands SET status=?, result=?, err_msg=? WHERE id=? AND device_id=?`,
+		reportStatus, result, errMsg, id, deviceID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil
+	}
+	if n > 0 {
+		return nil
+	}
+
+	// An app install is not a row in commands. It lives in apk_updates with a
+	// command_id of its own, and the device reports its outcome down the same
+	// endpoint — so an id that matches nothing here may still be a legitimate
+	// install report. Until now that report updated no row at all and was
+	// answered 200 regardless, which is why an install's outcome was never
+	// recorded anywhere: rows went pending, then sent, then sat at sent for
+	// ever. Record it.
+	status := "installed"
+	if strings.EqualFold(reportStatus, "error") || strings.EqualFold(reportStatus, "failed") {
+		status = "failed"
+	}
+	res, err = s.db.Exec(
+		`UPDATE apk_updates SET status=? WHERE command_id=? AND device_id=?`,
+		status, id, deviceID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *Store) ListCommands(deviceID string) ([]Command, error) {
@@ -722,19 +768,23 @@ func (s *Store) ClaimPendingAPKUpdates(deviceID string) ([]APKUpdate, error) {
 
 // ── Operators ────────────────────────────────────────────────────────────────
 
-const operatorCols = `email,name,role,password_hash,created_at`
+const operatorCols = `email,name,role,password_hash,created_at,password_changed_at`
+
+// Writes list their columns separately: operatorCols is what a row reads back
+// as, and a column added there must not silently unbalance an INSERT.
+const operatorInsertCols = `email,name,role,password_hash,created_at`
 
 // UpsertOperator writes an account, replacing any existing row with that email.
 // Used by the bootstrap CLI, which is expected to be able to reset the admin.
 func (s *Store) UpsertOperator(o *Operator) error {
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO operators(`+operatorCols+`) VALUES(?,?,?,?,?)`,
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO operators(`+operatorInsertCols+`) VALUES(?,?,?,?,?)`,
 		o.Email, o.Name, o.Role, o.PasswordHash, o.CreatedAt)
 	return err
 }
 
 // CreateOperator inserts a new account and fails if the email is taken.
 func (s *Store) CreateOperator(o *Operator) error {
-	_, err := s.db.Exec(`INSERT INTO operators(`+operatorCols+`) VALUES(?,?,?,?,?)`,
+	_, err := s.db.Exec(`INSERT INTO operators(`+operatorInsertCols+`) VALUES(?,?,?,?,?)`,
 		o.Email, o.Name, o.Role, o.PasswordHash, o.CreatedAt)
 	return err
 }
@@ -748,7 +798,7 @@ func (s *Store) GetOperator(email string) (*Operator, error) {
 
 func scanOperator(row *sql.Row) (*Operator, error) {
 	var o Operator
-	if err := row.Scan(&o.Email, &o.Name, &o.Role, &o.PasswordHash, &o.CreatedAt); err != nil {
+	if err := row.Scan(&o.Email, &o.Name, &o.Role, &o.PasswordHash, &o.CreatedAt, &o.PasswordChangedAt); err != nil {
 		return nil, err
 	}
 	return &o, nil
@@ -763,7 +813,7 @@ func (s *Store) ListOperators() ([]Operator, error) {
 	out := []Operator{}
 	for rows.Next() {
 		var o Operator
-		if err := rows.Scan(&o.Email, &o.Name, &o.Role, &o.PasswordHash, &o.CreatedAt); err != nil {
+		if err := rows.Scan(&o.Email, &o.Name, &o.Role, &o.PasswordHash, &o.CreatedAt, &o.PasswordChangedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)
@@ -779,8 +829,13 @@ func (s *Store) UpdateOperator(currentEmail string, o *Operator) error {
 	return err
 }
 
+// UpdateOperatorPassword also stamps the moment, which is what invalidates the
+// session tokens the old password opened. A password change that leaves a
+// stolen token working for another twelve hours is not a password change.
 func (s *Store) UpdateOperatorPassword(email, passwordHash string) error {
-	_, err := s.db.Exec(`UPDATE operators SET password_hash=? WHERE lower(email)=lower(?)`, passwordHash, email)
+	_, err := s.db.Exec(
+		`UPDATE operators SET password_hash=?, password_changed_at=? WHERE lower(email)=lower(?)`,
+		passwordHash, time.Now().Unix(), email)
 	return err
 }
 

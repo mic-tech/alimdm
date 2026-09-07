@@ -22,7 +22,7 @@ import (
 
 // newConsoleEnv is newTestEnv with a console directory on disk, which the
 // shared one deliberately leaves empty.
-func newConsoleEnv(t *testing.T) (*http.ServeMux, string) {
+func newConsoleEnv(t *testing.T) (http.Handler, string) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -51,7 +51,7 @@ func newConsoleEnv(t *testing.T) (*http.ServeMux, string) {
 	return srv.Routes(), dir
 }
 
-func get(t *testing.T, mux *http.ServeMux, path string) *httptest.ResponseRecorder {
+func get(t *testing.T, mux http.Handler, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))

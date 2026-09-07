@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,12 +45,13 @@ type Server struct {
 	// In memory only, like the live-view frames.
 	snapshots   *snapshotStore
 	enrollToken string
+	logins      *loginGuard
 	baseURL     string
 	consoleDir  string
 }
 
 func New(st *store.Store, signer *auth.Signer, apks, agentAPKs *apk.Store, files *blob.Store, pokes *PokeQueue, enrollToken, baseURL, consoleDir string) *Server {
-	return &Server{st: st, signer: signer, apks: apks, agentAPKs: agentAPKs, files: files, pokes: pokes, streams: newStreamHubs(), snapshots: newSnapshotStore(), enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir}
+	return &Server{logins: newLoginGuard(), st: st, signer: signer, apks: apks, agentAPKs: agentAPKs, files: files, pokes: pokes, streams: newStreamHubs(), snapshots: newSnapshotStore(), enrollToken: enrollToken, baseURL: baseURL, consoleDir: consoleDir}
 }
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -88,6 +93,13 @@ func (s *Server) requireOperator(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "account no longer exists", http.StatusUnauthorized)
 			return
 		}
+		// A password change ends the sessions the old password opened. Without
+		// this, "I think someone has my token, I have changed my password" did
+		// nothing for up to twelve hours.
+		if op.PasswordChangedAt > 0 && claims.Iat > 0 && claims.Iat < op.PasswordChangedAt {
+			http.Error(w, "session ended by a password change", http.StatusUnauthorized)
+			return
+		}
 		next(w, r.WithContext(withOperator(r.Context(), op)))
 	}
 }
@@ -125,17 +137,34 @@ func bearer(r *http.Request) string {
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-func (s *Server) Routes() *http.ServeMux {
+// Routes builds the router, wrapped in the response headers every deployment
+// should have regardless of what sits in front of it.
+func (s *Server) Routes() http.Handler {
+	return withSecurityHeaders(s.routes())
+}
+
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	// Ali MDM device protocol
 	// All /api/v1/devices/... routes go through one dispatcher to avoid Go 1.22 mux
 	// pattern ambiguity between the literal "enroll" and the "{id}" segment.
 	mux.HandleFunc("/api/v1/devices/", s.deviceDispatcher)
-	mux.HandleFunc("POST /api/v1/commands/{id}/result/", s.commandResult)
+	// Device-authenticated: this writes the outcome of a queued command, and
+	// until now anyone who could name a command id could write it. The tablets
+	// have always sent their key here; only the server was not looking.
+	mux.HandleFunc("POST /api/v1/commands/{id}/result/", s.requireDevice(s.commandResult))
 	mux.HandleFunc("POST /api/v1/devices/{id}/screenshot/", s.requireDevice(s.screenshot))
 	mux.HandleFunc("POST /api/v1/devices/{id}/unenroll/", s.unenroll)
-	mux.HandleFunc("GET /api/v1/apk/{name}", s.downloadAPK)
-	mux.HandleFunc("GET /api/v1/apk/{name}/{part}", s.downloadAPKPart)
+	// Device-authenticated. These serve whatever has been uploaded to the
+	// package library, under names that are simply the package id — so open,
+	// they let anyone who guesses a name pull the fleet's software down. The
+	// installer has always sent the device key with these requests.
+	//
+	// /provision/apk and /agent/apk below stay open on purpose and are not the
+	// same case: they serve the Ali MDM build itself, which a factory-fresh
+	// tablet must fetch before it has any key at all.
+	mux.HandleFunc("GET /api/v1/apk/{name}", s.requireDevice(s.downloadAPK))
+	mux.HandleFunc("GET /api/v1/apk/{name}/{part}", s.requireDevice(s.downloadAPKPart))
 	// Zero-touch provisioning: the tablet's setup wizard downloads the Ali MDM
 	// APK from here while scanning the QR. Open (no auth) — it runs before the
 	// device has an API key. 404 until a build is staged on the App update page.
@@ -384,7 +413,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	// The enrollment token is a pre-shared secret (from the ADB bootstrap / QR).
 	// For this build we accept a fixed enrollment token configured via env; in a
 	// larger deployment this would be a per-device signed token.
-	if req.Token != s.enrollToken {
+	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(s.enrollToken)) != 1 {
 		http.Error(w, "invalid enrollment token", http.StatusUnauthorized)
 		return
 	}
@@ -723,7 +752,12 @@ func (s *Server) commandResult(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad body", http.StatusBadRequest)
 		return
 	}
-	if err := s.st.ReportCommandResult(id, req.Status, string(req.Result), req.ErrorMessage); err != nil {
+	dev := deviceFrom(r.Context())
+	if dev == nil {
+		http.Error(w, "unknown device", http.StatusUnauthorized)
+		return
+	}
+	if err := s.st.ReportCommandResult(id, dev.ID, req.Status, string(req.Result), req.ErrorMessage); err != nil {
 		http.Error(w, "unknown command", http.StatusNotFound)
 		return
 	}
@@ -859,6 +893,21 @@ func (s *Server) provisionAPKHandler(w http.ResponseWriter, r *http.Request) {
 
 // ── Operator console ─────────────────────────────────────────────────────────
 
+// dummyPasswordHash is verified against when no account matches, so a miss and
+// a hit take the same time. Derived from random bytes at startup: no password
+// verifies against it, and it is never compared to anything a user typed.
+var dummyPasswordHash = func() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	h, err := auth.HashPassword(hex.EncodeToString(b))
+	if err != nil {
+		return ""
+	}
+	return h
+}()
+
 func (s *Server) operatorLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email    string `json:"email"`
@@ -868,11 +917,26 @@ func (s *Server) operatorLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad body", http.StatusBadRequest)
 		return
 	}
+	if locked, wait := s.logins.locked(req.Email); locked {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		http.Error(w, "too many failed attempts — try again shortly", http.StatusTooManyRequests)
+		return
+	}
 	op, err := s.st.GetOperator(req.Email)
-	if err != nil || !auth.VerifyPassword(req.Password, op.PasswordHash) {
+	// An unknown email used to return before any hashing happened, so it
+	// answered in microseconds where a real one took ~50ms of PBKDF2. That
+	// difference is a reliable oracle for which addresses have accounts, so a
+	// miss now does the same work against a throwaway hash.
+	hash := dummyPasswordHash
+	if err == nil {
+		hash = op.PasswordHash
+	}
+	if !auth.VerifyPassword(req.Password, hash) || err != nil {
+		s.logins.fails(req.Email)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
+	s.logins.succeeds(req.Email)
 	tok, _ := s.signer.Sign(auth.Claims{
 		Sub: op.Email, Kind: "operator", Email: op.Email, Role: op.Role,
 		Exp: time.Now().Add(12 * time.Hour).Unix(),

@@ -17,7 +17,7 @@ import (
 
 type testEnv struct {
 	t   *testing.T
-	mux *http.ServeMux
+	mux http.Handler
 	st  *store.Store
 	srv *Server
 }
