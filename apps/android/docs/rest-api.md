@@ -13,11 +13,14 @@
 ## Table of Contents
 
 - [Overview](#overview)
-- [Configuration](#configuration)
-- [Getting Started](#getting-started)
-- [Features](#features)
-- [Troubleshooting](#troubleshooting)
-- [Related Resources](#related-resources)
+- [Enabling the API](#enabling-the-api)
+- [Endpoints Reference](#endpoints-reference)
+- [Authentication](#authentication)
+- [Home Assistant Integration](#home-assistant-integration)
+- [Testing with cURL](#testing-with-curl)
+- [Error Responses](#error-responses)
+- [See Also](#see-also)
+- [Changelog](#changelog)
 
 
 
@@ -71,7 +74,7 @@ adb shell am start -n com.alimdm/.MainActivity \
 
 
 > [!NOTE]
-> See [ADB Configuration Guide](ADB-Configuration) for full headless provisioning.
+> See [ADB Configuration Guide](adb-configuration.md) for full headless provisioning.
 
 
 ## Endpoints Reference
@@ -1140,9 +1143,9 @@ Common errors:
 
 ## See Also
 
-- [ADB Configuration Guide](ADB-Configuration) - Headless provisioning via ADB
-- [MDM Specification](MDM-SPEC) - Enterprise deployment
-- [Installation Guide](Installation) - Manual setup
+- [ADB Configuration Guide](adb-configuration.md) - Headless provisioning via ADB
+- [Ali MDM Cloud architecture](../../../docs/architecture.md) - Enterprise deployment
+- [Installation Guide](installation.md) - Manual setup
 
 
 ## Changelog

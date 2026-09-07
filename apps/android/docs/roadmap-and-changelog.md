@@ -12,18 +12,27 @@
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [Configuration](#configuration)
-- [Getting Started](#getting-started)
-- [Features](#features)
-- [Troubleshooting](#troubleshooting)
+- [Latest Stable Releases](#latest-stable-releases)
+- [Product Roadmap](#product-roadmap)
+- [Detailed Feature Progress](#detailed-feature-progress)
+- [Development Progress](#development-progress)
+- [How to Influence the Roadmap](#how-to-influence-the-roadmap)
 - [Related Resources](#related-resources)
 
 
 
 
 > [!IMPORTANT]
-> Roadmap priorities can evolve; use issues and discussions for the latest planning signal.
+> **This is upstream FreeKiosk's roadmap, and it stops at v1.2.17 (Mar 2026).**
+> Ali MDM forked after that and ships its own builds — 1.2.59 at the time of
+> writing — so nothing below tracks what is actually in this app. Two specific
+> traps: the changelog does not cover the last forty-odd builds, and the "v2.x —
+> Cloud & Enterprise" section lists as future work the cloud that this fork
+> already has, built differently (see
+> [`docs/architecture.md`](../../../docs/architecture.md)).
+>
+> For what changed in this fork, read `git log` — the commit messages are the
+> changelog — or the console's Activity feed for what changed on the fleet.
 
 ## Latest Stable Releases
 

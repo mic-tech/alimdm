@@ -11,8 +11,6 @@
   </p>
   
   <p>
-    <img src="https://img.shields.io/badge/Version-1.2.20-blue.svg" alt="Version 1.2.20">
-    <a href="https://github.com/mic-tech/alimdm/releases"><img src="https://img.shields.io/github/downloads/mic-tech/alimdm/total.svg" alt="Downloads"></a>
     <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
     <img src="https://img.shields.io/badge/Android-8.0%2B-green.svg" alt="Android 8.0+">
     <img src="https://img.shields.io/badge/Device%20Owner-Supported-brightgreen" alt="Device Owner">
@@ -20,7 +18,7 @@
     <img src="https://img.shields.io/badge/MQTT-Home%20Assistant%20Discovery-41BDF5" alt="MQTT">
   </p>
   
-  <p><strong>A <a href="https://rushb.fr">Rushb</a> Project</strong></p>
+  <p><strong>Forked from <a href="https://github.com/rushb-fr/freekiosk">FreeKiosk</a>, a <a href="https://rushb.fr">Rushb</a> project</strong></p>
 </div>
 
 Ali MDM is an open-source kiosk platform for Android tablets, built for teams that want **full control without license costs**.

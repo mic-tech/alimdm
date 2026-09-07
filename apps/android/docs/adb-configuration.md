@@ -16,13 +16,15 @@
 - [Overview](#overview)
 - [Security Model](#security-model)
 - [Quick Start](#quick-start)
-- [Configuration Parameters](#configuration-parameters)
-- [Device States](#device-states)
-- [Common Commands](#common-commands)
 - [Command Reference](#command-reference)
-- [Advanced Scenarios](#advanced-scenarios)
+- [Waiting for Configuration Completion](#waiting-for-configuration-completion)
+- [Examples](#examples)
+- [JSON Configuration Format](#json-configuration-format)
+- [Complete Provisioning Script](#complete-provisioning-script)
+- [💻 PowerShell Script (Windows)](#-powershell-script-windows)
 - [Troubleshooting](#troubleshooting)
-- [Related Resources](#related-resources)
+- [Security Considerations](#security-considerations)
+- [See Also](#see-also)
 
 
 
@@ -666,9 +668,9 @@ adb shell pm clear com.alimdm
 
 
 
-- [REST API Documentation](REST-API) - Remote control via HTTP
-- [MDM Specification](MDM-SPEC) - Enterprise deployment
-- [Installation Guide](Installation) - Manual setup instructions
+- [REST API Documentation](rest-api.md) - Remote control via HTTP
+- [Ali MDM Cloud architecture](../../../docs/architecture.md) - Enterprise deployment
+- [Installation Guide](installation.md) - Manual setup instructions
 
 
 

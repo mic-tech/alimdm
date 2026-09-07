@@ -1,104 +1,16 @@
-# Wiki Sync
+# Wiki Sync — not used in this fork
 
-**How documentation is published to GitHub Wiki**
+[Docs Home](README.md)
 
-[Docs Home](README)
+Upstream FreeKiosk publishes this `docs/` folder to a GitHub Wiki with a
+`docs-to-wiki-sync.yml` Actions workflow, which is why these pages were written
+with wiki-style links and a "the wiki is generated, never edit it there" warning.
 
+**None of that runs here.** This fork has no such workflow — the only workflows
+are `server-image.yml` and `delete-image-tag.yml` — and the repository's wiki is
+disabled. These files are read directly in the repository, and their links point
+at real filenames rather than wiki page names.
 
-> [!WARNING]
-> The `docs/` folder is the source of truth. Manual wiki edits will be overwritten.
-
-## Overview
-
-Ali MDM uses GitHub Actions to automatically publish documentation from the repository to GitHub Wiki.
-
-### Components
-
-| Component | Location | Purpose |
-|-----------|----------|----------|
-| **Source** | `docs/` folder | Documentation files |
-| **Target** | GitHub Wiki | Published documentation |
-| **Workflow** | `.github/workflows/docs-to-wiki-sync.yml` | Automation |
-
-### How It Works
-
-1. **Trigger** - Push to `main` branch or manual workflow dispatch
-2. **Clone** - Clone the wiki repository
-3. **Sync** - Copy files from `docs/` to wiki (with `rsync --delete`)
-4. **Landing Page** - Copy `README.md` to `Home.md`
-5. **Commit** - Push changes to wiki
-
-### Sync Direction
-
-```
-Repository docs/  →  GitHub Wiki
-     ↑                    ↓
-  Source of Truth    Published Content
-```
-
-> [!WARNING]
-> This is a one-way sync. Manual wiki edits will be overwritten on next sync.
-
-
-## Best Practices
-
-- **Edit in `docs/`** - Never edit wiki directly
-- **Test locally** - Preview changes before pushing
-- **Proper formatting** - Use GitHub-flavored Markdown
-- **Update links** - Use relative links between docs
-
-## Troubleshooting
-
-### Common Issues
-
-**Wiki not enabled:**
-1. Go to repository Settings
-2. Enable Wikis under Features
-3. Re-run workflow
-
-**Permission denied:**
-1. Settings → Actions → General
-2. Set "Read and write permissions"
-3. Re-run workflow
-
-**Missing files:**
-1. Verify `docs/` folder exists
-2. Ensure `docs/README.md` is present
-3. Commit and push
-
-**Workflow stuck:**
-1. Go to Actions tab
-2. Re-run failed jobs
-
-
-## Technical Details
-
-### Workflow Configuration
-
-- **Triggers:** Push to `main` or manual dispatch
-- **Permissions:** `contents: write`
-- **Runner:** `ubuntu-latest`
-
-### Sync Process
-
-```bash
-git clone https://github.com/user/repo.wiki.git
-rsync --delete docs/ wiki/
-cp docs/README.md wiki/Home.md
-cd wiki && git add . && git commit -m "Sync docs" && git push
-```
-
-### File Mapping
-
-| Source | Target | Purpose |
-|--------|--------|----------|
-| `docs/README.md` | `Home.md` | Wiki landing page |
-| `docs/*.md` | `*.md` | Documentation pages |
-| `docs/screenshots/` | `screenshots/` | Images |
-
-
-## Resources
-
-- **Workflow:** [`.github/workflows/docs-to-wiki-sync.yml`](https://github.com/mic-tech/alimdm/blob/main/.github/workflows/docs-to-wiki-sync.yml)
-- **GitHub Wiki Docs:** [docs.github.com/en/wikis](https://docs.github.com/en/wikis)
-- **GitHub Actions:** [docs.github.com/en/actions](https://docs.github.com/en/actions)
+The page is kept as a marker so nobody re-adds the wiki-style links wondering why
+they are gone. If you ever do want the wiki, take the workflow from upstream and
+be aware it rewrites every link.

@@ -13,21 +13,17 @@
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
-- [Additional Requirements](#additional-requirements)
 - [Local Setup](#local-setup)
-- [Run on Android](#run-on-android)
-- [Common Issues](#common-issues)
+- [📱 Run on Android](#-run-on-android)
 - [Build Release APK](#build-release-apk)
-- [Output Locations](#output-locations)
 - [Contributing](#contributing)
-- [How to Contribute](#how-to-contribute)
 - [Related Technical Docs](#related-technical-docs)
 - [Project Structure](#project-structure)
 
 
 
 > [!NOTE]
-> This page focuses on **contributor setup**. Operational deployment is documented in [`installation.md`](Installation).
+> This page focuses on **contributor setup**. Operational deployment is documented in [`installation.md`](installation.md).
 
 ## Prerequisites
 
@@ -135,7 +131,7 @@ cd android
 | **Contributing Guide** | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | **Issue Tracker** | [GitHub Issues](https://github.com/mic-tech/alimdm/issues) |
 | **Discussions** | [GitHub Discussions](https://github.com/mic-tech/alimdm/discussions) |
-| **FAQ** | [FAQ](FAQ) |
+| **FAQ** | [FAQ](faq.md) |
 
 
 
@@ -153,11 +149,11 @@ cd android
 
 | Documentation | Focus |
 |---|---|
-| **Install Guide** | [Installation](Installation) - Manual setup instructions |
-| **ADB Configuration** | [ADB-Configuration](ADB-Configuration) - Scripted provisioning |
-| **REST API** | [REST-API](REST-API) - HTTP endpoints and automation |
-| **MQTT** | [MQTT](MQTT) - Home Assistant integration |
-| **Roadmap** | [Roadmap-and-Changelog](Roadmap-and-Changelog) - Release planning |
+| **Install Guide** | [Installation](installation.md) - Manual setup instructions |
+| **ADB Configuration** | [ADB-Configuration](adb-configuration.md) - Scripted provisioning |
+| **REST API** | [REST-API](rest-api.md) - HTTP endpoints and automation |
+| **MQTT** | [MQTT](MQTT.md) - Home Assistant integration |
+| **Roadmap** | [Roadmap-and-Changelog](roadmap-and-changelog.md) - Release planning |
 
 
 

@@ -2,10 +2,10 @@
 
 **Common questions and troubleshooting for Ali MDM**
 
-[Docs Home](README) • [Installation](Installation) • [Integrations](Integrations)
+[Docs Home](README.md) • [Installation](installation.md) • [Integrations](INTEGRATIONS.md)
 
 > [!TIP]
-> Start from [Installation Guide](Installation) for first deployment, then use this page for edge cases.
+> Start from [Installation Guide](installation.md) for first deployment, then use this page for edge cases.
 
 ## Installation
 
@@ -13,7 +13,7 @@
 - **A:** No! Ali MDM uses Android's official Device Owner API. **No root required**.
 
 **Q: Do I need Android Studio?**
-- **A:** No! Just ADB tool (15 MB download). See [Installation Guide](Installation).
+- **A:** No! Just ADB tool (15 MB download). See [Installation Guide](installation.md).
 
 **Q: Can I install from Play Store?**
 - **A:** Yes! Search "Ali MDM" on Google Play Store, or download APK from [Releases](https://github.com/mic-tech/alimdm/releases).
@@ -227,7 +227,7 @@
 **Q: Where can I get help?**
 | Resource | Link |
 |---|---|
-| **Installation Guide** | [Installation](Installation) |
+| **Installation Guide** | [Installation](installation.md) |
 | **GitHub Discussions** | [Discussions](https://github.com/mic-tech/alimdm/discussions) |
 | **Report Bug** | [Issues](https://github.com/mic-tech/alimdm/issues) |
 | **Email Support** | support@example.com |
@@ -239,6 +239,6 @@
 | **Spread the word** | Share with friends & colleagues |
 | **Report bugs** | [Open Issue](https://github.com/mic-tech/alimdm/issues) |
 | **Contribute code** | [Contributing Guide](../CONTRIBUTING.md) |
-| **Buy us coffee** | [Ko-fi](https://ko-fi.com/rushb) (coming soon) |
+| **Support upstream** | Ali MDM is a fork of [FreeKiosk](https://github.com/rushb-fr/freekiosk) — [Rushb's Ko-fi](https://ko-fi.com/rushb) |
 
 **Didn't find your answer? Ask in [Discussions](https://github.com/mic-tech/alimdm/discussions)!**

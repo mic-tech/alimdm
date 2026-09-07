@@ -7,8 +7,6 @@
 _Complete guides for deployment, automation, and integration_
 
 <p>
-  <img src="https://img.shields.io/badge/Version-1.2.17-blue.svg" alt="Version 1.2.17">
-  <a href="https://github.com/mic-tech/alimdm/releases"><img src="https://img.shields.io/github/downloads/mic-tech/alimdm/total.svg" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
   <img src="https://img.shields.io/badge/Android-8.0%2B-green.svg" alt="Android 8.0+">
 </p>
@@ -35,7 +33,10 @@ Ali MDM is a **free, open-source kiosk platform** for Android tablets. It's desi
 - **Multiple Modes** - WebView, External App, Dashboard, Media Player
 - **Rich Automation** - 40+ REST API endpoints + MQTT with Home Assistant auto-discovery
 - **Mass Deployment** - ADB-based headless provisioning
-- **Privacy First** - No tracking, no cloud dependencies
+- **Self-hosted** - No third-party tracking or vendor cloud. Ali MDM does talk
+  to a cloud continuously, but it is *your* server: see
+  [`docs/architecture.md`](../../../docs/architecture.md). Upstream FreeKiosk
+  runs standalone with no server at all.
 
 ### Ali MDM vs Fully Kiosk Browser
 
@@ -53,10 +54,17 @@ Ali MDM is a **free, open-source kiosk platform** for Android tablets. It's desi
 
 ### Basic Installation (5 minutes)
 
-1. Download the latest APK from [**Releases**](https://github.com/mic-tech/alimdm/releases)
+1. Build the APK — see [`docs/howto/build-apk.md`](../../../docs/howto/build-apk.md).
+   There are no published releases: this fork is signed with its own key, and
+   that key is what the provisioning checksum and every over-the-air update
+   depend on.
 2. Install on your Android 8.0+ tablet
 3. Configure URL and PIN
 4. Start kiosk mode
+
+For a managed fleet you would not do any of the above by hand — the tablet
+scans a QR, installs itself and enrols. See
+[`docs/howto/zero-touch-qr.md`](../../../docs/howto/zero-touch-qr.md).
 
 ### Production Deployment (Device Owner)
 
@@ -67,7 +75,7 @@ adb shell dpm set-device-owner com.alimdm/.DeviceAdminReceiver
 ```
 
 > [!TIP]
-> See the complete [Installation Guide](Installation) for detailed setup instructions.
+> See the complete [Installation Guide](installation.md) for detailed setup instructions.
 
 
 ## Documentation Guide
@@ -76,26 +84,26 @@ adb shell dpm set-device-owner com.alimdm/.DeviceAdminReceiver
 
 | Guide | Description | Link |
 |-------|-------------|------|
-| **Installation** | Complete setup guide from basic to Device Owner mode | [Read →](Installation) |
-| **Features & Modes** | Understand WebView, External App, Dashboard modes | [Read →](Features-and-Modes) |
-| **FAQ** | Common questions and troubleshooting | [Read →](FAQ) |
+| **Installation** | Complete setup guide from basic to Device Owner mode | [Read →](installation.md) |
+| **Features & Modes** | Understand WebView, External App, Dashboard modes | [Read →](features-and-modes.md) |
+| **FAQ** | Common questions and troubleshooting | [Read →](faq.md) |
 
 ### Integration & Automation
 
 | Guide | Description | Link |
 |-------|-------------|------|
-| **Integrations Overview** | Choose between REST API and MQTT | [Read →](Integrations) |
-| **REST API** | 40+ HTTP endpoints for device control | [Read →](REST-API) |
-| **MQTT** | Real-time telemetry and Home Assistant discovery | [Read →](MQTT) |
-| **ADB Configuration** | Headless provisioning and scripting | [Read →](ADB-Configuration) |
+| **Integrations Overview** | Choose between REST API and MQTT | [Read →](INTEGRATIONS.md) |
+| **REST API** | 40+ HTTP endpoints for device control | [Read →](rest-api.md) |
+| **MQTT** | Real-time telemetry and Home Assistant discovery | [Read →](MQTT.md) |
+| **ADB Configuration** | Headless provisioning and scripting | [Read →](adb-configuration.md) |
 
 ### Advanced Topics
 
 | Guide | Description | Link |
 |-------|-------------|------|
-| **Development** | Build and contribute to Ali MDM | [Read →](Development) |
-| **Roadmap & Changelog** | Release notes and future plans | [Read →](Roadmap-and-Changelog) |
-| **Wiki Sync** | How documentation is published | [Read →](Pipeline-and-Wiki-Sync) |
+| **Development** | Build and contribute to Ali MDM | [Read →](development.md) |
+| **Roadmap & Changelog** | Release notes and future plans | [Read →](roadmap-and-changelog.md) |
+| **Wiki Sync** | Upstream's docs-to-wiki publishing — not wired up in this fork | [Read →](pipeline-and-wiki-sync.md) |
 
 
 ## Common Use Cases

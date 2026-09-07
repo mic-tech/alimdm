@@ -2,7 +2,7 @@
 
 **Complete setup from basic mode to full Device Owner lockdown**
 
-[Docs Home](README) • [Features](Features-and-Modes) • [ADB Config](ADB-Configuration)
+[Docs Home](README.md) • [Features](features-and-modes.md) • [ADB Config](adb-configuration.md)
 
 
 > [!TIP]
@@ -25,14 +25,16 @@
 ### Requirements
 
 - Android tablet (version 8.0+)
-- APK file from [Releases](https://github.com/mic-tech/alimdm/releases)
+- An APK you have built — see
+  [`docs/howto/build-apk.md`](../../../docs/howto/build-apk.md). There are no
+  published releases for this fork.
 - PIN code (4-6 digits)
 
 ### Installation Steps
 
-**1. Download APK**
-- Visit [GitHub Releases](https://github.com/mic-tech/alimdm/releases)
-- Download the latest `Ali MDM-vX.X.X.apk`
+**1. Get the APK**
+- Build it: `cd apps/android/android && ./gradlew assembleRelease`
+- It lands at `app/build/outputs/apk/release/app-release.apk`
 - Transfer to tablet (USB, email, or direct download)
 
 **2. Install**
@@ -323,7 +325,7 @@ Should work, but not officially tested.
 
 ## Need Help?
 
-- **FAQ:** [Complete FAQ](FAQ)
+- **FAQ:** [Complete FAQ](faq.md)
 - **Community:** [GitHub Discussions](https://github.com/mic-tech/alimdm/discussions)
 - **Bug Reports:** [GitHub Issues](https://github.com/mic-tech/alimdm/issues)
 - **Email:** support@example.com
