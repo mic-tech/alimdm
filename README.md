@@ -119,8 +119,15 @@ docker build -f apps/server/Dockerfile -t alimdm-cloud .
 A new install starts with an empty whitelist — nothing is seeded, because what a
 locked tablet may run is a decision for whoever is deploying it, not a default.
 
-Add packages in the console → **Apps & Lockdown**, by package name (for example
+The whitelist belongs to a policy group rather than to the fleet, so each group
+can allow a different set. Add packages in the console under **Groups → Edit
+policy → General → Applications → Apps in grid**, by package name (for example
 `com.google.android.calculator`, found in the Play Store listing's URL).
+
+Apps with **Kiosk** on appear in the tablet's home-screen grid; the rest are
+still installed and kept running in the background. Uploading the APK is a
+separate step on the **Packages** page — the whitelist decides what may run,
+not what gets installed.
 
 ## Building the Ali MDM APK (for the ADB `--apk` path)
 ```
