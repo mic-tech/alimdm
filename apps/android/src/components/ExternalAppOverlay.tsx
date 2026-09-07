@@ -168,6 +168,7 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
   // Only show multi-app grid when explicitly in multi mode
   const homeScreenApps = externalAppMode === 'multi' ? managedApps.filter(app => app.showOnHomeScreen) : [];
   const isMultiAppMode = externalAppMode === 'multi' && homeScreenApps.length > 0;
+  const labelInCorner = !showStatusBar && !!deviceLabel;
   
   // Resolve app labels and icons for display
   useEffect(() => {
@@ -302,6 +303,7 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
       <View style={styles.container} onTouchStart={handleGridTouch}>
         {showStatusBar && (
           <StatusBar
+            deviceLabel={deviceLabel}
             showBattery={showBattery}
             showWifi={showWifi}
             showBluetooth={showBluetooth}
@@ -344,9 +346,15 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
           </TouchableOpacity>
         )}
 
-        {/* Operator-set device label. Shifted clear of the floating return
-            button when that button also sits in the bottom-right corner. */}
-        {(!!deviceLabel || cloudStatus !== 'online') && (
+        {/* The device label lives in exactly one place. With the status bar on
+            screen it sits there, ahead of the sensors; without it, here. The
+            cloud warning stays in the corner either way — it is an exception
+            message that earns the room, and a 28px bar of icons is no place to
+            truncate "No connection — check Wi-Fi".
+
+            Shifted clear of the floating return button when that button also
+            sits in the bottom-right corner. */}
+        {(labelInCorner || cloudStatus !== 'online') && (
           <View
             style={[
               styles.statusCorner,
@@ -358,7 +366,7 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
                 {cloudStatus === 'unmanaged' ? 'Unmanaged' : 'No connection — check Wi-Fi'}
               </Text>
             )}
-            {!!deviceLabel && (
+            {labelInCorner && (
               <Text style={styles.deviceLabel} numberOfLines={1}>{deviceLabel}</Text>
             )}
           </View>
@@ -372,6 +380,7 @@ const ExternalAppOverlay: React.FC<ExternalAppOverlayProps> = ({
     <View style={styles.container}>
       {showStatusBar && (
         <StatusBar
+          deviceLabel={deviceLabel}
           showBattery={showBattery}
           showWifi={showWifi}
           showBluetooth={showBluetooth}

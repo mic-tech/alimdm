@@ -22,6 +22,13 @@ interface SystemInfo {
 }
 
 interface StatusBarProps {
+  /**
+   * Operator-set name for this tablet. Shown first, ahead of the sensors, so
+   * its position never moves as indicators are toggled — and so it stays clear
+   * of the window-positioning handle Android 15 puts at the top centre, which
+   * a centred label would sit directly beneath and look like a caption for.
+   */
+  deviceLabel?: string;
   showBattery?: boolean;
   showWifi?: boolean;
   showBluetooth?: boolean;
@@ -41,6 +48,7 @@ interface StatusBarProps {
 }
 
 const StatusBar: React.FC<StatusBarProps> = ({
+  deviceLabel = '',
   showBattery = true,
   showWifi = true,
   showBluetooth = true,
@@ -251,9 +259,22 @@ const StatusBar: React.FC<StatusBarProps> = ({
   return (
     <View>
       {/* Line 1: System info */}
-      {systemInfo && (showBattery || showWifi || showBluetooth || showVolume || showTime) && (
+      {(!!deviceLabel || (systemInfo && (showBattery || showWifi || showBluetooth || showVolume || showTime))) && (
         <View style={[styles.container, { backgroundColor: colors.barBackground }]}>
           <View style={styles.leftSide}>
+            {!!deviceLabel && (
+              <>
+                <Text
+                  style={[styles.deviceLabel, { color: colors.text }]}
+                  numberOfLines={1}
+                >
+                  {deviceLabel}
+                </Text>
+                {leftItems.length > 0 && (
+                  <View style={[styles.labelDivider, { backgroundColor: colors.text }]} />
+                )}
+              </>
+            )}
             {leftItems}
           </View>
           <View style={styles.spacer} />
@@ -335,6 +356,19 @@ const styles = StyleSheet.create({
   leftSide: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexShrink: 1,
+  },
+  deviceLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginRight: 8,
+    flexShrink: 1,
+  },
+  labelDivider: {
+    width: 1,
+    height: 12,
+    opacity: 0.25,
+    marginRight: 8,
   },
   rightSide: {
     flexDirection: 'row',
