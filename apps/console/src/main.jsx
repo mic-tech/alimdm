@@ -345,6 +345,23 @@ function Groups({ onErr }) {
    watched when it next heartbeats — immediately if it is holding the wake
    stream open, otherwise up to 30 seconds later. The panel says so rather than
    showing a spinner that looks broken. */
+/* Behaviour every full-window panel needs: Escape closes it, and the page
+   behind it does not scroll. Undone on close and on unmount, so tearing the
+   panel down while expanded cannot leave the body locked. */
+function useFullWindow(expanded, onClose) {
+  useEffect(() => {
+    if (!expanded) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [expanded, onClose]);
+}
+
 function LiveView({ device, onErr, expanded, onToggleExpand }) {
   const imgRef = useRef(null);
   const [state, setState] = useState("starting");
@@ -378,20 +395,7 @@ function LiveView({ device, onErr, expanded, onToggleExpand }) {
     send({ type: "tap", x: Number(x.toFixed(4)), y: Number(y.toFixed(4)) });
   };
 
-  // Escape is what every full-screen thing answers to, and the page behind an
-  // overlay should not scroll. Both are undone on close, including on unmount,
-  // so stopping the stream while expanded cannot strand the body locked.
-  useEffect(() => {
-    if (!expanded) return undefined;
-    const onKey = (e) => { if (e.key === "Escape") onToggleExpand(); };
-    document.addEventListener("keydown", onKey);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previous;
-    };
-  }, [expanded, onToggleExpand]);
+  useFullWindow(expanded, onToggleExpand);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -521,7 +525,7 @@ function useNarrowFlag() {
    clocks: the request reaches the tablet on its next check-in, so the image
    that answers it arrives later. The previous still stays on screen until the
    new one lands, and carries its age, rather than blanking between refreshes. */
-function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
+function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0, expanded, onToggleExpand }) {
   const imgRef = useRef(null);
   const urlRef = useRef(null);
   const [state, setState] = useState("waiting");
@@ -531,6 +535,8 @@ function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
   const takenAtRef = useRef(null);
   // Bumped to ask for a fresh still outside the timer.
   const [manual, setManual] = useState(0);
+
+  useFullWindow(expanded, onToggleExpand || (() => {}));
 
   useEffect(() => {
     let cancelled = false;
@@ -607,7 +613,7 @@ function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
     };
   }, [deviceId, online, intervalMs, manual, nonce]);
 
-  return (
+  const still = (
     <button className={"snap" + (big ? " big" : "")} type="button"
       title={online ? "Ask this device for a fresh screen" : "The device is offline"}
       disabled={!online} onClick={() => setManual((n) => n + 1)}>
@@ -622,6 +628,28 @@ function DeviceSnapshot({ deviceId, online, intervalMs, big, nonce = 0 }) {
         <span className="snap-age">{timeAgo(takenAt) || "just now"}</span>
       )}
     </button>
+  );
+
+  // The wrapper is always here, and only its class changes. Rendering the still
+  // into a different parent when expanded remounts it — and its src is set
+  // imperatively on the ref rather than through props, so the fresh <img> comes
+  // up empty and the effect, whose deps have not changed, never refills it. The
+  // toolbar is a conditional sibling, which leaves the button in the same slot.
+  return (
+    <div className={"snapwrap" + (expanded ? " is-full" : "")}>
+      {expanded && (
+      <div className="flex" style={{ marginBottom: 10 }}>
+        <button className="btn outline sm" onClick={onToggleExpand}
+          title="Back to the page (Esc)"><IconCollapse />Close</button>
+        <button className="btn outline sm" disabled={!online}
+          onClick={() => setManual((n) => n + 1)}><IconRefresh />Refresh</button>
+        <span className="muted small">
+          {takenAt ? `Taken ${timeAgo(takenAt) || "just now"}. Click the screen for a fresh one.` : ""}
+        </span>
+      </div>
+      )}
+      {still}
+    </div>
   );
 }
 
@@ -1408,12 +1436,15 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
           <button className="btn outline sm" disabled={!d.online}
             title={d.online ? "Ask for a fresh screen now" : "The device is offline"}
             onClick={() => setSnapNonce((n) => n + 1)}><IconRefresh />Refresh</button>
+          <button className="btn outline sm" title="Fill the whole window"
+            onClick={() => setScreenExpanded(true)}><IconExpand />Expand</button>
         </>)}>
           {live
             ? <LiveView device={d} onErr={onErr} expanded={screenExpanded}
                 onToggleExpand={() => setScreenExpanded((v) => !v)} />
             : <DeviceSnapshot deviceId={d.id} online={d.online} intervalMs={30000}
-                nonce={snapNonce} big />}
+                nonce={snapNonce} big expanded={screenExpanded}
+                onToggleExpand={() => setScreenExpanded((v) => !v)} />}
         </Card>
 
         <Card title="Details" footer={
