@@ -375,6 +375,22 @@ func migrate(db *sql.DB) error {
 			}
 		}
 	}
+	// apk_updates had nowhere to put a reason, so a failed install recorded that
+	// it failed and nothing about why — which is the one moment an operator
+	// needs the text the device sent.
+	for _, c := range []struct{ name, ddl string }{
+		{"last_error", `ALTER TABLE apk_updates ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`},
+	} {
+		has, err := hasColumn(db, "apk_updates", c.name)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := db.Exec(c.ddl); err != nil {
+				return err
+			}
+		}
+	}
 	for _, c := range []struct{ name, ddl string }{
 		{"rel_path", `ALTER TABLE files ADD COLUMN rel_path TEXT NOT NULL DEFAULT ''`},
 		// Left empty for existing rows on purpose: their names are still
@@ -706,16 +722,39 @@ func (s *Store) ReportCommandResult(id, deviceID, reportStatus, result, errMsg s
 	if strings.EqualFold(reportStatus, "error") || strings.EqualFold(reportStatus, "failed") {
 		status = "failed"
 	}
+	// Read the package before writing, so the caller can name it in the feed.
+	var pkg string
+	_ = s.db.QueryRow(`SELECT package_name FROM apk_updates WHERE command_id=? AND device_id=?`,
+		id, deviceID).Scan(&pkg)
 	res, err = s.db.Exec(
-		`UPDATE apk_updates SET status=? WHERE command_id=? AND device_id=?`,
-		status, id, deviceID)
+		`UPDATE apk_updates SET status=?, last_error=? WHERE command_id=? AND device_id=?`,
+		status, errMsg, id, deviceID)
 	if err != nil {
 		return err
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		return sql.ErrNoRows
 	}
+	if status == "failed" {
+		return &InstallFailed{Package: pkg, Reason: errMsg}
+	}
 	return nil
+}
+
+// InstallFailed says the report recorded was an app install that did not work.
+// Not an error in the "call failed" sense — the write succeeded — but the one
+// outcome the caller should say something about, because a failed install was
+// previously silent everywhere an operator looks.
+type InstallFailed struct {
+	Package string
+	Reason  string
+}
+
+func (e *InstallFailed) Error() string {
+	if e.Reason == "" {
+		return e.Package + " failed to install"
+	}
+	return e.Package + " failed to install: " + e.Reason
 }
 
 func (s *Store) ListCommands(deviceID string) ([]Command, error) {

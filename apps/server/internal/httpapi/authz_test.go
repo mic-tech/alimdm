@@ -10,6 +10,7 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -297,4 +298,74 @@ func TestOneDeviceCannotReportAnothersInstall(t *testing.T) {
 		map[string]any{"status": "success"}); rec.Code == http.StatusOK {
 		t.Fatal("tablet-2 closed an install queued for tablet-1")
 	}
+}
+
+// A failed install was silent: the row read "failed" at best, nothing recorded
+// why, and the console showed an app that simply never appeared. The reason the
+// device sent is the only account of what happened.
+func TestFailedInstallIsRecordedWithItsReason(t *testing.T) {
+	e := newTestEnv(t)
+	devKey := e.newDeviceKey(t, "tablet-1")
+	if err := e.st.EnqueueAPKUpdate(&store.APKUpdate{
+		CommandID: "apk-fail", DeviceID: "tablet-1", PackageName: "com.example.app",
+		VersionName: "1.0", APKPath: "com.example.app.apk", Status: "pending",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The device reporting a failure is still a successful report.
+	rec, _ := e.do("POST", "/api/v1/commands/apk-fail/result/", devKey, map[string]any{
+		"status": "error", "error_message": "INSTALL_FAILED_UPDATE_INCOMPATIBLE",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("failure report rejected: status %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	events, err := e.st.ListEvents(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *store.Event
+	for i := range events {
+		if events[i].Kind == "app_install_failed" {
+			found = &events[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("no feed entry for a failed install — an operator has no way to learn of it")
+	}
+	if !strings.Contains(found.Summary, "com.example.app") {
+		t.Errorf("entry does not name the package: %q", found.Summary)
+	}
+	if !strings.Contains(found.Summary, "INSTALL_FAILED_UPDATE_INCOMPATIBLE") {
+		t.Errorf("entry drops the device's reason, which is the whole point: %q", found.Summary)
+	}
+	if found.Severity != store.EventError {
+		t.Errorf("severity = %q, want error", found.Severity)
+	}
+}
+
+// No reason given is still worth recording, and must not read as though the
+// message were simply missing from the feed.
+func TestFailedInstallWithNoReasonStillSaysSo(t *testing.T) {
+	e := newTestEnv(t)
+	devKey := e.newDeviceKey(t, "tablet-1")
+	if err := e.st.EnqueueAPKUpdate(&store.APKUpdate{
+		CommandID: "apk-quiet", DeviceID: "tablet-1", PackageName: "com.example.quiet",
+		VersionName: "1.0", APKPath: "x.apk", Status: "pending",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.do("POST", "/api/v1/commands/apk-quiet/result/", devKey, map[string]any{"status": "error"})
+	events, _ := e.st.ListEvents(10)
+	for _, ev := range events {
+		if ev.Kind == "app_install_failed" {
+			if !strings.Contains(ev.Summary, "no reason") {
+				t.Errorf("silent failure reads %q", ev.Summary)
+			}
+			return
+		}
+	}
+	t.Fatal("no entry for a reasonless failure")
 }

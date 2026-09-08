@@ -739,6 +739,18 @@ func (s *Server) deviceUpdates(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
+// reasonSuffix appends the device's own words when it gave any.
+func reasonSuffix(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return " (the device gave no reason)"
+	}
+	if len(reason) > 300 {
+		reason = reason[:300] + "\u2026"
+	}
+	return ": " + reason
+}
+
 func (s *Server) commandResult(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
@@ -757,7 +769,17 @@ func (s *Server) commandResult(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown device", http.StatusUnauthorized)
 		return
 	}
-	if err := s.st.ReportCommandResult(id, dev.ID, req.Status, string(req.Result), req.ErrorMessage); err != nil {
+	err := s.st.ReportCommandResult(id, dev.ID, req.Status, string(req.Result), req.ErrorMessage)
+	var failed *store.InstallFailed
+	switch {
+	case errors.As(err, &failed):
+		// A failed install used to be invisible: the row said "failed" at best,
+		// nothing said why, and the console showed an app that simply never
+		// appeared. Put it where an operator will see it.
+		s.recordAs("device", "app_install_failed", store.EventError, dev.ID,
+			"Could not install "+failed.Package+" on "+deviceLabel(dev.ID, dev.Name)+
+				reasonSuffix(failed.Reason))
+	case err != nil:
 		http.Error(w, "unknown command", http.StatusNotFound)
 		return
 	}
