@@ -8,6 +8,7 @@ import logoLockup from "./assets/ali-mdm-lockup-h.svg";
 import logoMark from "./assets/ali-mdm-logo.svg";
 import {
   IconDevices, IconGroups, IconEnroll, IconPackage, IconSignOut, IconChevronLeft, IconBell,
+  IconExpand, IconCollapse,
   IconRefresh, IconPlus, IconTrash, IconEdit, IconPower, IconLock, IconUnlock,
   IconEject, IconCopy, IconCheck, IconUpload, IconInfo, IconWarning,
   IconUser, IconUsers, IconKey, IconSave, IconShield, IconFile, IconEye, IconRows, IconGrid,
@@ -41,9 +42,9 @@ function toast(msg, ok = true) {
 
 /* ── Shared presentational bits ─────────────────────────────────────────── */
 
-function Card({ title, actions, children, flush, footer }) {
+function Card({ title, actions, children, flush, footer, className }) {
   return (
-    <div className="card">
+    <div className={"card" + (className ? " " + className : "")}>
       {(title || actions) && (
         <div className="card-header">
           {title && <h3 className="card-title">{title}</h3>}
@@ -344,7 +345,7 @@ function Groups({ onErr }) {
    watched when it next heartbeats — immediately if it is holding the wake
    stream open, otherwise up to 30 seconds later. The panel says so rather than
    showing a spinner that looks broken. */
-function LiveView({ device, onErr }) {
+function LiveView({ device, onErr, expanded, onToggleExpand }) {
   const imgRef = useRef(null);
   const [state, setState] = useState("starting");
   const [frames, setFrames] = useState(0);
@@ -423,6 +424,11 @@ function LiveView({ device, onErr }) {
             <IconSliders />Control
           </button>
         </span>
+        <button className="btn outline sm" onClick={onToggleExpand}
+          aria-pressed={expanded}
+          title={expanded ? "Back to the normal layout" : "Fill the width of the page"}>
+          {expanded ? <IconCollapse /> : <IconExpand />}{expanded ? "Restore" : "Expand"}
+        </button>
         {control && (
           <>
             <button className="btn outline sm" onClick={() => send({ type: "key", key: "back" })}>Back</button>
@@ -462,7 +468,7 @@ function LiveView({ device, onErr }) {
       </div>
       <div className="screen-frame">
         <img ref={imgRef} alt="Live view of the device's screen" onClick={tap}
-          style={{ maxWidth: "100%", maxHeight: 460, display: state === "live" ? "block" : "none",
+          style={{ display: state === "live" ? "block" : "none",
             cursor: control ? "crosshair" : "default" }} />
         {state !== "live" && (
           <span className="muted small" style={{ padding: 40, textAlign: "center" }}>
@@ -1255,6 +1261,9 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
   const [live, setLive] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [snapNonce, setSnapNonce] = useState(0);
+  // Expanding is a property of the page layout, not of the stream, so it lives
+  // here rather than inside LiveView — which cannot restyle the card it sits in.
+  const [screenExpanded, setScreenExpanded] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -1374,8 +1383,10 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
       )}
 
       <div className="detail-grid">
-        <Card title="Screen" actions={live ? (
-          <button className="btn outline sm" onClick={() => setLive(false)}>Stop live view</button>
+        <Card title="Screen" className={live && screenExpanded ? "screen-expanded" : ""}
+          actions={live ? (
+          <button className="btn outline sm"
+            onClick={() => { setLive(false); setScreenExpanded(false); }}>Stop live view</button>
         ) : (<>
           <button className="btn outline sm" disabled={!d.online}
             title={d.online ? "Watch this screen as it changes" : "The device is offline"}
@@ -1385,7 +1396,8 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
             onClick={() => setSnapNonce((n) => n + 1)}><IconRefresh />Refresh</button>
         </>)}>
           {live
-            ? <LiveView device={d} onErr={onErr} />
+            ? <LiveView device={d} onErr={onErr} expanded={screenExpanded}
+                onToggleExpand={() => setScreenExpanded((v) => !v)} />
             : <DeviceSnapshot deviceId={d.id} online={d.online} intervalMs={30000}
                 nonce={snapNonce} big />}
         </Card>

@@ -571,6 +571,20 @@ table.stacked.cards tbody tr:has(td[colspan]) { grid-column: 1 / -1; border: non
 /* The still gets room to be looked at here, rather than thumbnail size. */
 .snap.big { margin-top: 0; max-height: 460px; }
 
+/* Live view, expanded.
+   At 460px a 1920x1200 tablet is under a quarter scale — fine for watching,
+   awkward for aiming at a control. Expanded, the card takes the whole width of
+   the detail grid and the frame grows to most of the viewport, while the
+   toolbar above it stays exactly where it was. Taps are sent as a fraction of
+   the rendered image, so nothing about control changes with size. */
+.screen-frame img { max-width: 100%; max-height: 460px; }
+.card.screen-expanded { grid-column: 1 / -1; }
+/* 17rem, not 15: the frame sits about 250px down the page once the header,
+   breadcrumb, card header and the Watch/Control toolbar are above it, and a
+   taller cap pushed the bottom of the screen past the fold — so "expand" made
+   you scroll to see the thing you had just enlarged. */
+.screen-expanded .screen-frame img { max-height: calc(100vh - 17rem); }
+
 .device-link { color: inherit; text-decoration: none; }
 .device-link:hover { color: var(--primary); text-decoration: underline; }
 

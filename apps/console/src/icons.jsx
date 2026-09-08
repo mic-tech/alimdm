@@ -118,6 +118,20 @@ export const IconEye = mk(<>
   <circle cx="12" cy="12" r="3" />
 </>);
 
+export const IconExpand = mk(<>
+  <path d="M9 3H4.5A1.5 1.5 0 0 0 3 4.5V9" />
+  <path d="M15 3h4.5A1.5 1.5 0 0 1 21 4.5V9" />
+  <path d="M9 21H4.5A1.5 1.5 0 0 1 3 19.5V15" />
+  <path d="M15 21h4.5a1.5 1.5 0 0 0 1.5-1.5V15" />
+</>);
+
+export const IconCollapse = mk(<>
+  <path d="M3.5 3.5 9 9M9 9V4.5M9 9H4.5" />
+  <path d="M20.5 3.5 15 9M15 9V4.5M15 9h4.5" />
+  <path d="M3.5 20.5 9 15M9 15v4.5M9 15H4.5" />
+  <path d="M20.5 20.5 15 15M15 15v4.5M15 15h4.5" />
+</>);
+
 export const IconFile = mk(<>
   <path d="M14 3H7.5A1.5 1.5 0 0 0 6 4.5v15A1.5 1.5 0 0 0 7.5 21h9a1.5 1.5 0 0 0 1.5-1.5V7z" />
   <path d="M14 3v4.5H18" />
