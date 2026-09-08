@@ -20,7 +20,7 @@ npm test -- --testPathPattern=foo   # Run a single test file
 
 # Android build
 cd android && ./gradlew assembleRelease   # Release APK
-cd android && ./gradlew assembleBundle   # Release AAB (Play Store)
+cd android && ./gradlew bundleRelease    # Release AAB (Play Store)
 ```
 
 Output APK: `android/app/build/outputs/apk/release/app-release.apk`
