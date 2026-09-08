@@ -378,6 +378,21 @@ function LiveView({ device, onErr, expanded, onToggleExpand }) {
     send({ type: "tap", x: Number(x.toFixed(4)), y: Number(y.toFixed(4)) });
   };
 
+  // Escape is what every full-screen thing answers to, and the page behind an
+  // overlay should not scroll. Both are undone on close, including on unmount,
+  // so stopping the stream while expanded cannot strand the body locked.
+  useEffect(() => {
+    if (!expanded) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") onToggleExpand(); };
+    document.addEventListener("keydown", onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [expanded, onToggleExpand]);
+
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
@@ -413,7 +428,7 @@ function LiveView({ device, onErr, expanded, onToggleExpand }) {
   }, [device.id, onErr]);
 
   return (
-    <>
+    <div className={"liveview" + (expanded ? " is-full" : "")}>
       <div className="flex" style={{ marginBottom: 10 }}>
         <span className="view-switch" role="group" aria-label="Watch or control">
           <button className={!control ? "on" : ""} aria-pressed={!control}
@@ -426,8 +441,8 @@ function LiveView({ device, onErr, expanded, onToggleExpand }) {
         </span>
         <button className="btn outline sm" onClick={onToggleExpand}
           aria-pressed={expanded}
-          title={expanded ? "Back to the normal layout" : "Fill the width of the page"}>
-          {expanded ? <IconCollapse /> : <IconExpand />}{expanded ? "Restore" : "Expand"}
+          title={expanded ? "Back to the page (Esc)" : "Fill the whole window"}>
+          {expanded ? <IconCollapse /> : <IconExpand />}{expanded ? "Close" : "Expand"}
         </button>
         {control && (
           <>
@@ -485,7 +500,7 @@ function LiveView({ device, onErr, expanded, onToggleExpand }) {
         Screenshot protection is lifted for the length of the session — so stop this when you
         are done.
       </div>
-    </>
+    </div>
   );
 }
 
@@ -1383,8 +1398,7 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
       )}
 
       <div className="detail-grid">
-        <Card title="Screen" className={live && screenExpanded ? "screen-expanded" : ""}
-          actions={live ? (
+        <Card title="Screen" actions={live ? (
           <button className="btn outline sm"
             onClick={() => { setLive(false); setScreenExpanded(false); }}>Stop live view</button>
         ) : (<>

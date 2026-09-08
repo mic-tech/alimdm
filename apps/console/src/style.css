@@ -578,12 +578,24 @@ table.stacked.cards tbody tr:has(td[colspan]) { grid-column: 1 / -1; border: non
    toolbar above it stays exactly where it was. Taps are sent as a fraction of
    the rendered image, so nothing about control changes with size. */
 .screen-frame img { max-width: 100%; max-height: 460px; }
-.card.screen-expanded { grid-column: 1 / -1; }
-/* 17rem, not 15: the frame sits about 250px down the page once the header,
-   breadcrumb, card header and the Watch/Control toolbar are above it, and a
-   taller cap pushed the bottom of the screen past the fold — so "expand" made
-   you scroll to see the thing you had just enlarged. */
-.screen-expanded .screen-frame img { max-height: calc(100vh - 17rem); }
+
+/* Expanded, the panel leaves the page and covers it.
+   Growing the card in place could only ever reach the viewport minus whatever
+   sat above it — header, breadcrumb, card header, toolbar — which on a portrait
+   tablet is most of what there is to gain, since the useful dimension is
+   height. Taking the whole viewport gets that back.
+
+   The overlay is the live view's own root element, not a portal or a different
+   branch of the tree: moving it would unmount and remount it, which tears down
+   the stream and starts a new one on every toggle. */
+.liveview.is-full {
+  position: fixed; inset: 0; z-index: 60;
+  background: var(--background);
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 16px;
+}
+.liveview.is-full .screen-frame { flex: 1; min-height: 0; }
+.liveview.is-full .screen-frame img { max-height: 100%; max-width: 100%; }
 
 .device-link { color: inherit; text-decoration: none; }
 .device-link:hover { color: var(--primary); text-decoration: underline; }
