@@ -369,3 +369,56 @@ func TestFailedInstallWithNoReasonStillSaysSo(t *testing.T) {
 	}
 	t.Fatal("no entry for a reasonless failure")
 }
+
+// The verifier's refusal is the one install failure that is not about the
+// package, and the raw string sends people to inspect an APK that is fine.
+func TestVerifierRefusalCarriesItsRemedy(t *testing.T) {
+	e := newTestEnv(t)
+	devKey := e.newDeviceKey(t, "tablet-1")
+	if err := e.st.EnqueueAPKUpdate(&store.APKUpdate{
+		CommandID: "apk-verif", DeviceID: "tablet-1", PackageName: "com.example.inhouse",
+		VersionName: "1.0", APKPath: "x.apk", Status: "pending",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.do("POST", "/api/v1/commands/apk-verif/result/", devKey, map[string]any{
+		"status":        "error",
+		"error_message": "Install failed (status 3): INSTALL_FAILED_VERIFICATION_FAILURE: Install not allowed",
+	})
+	events, _ := e.st.ListEvents(5)
+	for _, ev := range events {
+		if ev.Kind != "app_install_failed" {
+			continue
+		}
+		if !strings.Contains(ev.Summary, "Play Protect") {
+			t.Errorf("no remedy in %q", ev.Summary)
+		}
+		// The device's own words stay: the remedy is added, not substituted.
+		if !strings.Contains(ev.Summary, "INSTALL_FAILED_VERIFICATION_FAILURE") {
+			t.Errorf("the original reason was replaced rather than explained: %q", ev.Summary)
+		}
+		return
+	}
+	t.Fatal("no failure entry")
+}
+
+// Other failures must not acquire advice that does not apply to them.
+func TestOtherFailuresGetNoPlayProtectAdvice(t *testing.T) {
+	e := newTestEnv(t)
+	devKey := e.newDeviceKey(t, "tablet-1")
+	if err := e.st.EnqueueAPKUpdate(&store.APKUpdate{
+		CommandID: "apk-space", DeviceID: "tablet-1", PackageName: "com.example.big",
+		VersionName: "1.0", APKPath: "x.apk", Status: "pending",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.do("POST", "/api/v1/commands/apk-space/result/", devKey, map[string]any{
+		"status": "error", "error_message": "INSTALL_FAILED_INSUFFICIENT_STORAGE",
+	})
+	events, _ := e.st.ListEvents(5)
+	for _, ev := range events {
+		if ev.Kind == "app_install_failed" && strings.Contains(ev.Summary, "Play Protect") {
+			t.Fatalf("storage failure told to check Play Protect: %q", ev.Summary)
+		}
+	}
+}

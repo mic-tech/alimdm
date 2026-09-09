@@ -739,16 +739,29 @@ func (s *Server) deviceUpdates(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
-// reasonSuffix appends the device's own words when it gave any.
+// reasonSuffix appends the device's own words when it gave any, and translates
+// the one failure that is not about the package at all.
+//
+// INSTALL_FAILED_VERIFICATION_FAILURE is Play Protect on the tablet refusing an
+// app it does not recognise — which for a fleet's own in-house builds is every
+// one of them, on every newly enrolled device. Left as the raw string it reads
+// like a corrupt download, and the operator goes looking at the APK. It is not
+// the APK: the same file installs on tablets that have already accepted it.
 func reasonSuffix(reason string) string {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return " (the device gave no reason)"
 	}
+	hint := ""
+	if strings.Contains(reason, "INSTALL_FAILED_VERIFICATION_FAILURE") {
+		hint = " \u2014 Play Protect on the tablet refused it, which it does for apps it does not " +
+			"recognise. Nothing is wrong with the package. Approve it once on the device, or turn " +
+			"off Play Store \u203a Play Protect \u203a Scan apps."
+	}
 	if len(reason) > 300 {
 		reason = reason[:300] + "\u2026"
 	}
-	return ": " + reason
+	return ": " + reason + hint
 }
 
 func (s *Server) commandResult(w http.ResponseWriter, r *http.Request) {

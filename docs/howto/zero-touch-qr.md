@@ -106,6 +106,40 @@ When the setup wizard scans it:
   install starts with an empty whitelist, so add the packages first if you want
   to see the lockdown on the first tablet.
 
+### 5. Turn off Play Protect scanning (before pushing your own apps)
+
+Skip this and third-party apps from the Play Store still install fine — but
+**your own in-house builds will be refused**, silently as far as the tablet is
+concerned. The console reports it as
+
+```
+Could not install com.example.yourapp on <tablet>:
+Install failed (status 3): INSTALL_FAILED_VERIFICATION_FAILURE
+```
+
+Play Protect vets every install against what Google recognises. An app you built
+and signed yourself is not recognised, so on a newly enrolled tablet it is
+blocked. Nothing is wrong with the APK: the same file installs on tablets that
+accepted it before this became strict.
+
+On the tablet:
+
+1. Open the **Play Store** → profile icon → **Play Protect**
+2. Gear icon (settings) → turn off **Scan apps with Play Protect**
+
+The alternative is approving each app by hand the first time it is pushed — tap
+the "unknown developer" notification and choose to install anyway. That works,
+and it is one interruption per app per tablet, with nobody standing at the
+device when the console pushes.
+
+> **Why this is a manual step.** Ali MDM cannot do it for you. The verifier is
+> controlled by `Settings.Global.package_verifier_enable`, which needs
+> `WRITE_SECURE_SETTINGS` — a signature-level permission Android will not grant
+> to an ordinary app, Device Owner or not. The ADB enrolment path grants it over
+> the cable (`enroll-one.sh` does this for the accessibility service), so a
+> tablet enrolled that way can be scripted; a QR-enrolled tablet has no cable
+> and no way to acquire it.
+
 ## What to check if it doesn't work
 
 | Symptom | Likely cause | Fix |
@@ -113,7 +147,8 @@ When the setup wizard scans it:
 | Wizard won't download the APK | Plain-HTTP rejected by Android | Use HTTPS (Caddy + Let's Encrypt) |
 | "Signature verification failed" | Checksum doesn't match the APK | Regenerate the checksum for the exact APK you're hosting (see below) |
 | Tablet downloads but doesn't enroll | Wrong `enroll_token` or `cloud_url` | Check the QR's `admin_extras` match your server config |
-| Tablet enrolls but apps don't install | APKs not uploaded to console | Upload the 3 school APKs in the **APKs** tab, add to whitelist, Save & push |
+| Tablet enrolls but apps don't install | APKs not uploaded to console | Upload them on the **Packages** page, add to the group's whitelist, save |
+| Store apps install but your own are refused | Play Protect does not recognise an app you signed yourself — the console shows `INSTALL_FAILED_VERIFICATION_FAILURE` | Turn off Play Protect scanning (step 5 above), or approve the app once on the device |
 | QR won't scan | Low-res print / screen too small | Print larger, or use error-correction level H |
 
 ## The signing-cert checksum
