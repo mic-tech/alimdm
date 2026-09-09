@@ -99,6 +99,7 @@ class MainActivity : ReactActivity() {
     // needed. Disarm it before it fires and restarts the app a second time.
     KioskModule.cancelRestartBackstop(this)
 
+
     // Keep screen always on
     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 

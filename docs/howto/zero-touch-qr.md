@@ -132,13 +132,23 @@ the "unknown developer" notification and choose to install anyway. That works,
 and it is one interruption per app per tablet, with nobody standing at the
 device when the console pushes.
 
-> **Why this is a manual step.** Ali MDM cannot do it for you. The verifier is
-> controlled by `Settings.Global.package_verifier_enable`, which needs
-> `WRITE_SECURE_SETTINGS` — a signature-level permission Android will not grant
-> to an ordinary app, Device Owner or not. The ADB enrolment path grants it over
-> the cable (`enroll-one.sh` does this for the accessibility service), so a
-> tablet enrolled that way can be scripted; a QR-enrolled tablet has no cable
-> and no way to acquire it.
+> **Why this is a manual step.** Ali MDM cannot do it for you, and this was
+> measured rather than assumed. On a Device Owner tablet running Android 15:
+>
+> ```
+> setGlobalSetting("package_verifier_enable", "0")  -> SecurityException
+> Settings.Global.putInt(same)                      -> no WRITE_SECURE_SETTINGS
+> reading package_verifier_enable                   -> -1 (absent)
+> reading verifier_verify_adb_installs              -> -1 (absent)
+> reading package_verifier_user_consent             -> -1 (absent)
+> ```
+>
+> The readings matter more than the refusals. Those settings are not merely
+> unwritable — they are not present on the device. The platform verifier knobs
+> are gone from modern Android, and Play Protect keeps its own state inside
+> Google Play services, which is why its toggle lives in the Play Store app and
+> not in Settings. There is nothing for the agent to set, whatever permission it
+> holds, so granting `WRITE_SECURE_SETTINGS` over ADB would not help either.
 
 ## What to check if it doesn't work
 

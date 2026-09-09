@@ -126,8 +126,27 @@ class DiagnosticsModule(private val reactContext: ReactApplicationContext) :
         )
         m.putBoolean("can_draw_overlays", Settings.canDrawOverlays(reactContext))
         m.putBoolean("usage_access", hasUsageAccess())
+
+        // The package verifier, and whether we can do anything about it.
+        //
+        // An app the fleet built and signed itself is not recognised by Play
+        // Protect, so on a newly enrolled tablet the install is refused with
+        // INSTALL_FAILED_VERIFICATION_FAILURE and somebody has to walk to the
+        // device. Reading these costs nothing and says which of the two knobs
+        // is set, which is more than anyone could see before.
+        m.putInt("package_verifier_enable", globalInt("package_verifier_enable"))
+        m.putInt("verifier_verify_adb_installs", globalInt("verifier_verify_adb_installs"))
+        m.putInt("package_verifier_user_consent", secureInt("package_verifier_user_consent"))
+        m.putString("verifier_write", VerifierControl.lastAttempt)
         return m
     }
+
+    /** -1 when the setting is absent, which is itself worth reporting. */
+    private fun globalInt(key: String): Int =
+        try { Settings.Global.getInt(reactContext.contentResolver, key, -1) } catch (_: Exception) { -1 }
+
+    private fun secureInt(key: String): Int =
+        try { Settings.Secure.getInt(reactContext.contentResolver, key, -1) } catch (_: Exception) { -1 }
 
     private fun hasUsageAccess(): Boolean {
         return try {
