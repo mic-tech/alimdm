@@ -97,7 +97,7 @@ func TestAlertRecoveryIsReported(t *testing.T) {
 	w.check()
 
 	// The device checks in again.
-	if err := st.UpdateHeartbeat("tablet-1", "", 80, 0, "15", "TB330FU",
+	if err := st.UpdateHeartbeat("tablet-1", "", 80, 0, false, "15", "TB330FU",
 		time.Now().UTC().Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}

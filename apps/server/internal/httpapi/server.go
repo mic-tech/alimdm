@@ -596,7 +596,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 
 	// Record telemetry + the hash the device now holds.
 	lastSeen := time.Now().UTC().Format(time.RFC3339)
-	_ = s.st.UpdateHeartbeat(dev.ID, group.ConfigHash, req.Battery.Level, 0,
+	_ = s.st.UpdateHeartbeat(dev.ID, group.ConfigHash, req.Battery.Level, 0, req.Battery.Charging,
 		req.System.AndroidVersion, req.System.Model, lastSeen)
 	_ = s.st.SetDeviceAppVersion(dev.ID, req.System.AppVersionCode, req.System.AppVersionName)
 
@@ -806,7 +806,7 @@ func (s *Server) unenroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Mark the device for wipe by clearing its group + key. The client wipes itself.
-	_ = s.st.UpdateHeartbeat(dev.ID, "", 0, 0, "", "", "")
+	_ = s.st.UpdateHeartbeat(dev.ID, "", 0, 0, false, "", "", "")
 	s.recordAs("device", "device_unenrolled", store.EventWarn, dev.ID,
 		deviceLabel(dev.ID, dev.Name)+" unenrolled itself")
 	w.WriteHeader(http.StatusOK)
@@ -988,6 +988,9 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		GroupID       string `json:"group_id"`
 		ConfigVersion int    `json:"config_version"`
 		Battery       int    `json:"battery"`
+		// Only meaningful while the device is checking in: a tablet that went
+		// offline on charge keeps the last value it sent.
+		Charging      bool   `json:"charging"`
 		AndroidVer    string `json:"android_ver"`
 		Model         string `json:"model"`
 		// What the tablet says it is running, and whether that matches the
@@ -1027,7 +1030,7 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		// A device below the staged build is behind, including one that has
 		// enrolled but not yet checked in — it does not have the build either.
 		stale := staged > 0 && d.AppVersionCode < staged
-		out = append(out, pub{d.ID, d.Name, d.GroupID, groupVersion[d.GroupID], d.Battery, d.AndroidVer, d.Model,
+		out = append(out, pub{d.ID, d.Name, d.GroupID, groupVersion[d.GroupID], d.Battery, d.Charging, d.AndroidVer, d.Model,
 			d.AppVersionCode, d.AppVersionName, stale, d.LastSeen, online, s.pokes.Waiting(d.ID) > 0})
 	}
 	writeJSONCached(w, r, out)
@@ -1094,6 +1097,7 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 		"config_version":   configVersion,
 		"config_pending":   configPending,
 		"battery":          d.Battery,
+		"charging":         d.Charging,
 		"android_ver":      d.AndroidVer,
 		"model":            d.Model,
 		"app_version_code": d.AppVersionCode,
@@ -1300,7 +1304,7 @@ func (s *Server) updateGroup(w http.ResponseWriter, r *http.Request) {
 	if devs, _ := s.st.ListDevices(); devs != nil {
 		for _, d := range devs {
 			if d.GroupID == id {
-				_ = s.st.UpdateHeartbeat(d.ID, "", d.Battery, 0, d.AndroidVer, d.Model, d.LastSeen)
+				_ = s.st.UpdateHeartbeat(d.ID, "", d.Battery, 0, d.Charging, d.AndroidVer, d.Model, d.LastSeen)
 				affected++
 			}
 		}

@@ -30,6 +30,9 @@ type Device struct {
 	ConfigVersion int
 	Battery       int
 	Wifi          int
+	// Charging is only meaningful while the device is checking in: a tablet
+	// that went offline on charge keeps the last value it sent.
+	Charging bool
 	AndroidVer    string
 	Model         string
 	// The Ali MDM build actually running on the tablet, reported on every
@@ -378,6 +381,23 @@ func migrate(db *sql.DB) error {
 	// apk_updates had nowhere to put a reason, so a failed install recorded that
 	// it failed and nothing about why — which is the one moment an operator
 	// needs the text the device sent.
+	// The device has always sent whether it is on charge and the server has
+	// always parsed it, then dropped it on the floor. 43% falling and 43%
+	// climbing are different situations for someone deciding whether to go and
+	// plug a trolley in.
+	for _, c := range []struct{ name, ddl string }{
+		{"charging", `ALTER TABLE devices ADD COLUMN charging INTEGER NOT NULL DEFAULT 0`},
+	} {
+		has, err := hasColumn(db, "devices", c.name)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := db.Exec(c.ddl); err != nil {
+				return err
+			}
+		}
+	}
 	for _, c := range []struct{ name, ddl string }{
 		{"last_error", `ALTER TABLE apk_updates ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`},
 	} {
@@ -433,24 +453,24 @@ func hasColumn(db *sql.DB, table, col string) (bool, error) {
 
 func (s *Store) CreateDevice(d *Device) error {
 	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO devices(id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,android_ver,model,app_version_code,app_version_name,last_seen,created_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT OR REPLACE INTO devices(id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,charging,android_ver,model,app_version_code,app_version_name,last_seen,created_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		d.ID, d.Name, d.GroupID, d.APIKeyHash, d.LastAppliedHash, d.ConfigVersion,
-		d.Battery, d.Wifi, d.AndroidVer, d.Model, d.AppVersionCode, d.AppVersionName, d.LastSeen, d.CreatedAt)
+		d.Battery, d.Wifi, d.Charging, d.AndroidVer, d.Model, d.AppVersionCode, d.AppVersionName, d.LastSeen, d.CreatedAt)
 	return err
 }
 
 func (s *Store) GetDevice(id string) (*Device, error) {
-	row := s.db.QueryRow(`SELECT id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,android_ver,model,app_version_code,app_version_name,last_seen,created_at FROM devices WHERE id=?`, id)
+	row := s.db.QueryRow(`SELECT id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,charging,android_ver,model,app_version_code,app_version_name,last_seen,created_at FROM devices WHERE id=?`, id)
 	var d Device
-	if err := row.Scan(&d.ID, &d.Name, &d.GroupID, &d.APIKeyHash, &d.LastAppliedHash, &d.ConfigVersion, &d.Battery, &d.Wifi, &d.AndroidVer, &d.Model, &d.AppVersionCode, &d.AppVersionName, &d.LastSeen, &d.CreatedAt); err != nil {
+	if err := row.Scan(&d.ID, &d.Name, &d.GroupID, &d.APIKeyHash, &d.LastAppliedHash, &d.ConfigVersion, &d.Battery, &d.Wifi, &d.Charging, &d.AndroidVer, &d.Model, &d.AppVersionCode, &d.AppVersionName, &d.LastSeen, &d.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &d, nil
 }
 
 func (s *Store) ListDevices() ([]Device, error) {
-	rows, err := s.db.Query(`SELECT id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,android_ver,model,app_version_code,app_version_name,last_seen,created_at FROM devices ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,charging,android_ver,model,app_version_code,app_version_name,last_seen,created_at FROM devices ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +478,7 @@ func (s *Store) ListDevices() ([]Device, error) {
 	var out []Device
 	for rows.Next() {
 		var d Device
-		if err := rows.Scan(&d.ID, &d.Name, &d.GroupID, &d.APIKeyHash, &d.LastAppliedHash, &d.ConfigVersion, &d.Battery, &d.Wifi, &d.AndroidVer, &d.Model, &d.AppVersionCode, &d.AppVersionName, &d.LastSeen, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.GroupID, &d.APIKeyHash, &d.LastAppliedHash, &d.ConfigVersion, &d.Battery, &d.Wifi, &d.Charging, &d.AndroidVer, &d.Model, &d.AppVersionCode, &d.AppVersionName, &d.LastSeen, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -467,9 +487,9 @@ func (s *Store) ListDevices() ([]Device, error) {
 }
 
 // UpdateHeartbeat records telemetry + the config hash the device just applied.
-func (s *Store) UpdateHeartbeat(id, appliedHash string, battery, wifi int, androidVer, model, lastSeen string) error {
-	_, err := s.db.Exec(`UPDATE devices SET last_applied_hash=?, battery=?, wifi=?, android_ver=?, model=?, last_seen=? WHERE id=?`,
-		appliedHash, battery, wifi, androidVer, model, lastSeen, id)
+func (s *Store) UpdateHeartbeat(id, appliedHash string, battery, wifi int, charging bool, androidVer, model, lastSeen string) error {
+	_, err := s.db.Exec(`UPDATE devices SET last_applied_hash=?, battery=?, wifi=?, charging=?, android_ver=?, model=?, last_seen=? WHERE id=?`,
+		appliedHash, battery, wifi, charging, androidVer, model, lastSeen, id)
 	return err
 }
 

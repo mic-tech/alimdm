@@ -631,6 +631,11 @@ table.stacked.cards tbody tr:has(td[colspan]) { grid-column: 1 / -1; border: non
 }
 
 /* Snapshot on a device card */
+/* Battery gauge: the icon carries the state, the number carries the detail. */
+.battery { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.battery svg { flex: none; color: var(--muted-foreground); }
+.battery-pct { font-variant-numeric: tabular-nums; }
+
 .snap {
   position: relative; width: 100%; margin-top: 10px; padding: 0;
   font: inherit; text-align: inherit; cursor: pointer;

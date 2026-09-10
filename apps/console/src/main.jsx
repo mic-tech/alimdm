@@ -42,6 +42,58 @@ function toast(msg, ok = true) {
 
 /* ── Shared presentational bits ─────────────────────────────────────────── */
 
+/* A battery, drawn the way the tablet draws its own.
+
+   A bare "43%" leaves out the half of it that decides what you do: 43% falling
+   means go and find the trolley, 43% climbing means leave it alone. The device
+   has always reported which, and the server has always parsed it — it was
+   simply dropped before it reached anyone.
+
+   Charging is only shown for a device that is checking in. A tablet that went
+   offline on charge keeps the last value it sent, and a bolt on a tablet nobody
+   has heard from in an hour is a claim the console cannot make. */
+function BatteryGauge({ level, charging, online }) {
+  if (level == null) return <span className="muted">—</span>;
+  const pct = Math.max(0, Math.min(100, level));
+  const live = charging && online;
+  // Colour says how full, the bolt says whether it is climbing. Tying colour to
+  // charging as well made a charging tablet at 43% look identical to a draining
+  // one at 24%, which is the one comparison the cell exists to support.
+  const fill = pct <= 15 ? "var(--red-700)"
+    : pct <= 30 ? "var(--yellow-700)"
+      : "var(--muted-foreground)";
+  const title = `${pct}%${live ? " and charging" : ""}`;
+  return (
+    <span className="battery" title={title}>
+      <svg viewBox="0 0 26 13" width="26" height="13" aria-hidden="true">
+        <rect x="0.5" y="0.5" width="21" height="12" rx="2.5"
+          fill="none" stroke="currentColor" strokeOpacity="0.45" />
+        <path d="M23 4.5h1.5a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H23z"
+          fill="currentColor" fillOpacity="0.45" />
+        {/* 19 is the inner width; a level near zero still shows a sliver so the
+            cell never looks like a rendering failure. */}
+        <rect x="1.5" y="1.5" width={Math.max(1.5, (pct / 100) * 19)} height="10"
+          rx="1.5" fill={fill} />
+        {/* The bolt spans both the filled and empty parts of the battery, so it
+            cannot be a single flat colour — drawn in the background colour it
+            was invisible against the background, which is most of the icon at a
+            low charge. A halo in the background colour, then the bolt over it,
+            reads against either. */}
+        {live && (
+          <>
+            <path d="M12.4 1.9 8.1 7.4h3l-1.5 3.9 4.6-5.7h-3.1z"
+              fill="none" stroke="var(--background)" strokeWidth="2.2"
+              strokeLinejoin="round" />
+            <path d="M12.4 1.9 8.1 7.4h3l-1.5 3.9 4.6-5.7h-3.1z"
+              fill="var(--yellow-700)" />
+          </>
+        )}
+      </svg>
+      <span className="battery-pct">{pct}%</span>
+    </span>
+  );
+}
+
 function Card({ title, actions, children, flush, footer, className }) {
   return (
     <div className={"card" + (className ? " " + className : "")}>
@@ -1515,7 +1567,11 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
                     Next check-in
                   </span>}
             </Fact>
-            <Fact label="Battery">{d.battery != null && d.battery > 0 ? d.battery + "%" : "—"}</Fact>
+            <Fact label="Battery">
+              {d.battery != null && d.battery > 0
+                ? <BatteryGauge level={d.battery} charging={d.charging} online={d.online} />
+                : "—"}
+            </Fact>
             <Fact label="Android">{d.android_ver || "—"}</Fact>
             <Fact label="Model">{d.model || "—"}</Fact>
             <Fact label="Ali MDM">
@@ -1987,7 +2043,9 @@ function Devices({ onErr, navigate }) {
                     </div>
                   )}
                 </td>
-                <td className="nowrap" data-label="Battery">{d.battery != null ? d.battery + "%" : <span className="muted">—</span>}</td>
+                <td className="nowrap" data-label="Battery">
+                  <BatteryGauge level={d.battery} charging={d.charging} online={d.online} />
+                </td>
                 <td className="nowrap" data-label="Android">{d.android_ver || <span className="muted">—</span>}</td>
                 <td className="nowrap small" data-label="Build">
                   {!d.app_version_code ? (
