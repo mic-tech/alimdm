@@ -28,6 +28,8 @@ class DeviceAdminReceiver : DeviceAdminReceiver() {
         const val KEY_GROUP_ID = "group_id"
         /** Label to give this tablet in the console, set at provisioning time. */
         const val KEY_DEVICE_LABEL = "device_label"
+        /** Emitted to JS once a provisioning enrolment has been staged. */
+        const val PENDING_ENROLLMENT_EVENT = "ALIMDM_PENDING_ENROLLMENT"
 
         /**
          * Persist the enrolment the QR packed into the provisioning admin-extras
@@ -66,11 +68,20 @@ class DeviceAdminReceiver : DeviceAdminReceiver() {
             // A tablet that arrived in the wrong group left no evidence at all
             // of whether the extras were missing from the code or dropped on
             // the way, and by the time anyone noticed, logcat had rolled over.
-            android.util.Log.i(
-                "AliMDM-Provision",
-                "Staged enrolment via $via: group=${group.ifBlank { "(none)" }}, " +
-                    "label=${label.ifBlank { "(none)" }}"
-            )
+            // DebugLog, so it reaches the console's device logs as well as logcat.
+            val staged = "Staged enrolment via $via: group=${group.ifBlank { "(none)" }}, " +
+                "label=${label.ifBlank { "(none)" }}"
+            android.util.Log.i("AliMDM-Provision", staged)
+            DebugLog.i("AliMDM-Provision", staged)
+
+            // Before Android 10 this runs when the setup wizard finishes — the
+            // same moment Home, which is us, starts. The app can be up and have
+            // already looked for a pending enrolment by the time this arrives,
+            // and it only looked once, so the tablet sat unenrolled until
+            // someone typed the token in. Tell a running app it has one now.
+            // A no-op when React is not up yet, which is the ordering that
+            // already worked: startup reads what was just committed above.
+            KioskModule.sendEventFromNative(PENDING_ENROLLMENT_EVENT)
             return true
         }
 

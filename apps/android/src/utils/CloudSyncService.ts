@@ -41,6 +41,8 @@ export type CloudStatus = 'unmanaged' | 'offline' | 'online';
 // dashboard never disagree about the same device.
 const CLOUD_OFFLINE_AFTER_MS = 3 * 60_000;
 export const FORCE_UNENROLL_EVENT = 'ALIMDM_FORCE_UNENROLL';
+/** Native: provisioning has just staged an enrolment (DeviceAdminReceiver). */
+export const PENDING_ENROLLMENT_EVENT = 'ALIMDM_PENDING_ENROLLMENT';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -538,17 +540,33 @@ class CloudSyncServiceClass {
 
   // ─── Zero-touch provisioning ──────────────────────────────────────────────────
 
+  private consumeInFlight: Promise<boolean> | null = null;
+
   /**
    * Consume an enrollment handed over by Device Owner provisioning (the
-   * setup-wizard QR). Runs once on startup: if the device isn't already
-   * enrolled and the native layer has a pending token, enroll automatically and
-   * clear it. Best-effort and idempotent.
+   * setup-wizard QR): if the device isn't already enrolled and the native layer
+   * has a pending token, enroll automatically and clear it. Runs on startup and
+   * again whenever native says one has been staged, since before Android 10 that
+   * can happen after startup. Best-effort and idempotent; concurrent callers
+   * share one attempt.
+   *
+   * Resolves true when a token is still pending because the server could not
+   * be reached, so the caller knows a retry is worth scheduling.
    */
-  async consumePendingProvisioningEnrollment(): Promise<void> {
+  consumePendingProvisioningEnrollment(): Promise<boolean> {
+    if (!this.consumeInFlight) {
+      this.consumeInFlight = this.consumePendingOnce().finally(() => {
+        this.consumeInFlight = null;
+      });
+    }
+    return this.consumeInFlight;
+  }
+
+  private async consumePendingOnce(): Promise<boolean> {
     try {
-      if (await this.isEnrolled()) return;
+      if (await this.isEnrolled()) return false;
       const pending = await KioskModule.getPendingCloudEnrollment?.();
-      if (!pending?.enroll_token || !pending?.cloud_url) return;
+      if (!pending?.enroll_token || !pending?.cloud_url) return false;
 
       const PC = (NativeModules as any).PlatformConstants;
       const result = await this.enroll(pending.cloud_url, pending.enroll_token, {
@@ -570,9 +588,12 @@ class CloudSyncServiceClass {
       // doesn't get retried on every launch. Network errors are left pending.
       if (result.success || result.error !== 'Cannot reach server') {
         await KioskModule.clearPendingCloudEnrollment?.();
+        return false;
       }
+      return true;
     } catch {
       // Never block startup on provisioning.
+      return false;
     }
   }
 

@@ -31,7 +31,7 @@ import type { RootStackParamList } from '../navigation/AppNavigator';
 import Icon from '../components/Icon';
 import { revokeSettingsAccess } from '../utils/authState';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import { CloudSyncService, CONFIG_UPDATED_EVENT, FORCE_UNENROLL_EVENT } from '../utils/CloudSyncService';
+import { CloudSyncService, CONFIG_UPDATED_EVENT, FORCE_UNENROLL_EVENT, PENDING_ENROLLMENT_EVENT } from '../utils/CloudSyncService';
 import { CLOUD_ENABLED } from '../config/features';
 
 const { HttpServerModule } = NativeModules;
@@ -394,15 +394,29 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
       (_u: string) => {},
       () => currentWebViewUrlRef.current || url,
     );
-    if (CLOUD_ENABLED) {
-      // Auto-enroll first if provisioning left us a token — the setup-wizard QR
-      // and enroll.py both write the same one — then start the heartbeat loop.
-      (async () => {
-        await CloudSyncService.consumePendingProvisioningEnrollment();
-        CloudSyncService.start();
-        maybeOfferPermissionWizard();
-      })();
-    }
+    // Auto-enroll first if provisioning left us a token — the setup-wizard QR
+    // and enroll.py both write the same one — then start the heartbeat loop.
+    // start() is a no-op until there are credentials, so running this again
+    // is harmless.
+    let enrollRetry: ReturnType<typeof setTimeout> | null = null;
+    let unmounted = false;
+    const enrollFromProvisioning = async () => {
+      if (enrollRetry) { clearTimeout(enrollRetry); enrollRetry = null; }
+      const stillPending = await CloudSyncService.consumePendingProvisioningEnrollment();
+      if (unmounted) return;
+      CloudSyncService.start();
+      maybeOfferPermissionWizard();
+      // A fresh tablet can reach this before its Wi-Fi is up. The token is
+      // kept for that case; try again rather than waiting for a relaunch that,
+      // on a kiosk, may never come.
+      if (stillPending) enrollRetry = setTimeout(enrollFromProvisioning, 30_000);
+    };
+    // Before Android 10 the token is staged when the setup wizard finishes,
+    // which can be after this screen has already looked for it.
+    const onPendingEnrollment = CLOUD_ENABLED
+      ? DeviceEventEmitter.addListener(PENDING_ENROLLMENT_EVENT, () => { enrollFromProvisioning(); })
+      : null;
+    if (CLOUD_ENABLED) enrollFromProvisioning();
 
     const onConfigUpdated = CLOUD_ENABLED
       ? DeviceEventEmitter.addListener(CONFIG_UPDATED_EVENT, async () => {
@@ -428,6 +442,9 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
       : null;
 
     return () => {
+      unmounted = true;
+      if (enrollRetry) clearTimeout(enrollRetry);
+      onPendingEnrollment?.remove();
       onConfigUpdated?.remove();
       onForceUnenroll?.remove();
       if (CLOUD_ENABLED) {
