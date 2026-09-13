@@ -54,6 +54,16 @@ class AgentUpdateModule(reactContext: ReactApplicationContext) :
         // Refuse to replace ourselves on a nearly flat battery: losing power
         // partway through leaves the device with no management agent at all.
         private const val MIN_BATTERY_PCT = 20
+
+        // How long an install committed by this very process is given before
+        // its silence counts as failure. A Lenovo TB-X304F on Android 8.1 takes
+        // well over a heartbeat to copy and compile a 60MB build.
+        private const val IN_FLIGHT_MS = 10 * 60_000L
+
+        // The KEY_AT of the install this process committed, if any. A pending
+        // marker from the current process is an install still under way, not
+        // one that failed: only a restart on the old version means that.
+        @Volatile private var committedAt = 0L
     }
 
     private fun prefs() =
@@ -107,6 +117,25 @@ class AgentUpdateModule(reactContext: ReactApplicationContext) :
             }
             val from = p.getLong(KEY_FROM, -1L)
             val now = currentVersionCode()
+            val at = p.getLong(KEY_AT, 0L)
+            // Still this process, still the old build, and Android has not said
+            // no: the install is in progress. Reporting it as failed here — as
+            // the next heartbeat used to — made the server offer the update
+            // again, and the tablet started over, restarting a slow install
+            // every thirty seconds until the rollout ran out of attempts.
+            val verdict = if (p.contains(AgentUpdateResultReceiver.KEY_RESULT_STATUS))
+                p.getInt(AgentUpdateResultReceiver.KEY_RESULT_STATUS, PackageInstaller.STATUS_FAILURE) else null
+            if (at != 0L && at == committedAt && now < target &&
+                (verdict == null || verdict == PackageInstaller.STATUS_SUCCESS) &&
+                System.currentTimeMillis() - at < IN_FLIGHT_MS
+            ) {
+                promise.resolve(Arguments.createMap().apply {
+                    putString("status", "in_flight")
+                    putDouble("targetVersionCode", target.toDouble())
+                    putDouble("currentVersionCode", now.toDouble())
+                })
+                return
+            }
             // What Android said, if the result arrived. It is written by a
             // manifest receiver, so it survives the process this update killed.
             val reason = p.getString(AgentUpdateResultReceiver.KEY_RESULT_MESSAGE, null)
@@ -206,6 +235,7 @@ class AgentUpdateModule(reactContext: ReactApplicationContext) :
                     .remove(AgentUpdateResultReceiver.KEY_RESULT_STATUS)
                     .remove(AgentUpdateResultReceiver.KEY_RESULT_MESSAGE)
                     .commit()
+                committedAt = prefs().getLong(KEY_AT, 0L)
                 commitInstall(apk)
                 promise.resolve(
                     Arguments.createMap().apply {

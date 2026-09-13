@@ -619,6 +619,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	_ = s.st.UpdateHeartbeat(dev.ID, group.ConfigHash, req.Battery.Level, 0, req.Battery.Charging,
 		req.System.AndroidVersion, req.System.Model, lastSeen)
 	_ = s.st.SetDeviceAppVersion(dev.ID, req.System.AppVersionCode, req.System.AppVersionName)
+	s.settleAgentUpdateFromHeartbeat(dev, req.System.AppVersionCode)
 	_ = s.st.SetDeviceSerial(dev.ID, strings.TrimSpace(req.System.SerialNumber))
 
 	resp := map[string]any{

@@ -24,7 +24,8 @@ export interface AgentUpdateOffer {
 }
 
 type ReconcileResult = {
-  status: 'success' | 'failed';
+  /** in_flight: an install this process committed is still under way. */
+  status: 'success' | 'failed' | 'in_flight';
   targetVersionCode: number;
   currentVersionCode: number;
   error?: string;

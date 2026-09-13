@@ -37,6 +37,25 @@ import (
 // reliably crashes on apply would loop forever, re-downloading each heartbeat.
 const maxAgentAttempts = 3
 
+// agentInstallGrace is how long an attempt that reported "installing" is left
+// alone. A Lenovo TB-X304F on Android 8.1 needs minutes to download, copy and
+// compile a 60MB build, and agents up to 1.2.64 misread their own install still
+// running on the next heartbeat as a failure with no reason. Re-offering it
+// then started the install over, every thirty seconds, until the rollout ran
+// out of attempts: exactly what IQRA Tab DE0A did with 1.2.64.
+var agentInstallGrace = 10 * time.Minute
+
+// noReasonFailure is the text of that misreading.
+const noReasonFailure = "no reason reported by Android"
+
+func installingRecently(up *store.AgentUpdate) bool {
+	if up.Status != store.AgentInstalling {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339, up.UpdatedAt)
+	return err == nil && time.Since(at) < agentInstallGrace
+}
+
 // The agent is this app; anything else uploaded here could not replace it.
 const agentPackageName = "com.alimdm"
 
@@ -229,6 +248,16 @@ func (s *Server) agentUpdateResult(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	// A failure with no reason, moments into an install, is almost always that
+	// install still running (see agentInstallGrace). Keep waiting: if the
+	// tablet comes back on the new build its heartbeat closes the rollout, and
+	// if it does not, the grace runs out and the update is offered again.
+	if up, err := s.st.GetAgentUpdate(dev.ID); err == nil && req.Status == store.AgentFailed &&
+		strings.Contains(req.Error, noReasonFailure) && installingRecently(up) {
+		log.Printf("agent update: holding %s's reasonless failure during the install grace: %s", dev.ID, req.Error)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if err := s.st.SetAgentUpdateStatus(dev.ID, req.Status, req.Error); err != nil {
 		http.Error(w, "update failed", http.StatusInternalServerError)
 		return
@@ -259,6 +288,10 @@ func (s *Server) agentUpdateFor(deviceID string) map[string]any {
 	if up.Status == store.AgentSuccess || up.Status == store.AgentFailed {
 		return nil
 	}
+	// The last offer is still being installed; offering it again restarts it.
+	if installingRecently(up) {
+		return nil
+	}
 	if up.Attempts >= maxAgentAttempts {
 		// Park it as failed so the console shows why it stopped retrying.
 		_ = s.st.SetAgentUpdateStatus(deviceID, store.AgentFailed,
@@ -276,5 +309,20 @@ func (s *Server) agentUpdateFor(deviceID string) map[string]any {
 		"download_url": s.baseURL + "/api/v1/agent/apk",
 		"attempt":      up.Attempts + 1,
 		"max_attempts": maxAgentAttempts,
+	}
+}
+
+// settleAgentUpdateFromHeartbeat closes a rollout when the tablet reports it is
+// running the target build, whatever became of its own report. That report can
+// be lost: an older agent that misread its install as failed also cleared its
+// record of the attempt, so after the restart it had nothing left to report.
+func (s *Server) settleAgentUpdateFromHeartbeat(dev *store.Device, runningCode int) {
+	up, err := s.st.GetAgentUpdate(dev.ID)
+	if err != nil || up.Status == store.AgentSuccess || runningCode <= 0 || runningCode < up.TargetVersionCode {
+		return
+	}
+	if s.st.SetAgentUpdateStatus(dev.ID, store.AgentSuccess, "") == nil {
+		s.recordAs("device", "agent_update_result", store.EventInfo, dev.ID,
+			"Ali MDM updated itself on "+deviceLabel(dev.ID, dev.Name))
 	}
 }

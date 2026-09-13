@@ -438,6 +438,9 @@ class CloudSyncServiceClass {
     if (!AgentUpdateService.isAvailable()) return;
     try {
       const settled = await AgentUpdateService.reconcile();
+      // Nothing to report and nothing to start: the offer in this response is
+      // the one already being installed.
+      if (settled?.status === 'in_flight') return;
       if (settled) {
         await this._reportAgentUpdate(c, settled.status, settled.error ?? '', settled.targetVersionCode);
         // The offer in *this* response was computed before that report landed,
