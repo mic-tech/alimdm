@@ -946,8 +946,10 @@ func (s *Server) provisionAPKHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
 	w.Header().Set("Content-Disposition", `attachment; filename="alimdm.apk"`)
 	n, err := io.Copy(w, f)
-	// Only a whole download can have become an installed tablet; the download
-	// manager's interrupted attempts would otherwise leave claimable rows.
+	// Only a whole download can have become an installed tablet. Behind a
+	// buffering proxy this cannot see a client that gave up — nginx takes the
+	// whole file either way — so an interrupted attempt can still leave a row;
+	// the claim treats codes asking for the same thing as one for that reason.
 	if nonce := r.URL.Query().Get("claim"); nonce != "" && err == nil {
 		if rel, rerr := s.st.GetAgentRelease(); rerr == nil && n == rel.Size {
 			_ = s.st.RecordProvisionDownload(nonce, clientIP(r), r.UserAgent())

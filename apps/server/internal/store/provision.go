@@ -25,8 +25,8 @@ type ProvisionClaim struct {
 	Label   string
 }
 
-// ErrNoProvisionMatch: no download fits. ErrAmbiguousProvision: more than one
-// QR's downloads fit, so which group and label to use cannot be told apart.
+// ErrNoProvisionMatch: no download fits. ErrAmbiguousProvision: downloads from
+// codes with different groups or labels fit, so which to use cannot be told.
 var (
 	ErrNoProvisionMatch   = errors.New("no matching provisioning download")
 	ErrAmbiguousProvision = errors.New("more than one provisioning download matches")
@@ -69,7 +69,7 @@ func (s *Store) ClaimProvisionDownload(ip, model, androidVersion, deviceID strin
 		`SELECT d.id, d.user_agent, d.claimed_by, c.nonce, c.group_id, c.label
 		   FROM provision_downloads d JOIN provision_claims c ON c.nonce = d.nonce
 		  WHERE d.ip = ? AND d.at >= ? AND (d.claimed_by = '' OR d.claimed_by = ?)
-		  ORDER BY d.id`, ip, since, deviceID)
+		  ORDER BY d.id DESC`, ip, since, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +77,11 @@ func (s *Store) ClaimProvisionDownload(ip, model, androidVersion, deviceID strin
 	// "AndroidDownloadManager/8.1.0 (Linux; U; Android 8.1.0; Lenovo TB-X304F Build/OPM1...)".
 	wantVersion := "Android " + androidVersion + ";"
 	wantModel := "; " + model + " Build/"
+	// Newest first: the download a tablet is asking about is almost always the
+	// latest from its network. Codes that ask for the same group and label are
+	// interchangeable — a code regenerated after a failed setup leaves an
+	// unclaimed download behind that differs only by nonce — so only codes
+	// that disagree on either make the answer ambiguous.
 	var matchID int64
 	var match *ProvisionClaim
 	ambiguous := false
@@ -91,16 +96,14 @@ func (s *Store) ClaimProvisionDownload(ip, model, androidVersion, deviceID strin
 		if !strings.Contains(ua, wantVersion) || !strings.Contains(ua, wantModel) {
 			continue
 		}
-		switch {
-		case match == nil:
-			cc := c
-			match, matchID = &cc, id
-		case claimedBy == deviceID && deviceID != "":
-			// Prefer the one this device already holds.
-			cc := c
-			match, matchID = &cc, id
-		case c.Nonce != match.Nonce:
+		if match != nil && (c.GroupID != match.GroupID || c.Label != match.Label) {
 			ambiguous = true
+		}
+		// The first seen is the newest; a download this device already holds
+		// wins over it, so a repeated claim keeps its slot.
+		if match == nil || (claimedBy == deviceID && deviceID != "") {
+			cc := c
+			match, matchID = &cc, id
 		}
 	}
 	rows.Close()

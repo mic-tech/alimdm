@@ -180,3 +180,23 @@ func mustDevices(t *testing.T, e *testEnv) []store.Device {
 	}
 	return ds
 }
+
+// What happened on the second Lenovo: its setup was retried with a freshly
+// generated code, leaving the first code's download unclaimed. Both asked for
+// the same group and no label, so there is nothing to disambiguate.
+func TestClaimTreatsEquivalentCodesAsOne(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	if err := e.st.UpsertGroup(&testGroup); err != nil {
+		t.Fatal(err)
+	}
+	e.stageAgent(t, bytes.Repeat([]byte("apk bytes "), 8000))
+	e.download(t, e.qrDownloadURL(t, tok, "group=default"), "69.243.127.164", x304UA)
+	e.download(t, e.qrDownloadURL(t, tok, "group=default"), "69.243.127.164", x304UA)
+	if code, body := e.claim(t, "69.243.127.164", x304Info); code != http.StatusOK {
+		t.Fatalf("status %d (%v), want 200", code, body)
+	}
+	if d, err := e.st.GetDevice("37f0432c"); err != nil || d.GroupID != "default" {
+		t.Errorf("device %v err %v, want enrolled into default", d, err)
+	}
+}

@@ -4,10 +4,11 @@
  * Used by the cloud enrollment flow to scan the token QR shown on the dashboard.
  */
 import React, { useCallback, useEffect, useRef } from 'react';
-import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import {
   Camera,
   useCameraDevice,
+  useCameraFormat,
   useCameraPermission,
   useCodeScanner,
 } from 'react-native-vision-camera';
@@ -23,6 +24,13 @@ interface QrScannerModalProps {
 const QrScannerModal: React.FC<QrScannerModalProps> = ({ visible, onClose, onScanned, hint }) => {
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('back');
+  // The console's QR is dense, and at the camera's default stream size an older
+  // tablet sees too few pixels per module to read it. Full HD where offered.
+  const format = useCameraFormat(device, [{ videoResolution: { width: 1920, height: 1080 } }]);
+  // Twice the old 240: the frame is where people hold the code, and a small
+  // one had them hold it too far away for a low-resolution camera to read.
+  const { width, height } = useWindowDimensions();
+  const frameSize = Math.min(480, Math.round(Math.min(width, height) * 0.8));
   // Guard so a single QR isn't reported repeatedly across frames.
   const handledRef = useRef(false);
 
@@ -57,6 +65,7 @@ const QrScannerModal: React.FC<QrScannerModalProps> = ({ visible, onClose, onSca
           <Camera
             style={StyleSheet.absoluteFill}
             device={device}
+            format={format}
             isActive={visible}
             codeScanner={codeScanner}
           />
@@ -71,7 +80,7 @@ const QrScannerModal: React.FC<QrScannerModalProps> = ({ visible, onClose, onSca
         )}
 
         <View style={styles.overlay} pointerEvents="none">
-          <View style={styles.frame} />
+          <View style={[styles.frame, { width: frameSize, height: frameSize }]} />
           <Text style={styles.hint}>
             {hint ?? 'Point the camera at the enrollment QR code on the cloud dashboard'}
           </Text>
@@ -91,8 +100,6 @@ const styles = StyleSheet.create({
   message: { color: '#fff', fontSize: 16, textAlign: 'center' },
   overlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   frame: {
-    width: 240,
-    height: 240,
     borderWidth: 3,
     borderColor: 'rgba(255,255,255,0.9)',
     borderRadius: 16,
