@@ -95,3 +95,26 @@ func TestUpdateIsReofferedAfterTheGrace(t *testing.T) {
 		t.Error("not offered again after the grace")
 	}
 }
+
+// The heartbeat and the agent's own report can both say it succeeded; the
+// feed says so once.
+func TestSuccessIsAnnouncedOnce(t *testing.T) {
+	e := newTestEnv(t)
+	key := e.armAgentRollout(t, "tab-1")
+	e.agentReport(t, "tab-1", key, "installing", "")
+	e.heartbeatOffer(t, "tab-1", key, 105)
+	e.agentReport(t, "tab-1", key, "success", "")
+	evs, err := e.st.ListEventsPage(0, 100, "", "tab-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, ev := range evs {
+		if ev.Kind == "agent_update_result" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d success events, want 1", n)
+	}
+}

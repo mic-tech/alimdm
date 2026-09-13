@@ -258,6 +258,12 @@ func (s *Server) agentUpdateResult(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	// Success is terminal, and the heartbeat may already have recorded it: a
+	// second report is acknowledged without a second line in the feed.
+	if up, err := s.st.GetAgentUpdate(dev.ID); err == nil && up.Status == store.AgentSuccess {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if err := s.st.SetAgentUpdateStatus(dev.ID, req.Status, req.Error); err != nil {
 		http.Error(w, "update failed", http.StatusInternalServerError)
 		return
