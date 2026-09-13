@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, TouchableWithoutFeedback, NativeEventEmitter, NativeModules, AppState, DeviceEventEmitter, Dimensions, Pressable, BackHandler, Keyboard } from 'react-native';
+import { Alert, View, StyleSheet, TouchableOpacity, TouchableWithoutFeedback, NativeEventEmitter, NativeModules, AppState, DeviceEventEmitter, Dimensions, Pressable, BackHandler, Keyboard } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RNBrightness from '../utils/BrightnessModule';
 import { useIsFocused, useFocusEffect } from '@react-navigation/native';
@@ -11,6 +11,7 @@ import MotionDetector from '../components/MotionDetector';
 import ProximityDetectionModule, { onProximityNear as onProximityNearEvent } from '../utils/ProximityDetectionModule';
 import ExternalAppOverlay from '../components/ExternalAppOverlay';
 import PermissionWizard, { hasOutstandingPermissions } from '../components/PermissionWizard';
+import QrScannerModal from '../components/QrScannerModal';
 import { StorageService } from '../utils/storage';
 import { saveSecurePin, saveSecureMqttPassword, getSecureBasicAuthPassword } from '../utils/secureStorage';
 import KioskModule from '../utils/KioskModule';
@@ -378,6 +379,21 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
       // Never hold up the kiosk for this.
     }
   }, []);
+  // Offered on a Device Owner tablet that came up with no way to enrol itself.
+  const [enrollScanVisible, setEnrollScanVisible] = useState(false);
+  const onEnrollCodeScanned = useCallback(async (raw: string) => {
+    setEnrollScanVisible(false);
+    const result = await CloudSyncService.enrollFromCode(raw);
+    if (result.success) {
+      maybeOfferPermissionWizard();
+      return;
+    }
+    Alert.alert('Enrollment failed', result.error ?? 'Unknown error', [
+      { text: 'Not now', style: 'cancel' },
+      { text: 'Scan again', onPress: () => setEnrollScanVisible(true) },
+    ]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const closePermissionWizard = useCallback(() => {
     setWizardVisible(false);
     StorageService.savePermissionWizardShown(true).catch(() => {});
@@ -402,14 +418,18 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
     let unmounted = false;
     const enrollFromProvisioning = async () => {
       if (enrollRetry) { clearTimeout(enrollRetry); enrollRetry = null; }
-      const stillPending = await CloudSyncService.consumePendingProvisioningEnrollment();
+      const outcome = await CloudSyncService.consumePendingProvisioningEnrollment();
       if (unmounted) return;
       CloudSyncService.start();
       maybeOfferPermissionWizard();
+      if (outcome === 'enrolled') setEnrollScanVisible(false);
+      // Nothing reached the app and the server could not place it: the code on
+      // the console screen is the one remaining way in.
+      if (outcome === 'scan') setEnrollScanVisible(true);
       // A fresh tablet can reach this before its Wi-Fi is up. The token is
       // kept for that case; try again rather than waiting for a relaunch that,
       // on a kiosk, may never come.
-      if (stillPending) enrollRetry = setTimeout(enrollFromProvisioning, 30_000);
+      if (outcome === 'retry') enrollRetry = setTimeout(enrollFromProvisioning, 30_000);
     };
     // Before Android 10 the token is staged when the setup wizard finishes,
     // which can be after this screen has already looked for it.
@@ -2787,6 +2807,12 @@ const KioskScreen: React.FC<KioskScreenProps> = ({ navigation }) => {
   return (
     <View style={styles.container}>
       <PermissionWizard visible={wizardVisible} onClose={closePermissionWizard} />
+      <QrScannerModal
+        visible={enrollScanVisible}
+        onClose={() => setEnrollScanVisible(false)}
+        onScanned={onEnrollCodeScanned}
+        hint="This tablet could not enroll by itself. Scan the enrollment QR on the Ali MDM console's Enroll page."
+      />
       {displayMode === 'webview' ? (
         <>
           {(statusBarEnabled || dashboardModeEnabled) && (

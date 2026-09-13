@@ -21,6 +21,7 @@ jest.mock('react-native-vision-camera', () => {
     useCameraDevice: () => undefined,
     useCameraDevices: () => [],
     useFrameProcessor: () => undefined,
+    useCodeScanner: () => undefined,
     useCameraPermission: () => ({ hasPermission: false, requestPermission: jest.fn() }),
   };
 });

@@ -3,7 +3,7 @@
  * SSL Certificates, Updates, Reset, Device Owner, REST API
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, AppState, NativeModules } from 'react-native';
 import {
   SettingsSection,
@@ -16,7 +16,7 @@ import { ApiSettingsSection } from '../../../components/ApiSettingsSection';
 import { MqttSettingsSection } from '../../../components/MqttSettingsSection';
 import { CertificateInfo } from '../../../utils/CertificateModule';
 import AccessibilityModule from '../../../utils/AccessibilityModule';
-import { CloudSyncService, getDeviceSerial } from '../../../utils/CloudSyncService';
+import { CloudSyncService, collectDeviceInfo, parseEnrollmentCode } from '../../../utils/CloudSyncService';
 import { CLOUD_ENABLED } from '../../../config/features';
 import QrScannerModal from '../../../components/QrScannerModal';
 import PermissionWizard from '../../../components/PermissionWizard';
@@ -150,14 +150,9 @@ const AdvancedTab: React.FC<AdvancedTabProps> = ({
           style: 'destructive',
           onPress: async () => {
             setEnrolling(true);
-            const PC = NativeModules.PlatformConstants as any;
-            const result = await CloudSyncService.enroll(cloudUrl.trim(), enrollToken.trim(), {
-              model: PC?.Model ?? '',
-              manufacturer: PC?.Manufacturer ?? '',
-              android_version: PC?.Release ?? '',
-              app_version: PC?.appVersion ?? '',
-              serial_number: await getDeviceSerial(),
-            });
+            const { groupId, label } = scannedExtrasRef.current;
+            const result = await CloudSyncService.enroll(
+              cloudUrl.trim(), enrollToken.trim(), await collectDeviceInfo(), groupId, label);
             setEnrolling(false);
             if (result.success) {
               setIsEnrolled(true);
@@ -180,26 +175,15 @@ const AdvancedTab: React.FC<AdvancedTabProps> = ({
   // Fill the enrollment fields from a scanned QR. The cloud dashboard encodes the bare
   // token; we also tolerate a structured payload (JSON {url,token} or "url|token") so a
   // future richer QR can fill the server URL too.
+  // Group and label only come from a scanned provisioning QR.
+  const scannedExtrasRef = useRef<{ groupId?: string; label?: string }>({});
   const handleScanned = (raw: string) => {
     setShowScanner(false);
-    const data = raw.trim();
-    let url: string | undefined;
-    let token = data;
-    try {
-      const obj = JSON.parse(data);
-      if (obj && (obj.token || obj.url)) {
-        url = typeof obj.url === 'string' ? obj.url : undefined;
-        token = obj.token != null ? String(obj.token) : '';
-      }
-    } catch {
-      if (data.includes('|')) {
-        const [u, t] = data.split('|');
-        url = u;
-        token = t;
-      }
-    }
-    if (url) setCloudUrl(url);
-    if (token) setEnrollToken(token);
+    const code = parseEnrollmentCode(raw);
+    if (!code) return;
+    scannedExtrasRef.current = { groupId: code.groupId, label: code.label };
+    if (code.url) setCloudUrl(code.url);
+    if (code.token) setEnrollToken(code.token);
   };
 
   const handleUnenroll = () => {

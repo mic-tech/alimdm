@@ -93,6 +93,11 @@ def enableProguardInReleaseBuilds = true
 //   ./gradlew assembleRelease -PupdateRepo=owner/name
 // App distribution is normally handled by the cloud console instead.
 def updateRepo = project.hasProperty('updateRepo') ? project.property('updateRepo') : ''
+// The server a Device Owner tablet asks to be matched to its QR when the token
+// in that QR never reached the app (pre-Android 10 vendor builds that drop the
+// provisioning broadcast). Empty: no matching, and the app asks for a scan.
+// Set it once in ~/.gradle/gradle.properties as cloudUrl=https://mdm.example.com
+def cloudUrl = project.hasProperty('cloudUrl') ? project.property('cloudUrl') : ''
 def playStoreBuild = project.hasProperty('playstore')
 def enableSelfUpdate = !updateRepo.isEmpty() && !playStoreBuild
 
@@ -129,13 +134,14 @@ android {
         applicationId "com.alimdm"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 104
-        versionName "1.2.63"
+        versionCode 105
+        versionName "1.2.64"
 
         // Expose self-update flag to both Kotlin (BuildConfig) and JS (via UpdateModule constants)
         buildConfigField "boolean", "ENABLE_SELF_UPDATE", "${enableSelfUpdate}"
         buildConfigField "boolean", "ENABLE_ACCESSIBILITY_SERVICE", "${enableAccessibilityService}"
         buildConfigField "String", "UPDATE_REPO", "\"${updateRepo}\""
+        buildConfigField "String", "CLOUD_URL", "\"${cloudUrl}\""
 
         // Play Store compliance: when -Pplaystore is set, replace REQUEST_INSTALL_PACKAGES
         // with INTERNET (already declared → deduplicated by manifest merger → effectively removed)

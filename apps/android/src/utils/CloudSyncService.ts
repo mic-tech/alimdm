@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DeviceEventEmitter, NativeModules } from 'react-native';
+import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 
 import { StorageService, KEYS } from './storage';
 import DeviceControlService from '../services/DeviceControlService';
@@ -87,6 +87,66 @@ export async function getDeviceSerial(): Promise<string> {
     // Let the server assign one rather than blocking enrolment outright.
     return '';
   }
+}
+
+export type EnrollResult = { success: boolean; error?: string; organizationName?: string; status?: number };
+
+/**
+ * What startup provisioning found: nothing to do, enrolled, a token or claim
+ * kept for retrying because the server was unreachable, or no way in short of
+ * scanning the code.
+ */
+export type ProvisioningOutcome = 'none' | 'enrolled' | 'retry' | 'scan';
+
+/** The device_info every enrolment path sends. */
+export async function collectDeviceInfo(): Promise<Record<string, string>> {
+  // Platform.constants, not NativeModules.PlatformConstants: under the new
+  // architecture the latter is undefined, and every enrolment sent an empty
+  // model and version — harmless until the server had to match on them.
+  const PC = (Platform as any).constants ?? (NativeModules as any).PlatformConstants;
+  return {
+    model: PC?.Model ?? '',
+    manufacturer: PC?.Manufacturer ?? '',
+    android_version: PC?.Release ?? '',
+    app_version: PC?.appVersion ?? '',
+    serial_number: await getDeviceSerial(),
+  };
+}
+
+export interface EnrollmentCode { url?: string; token: string; groupId?: string; label?: string }
+
+/**
+ * Read an enrollment code: the console's provisioning QR (the same one the
+ * setup wizard scans), {url, token} JSON, "url|token", or a bare token.
+ */
+export function parseEnrollmentCode(raw: string): EnrollmentCode | null {
+  const data = raw.trim();
+  if (!data) return null;
+  try {
+    const obj = JSON.parse(data);
+    const extras = obj?.['android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE'];
+    if (extras && typeof extras === 'object') {
+      return {
+        url: extras.cloud_url ? String(extras.cloud_url) : undefined,
+        token: extras.enroll_token != null ? String(extras.enroll_token) : '',
+        groupId: extras.group_id ? String(extras.group_id) : undefined,
+        label: extras.device_label ? String(extras.device_label) : undefined,
+      };
+    }
+    if (obj && typeof obj === 'object' && (obj.token || obj.url)) {
+      return {
+        url: typeof obj.url === 'string' ? obj.url : undefined,
+        token: obj.token != null ? String(obj.token) : '',
+      };
+    }
+  } catch {
+    // Not JSON.
+  }
+  if (data.includes('|')) {
+    const [url, token] = data.split('|');
+    return { url, token };
+  }
+  return { token: data };
 }
 
 async function simpleHash(str: string): Promise<string> {
@@ -483,29 +543,61 @@ class CloudSyncServiceClass {
     // Optional label, given at provisioning so the tablet appears in the
     // console already named rather than as a bare device id.
     deviceLabel?: string,
-  ): Promise<{ success: boolean; error?: string; organizationName?: string }> {
+  ): Promise<EnrollResult> {
+    return this.requestEnrollment(cloudUrl, '/api/v1/devices/enroll/', deviceInfo, {
+      token,
+      group_id: groupId || undefined,
+      device_label: deviceLabel || undefined,
+    });
+  }
+
+  /**
+   * Ask the server to match this tablet to the QR download it was provisioned
+   * from, for when the token in that QR never reached the app. The server sets
+   * the group and label; no token is sent or received.
+   */
+  claimProvisioning(cloudUrl: string, deviceInfo: Record<string, string>): Promise<EnrollResult> {
+    return this.requestEnrollment(cloudUrl, '/api/v1/provision/claim', deviceInfo, {});
+  }
+
+  private async requestEnrollment(
+    cloudUrl: string,
+    path: string,
+    deviceInfo: Record<string, string>,
+    extra: Record<string, unknown>,
+  ): Promise<EnrollResult> {
     const url = cloudUrl.replace(/\/$/, '');
+    let response: Response;
+    let text: string;
     try {
       // Declare what this device can do so the dashboard shows only viable
       // actions from the start (refreshed later on every heartbeat).
       const capabilities = await getCapabilities().catch(() => [] as string[]);
-      const response = await fetch(`${url}/api/v1/devices/enroll/`, {
+      response = await fetch(`${url}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          device_info: { ...deviceInfo, capabilities },
-          group_id: groupId || undefined,
-          device_label: deviceLabel || undefined,
-        }),
+        body: JSON.stringify({ ...extra, device_info: { ...deviceInfo, capabilities } }),
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return { success: false, error: data.error ?? 'Enrollment failed' };
-      }
-
+      text = await response.text();
+    } catch {
+      return { success: false, error: 'Cannot reach server' };
+    }
+    let data: any = null;
+    try { data = JSON.parse(text); } catch { /* the server answers errors in plain text */ }
+    if (!response.ok) {
+      // Reported as "Cannot reach server" before, because parsing the plain
+      // text of a refusal threw — so a wrong token looked like a network fault
+      // and was kept for retrying.
+      return {
+        success: false,
+        error: data?.error ?? (text.trim() || `Enrollment failed (${response.status})`),
+        status: response.status,
+      };
+    }
+    if (!data?.device_id || !data?.api_key) {
+      return { success: false, error: 'Unexpected reply from server' };
+    }
+    try {
       // Wipe all local settings before applying cloud config
       await AsyncStorage.multiRemove(Object.values(KEYS));
       await Promise.all([
@@ -534,13 +626,13 @@ class CloudSyncServiceClass {
 
       return { success: true, organizationName: data.organization_name };
     } catch {
-      return { success: false, error: 'Cannot reach server' };
+      return { success: false, error: 'Could not save the enrollment on this device' };
     }
   }
 
   // ─── Zero-touch provisioning ──────────────────────────────────────────────────
 
-  private consumeInFlight: Promise<boolean> | null = null;
+  private consumeInFlight: Promise<ProvisioningOutcome> | null = null;
 
   /**
    * Consume an enrollment handed over by Device Owner provisioning (the
@@ -550,10 +642,12 @@ class CloudSyncServiceClass {
    * can happen after startup. Best-effort and idempotent; concurrent callers
    * share one attempt.
    *
-   * Resolves true when a token is still pending because the server could not
-   * be reached, so the caller knows a retry is worth scheduling.
+   * Before Android 10 some vendor builds never deliver the token at all (see
+   * store/provision.go on the server). A Device Owner there with nothing
+   * pending asks the server to match it to its QR download instead, and when
+   * that fails the caller should offer to scan the code.
    */
-  consumePendingProvisioningEnrollment(): Promise<boolean> {
+  consumePendingProvisioningEnrollment(): Promise<ProvisioningOutcome> {
     if (!this.consumeInFlight) {
       this.consumeInFlight = this.consumePendingOnce().finally(() => {
         this.consumeInFlight = null;
@@ -562,20 +656,14 @@ class CloudSyncServiceClass {
     return this.consumeInFlight;
   }
 
-  private async consumePendingOnce(): Promise<boolean> {
+  private async consumePendingOnce(): Promise<ProvisioningOutcome> {
     try {
-      if (await this.isEnrolled()) return false;
+      if (await this.isEnrolled()) return 'none';
       const pending = await KioskModule.getPendingCloudEnrollment?.();
-      if (!pending?.enroll_token || !pending?.cloud_url) return false;
+      if (!pending?.enroll_token || !pending?.cloud_url) return this.claimOrScan();
 
-      const PC = (NativeModules as any).PlatformConstants;
-      const result = await this.enroll(pending.cloud_url, pending.enroll_token, {
-        model: PC?.Model ?? '',
-        manufacturer: PC?.Manufacturer ?? '',
-        android_version: PC?.Release ?? '',
-        app_version: PC?.appVersion ?? '',
-        serial_number: await getDeviceSerial(),
-      }, (pending as any).group_id, (pending as any).device_label);
+      const result = await this.enroll(pending.cloud_url, pending.enroll_token,
+        await collectDeviceInfo(), (pending as any).group_id, (pending as any).device_label);
       if (result.success) {
         // A device provisioned via the setup-wizard QR is a Device Owner kiosk:
         // pin Ali MDM as the persistent Home launcher so the "choose launcher"
@@ -588,13 +676,46 @@ class CloudSyncServiceClass {
       // doesn't get retried on every launch. Network errors are left pending.
       if (result.success || result.error !== 'Cannot reach server') {
         await KioskModule.clearPendingCloudEnrollment?.();
-        return false;
+        return result.success ? 'enrolled' : 'none';
       }
-      return true;
+      return 'retry';
     } catch {
       // Never block startup on provisioning.
-      return false;
+      return 'none';
     }
+  }
+
+  /** The no-token path: only for a pre-Android 10 Device Owner. */
+  private async claimOrScan(): Promise<ProvisioningOutcome> {
+    if (Platform.OS !== 'android' || (Platform.Version as number) >= 29) return 'none';
+    if (!(await KioskModule.isDeviceOwner().catch(() => false))) return 'none';
+    const cloudUrl = await KioskModule.getBuildCloudUrl?.().catch(() => '');
+    if (!cloudUrl) return 'scan';
+    const result = await this.claimProvisioning(cloudUrl, await collectDeviceInfo());
+    if (result.success) {
+      KioskModule.setDefaultLauncherMode(true).catch(() => {/* DO only */});
+      return 'enrolled';
+    }
+    return result.error === 'Cannot reach server' ? 'retry' : 'scan';
+  }
+
+  /**
+   * Enrol from a scanned code, the fallback when neither the token nor a
+   * download match worked. Accepts the provisioning QR itself.
+   */
+  async enrollFromCode(raw: string): Promise<EnrollResult> {
+    const code = parseEnrollmentCode(raw);
+    if (!code?.url || !code.token) {
+      return { success: false, error: 'That is not an Ali MDM enrollment code' };
+    }
+    const result = await this.enroll(code.url, code.token, await collectDeviceInfo(), code.groupId, code.label);
+    if (result.success) {
+      await KioskModule.clearPendingCloudEnrollment?.().catch(() => {});
+      if (await KioskModule.isDeviceOwner().catch(() => false)) {
+        KioskModule.setDefaultLauncherMode(true).catch(() => {/* DO only */});
+      }
+    }
+    return result;
   }
 
   // ─── Unenrollment ────────────────────────────────────────────────────────────

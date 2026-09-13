@@ -1052,6 +1052,12 @@ class KioskModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         return null
     }
 
+    /** The cloud this build was made for, or "" (see CLOUD_URL in build.gradle). */
+    @ReactMethod
+    fun getBuildCloudUrl(promise: Promise) {
+        promise.resolve(BuildConfig.CLOUD_URL.trim().trimEnd('/'))
+    }
+
     /** The hardware serial for the heartbeat, or "" when unavailable. */
     @ReactMethod
     fun getHardwareSerial(promise: Promise) {

@@ -16,9 +16,11 @@ interface QrScannerModalProps {
   visible: boolean;
   onClose: () => void;
   onScanned: (value: string) => void;
+  /** Replaces the default instruction under the frame. */
+  hint?: string;
 }
 
-const QrScannerModal: React.FC<QrScannerModalProps> = ({ visible, onClose, onScanned }) => {
+const QrScannerModal: React.FC<QrScannerModalProps> = ({ visible, onClose, onScanned, hint }) => {
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('back');
   // Guard so a single QR isn't reported repeatedly across frames.
@@ -71,7 +73,7 @@ const QrScannerModal: React.FC<QrScannerModalProps> = ({ visible, onClose, onSca
         <View style={styles.overlay} pointerEvents="none">
           <View style={styles.frame} />
           <Text style={styles.hint}>
-            Point the camera at the enrollment QR code on the cloud dashboard
+            {hint ?? 'Point the camera at the enrollment QR code on the cloud dashboard'}
           </Text>
         </View>
 

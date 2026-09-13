@@ -298,6 +298,22 @@ func migrate(db *sql.DB) error {
 		last_error TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL
 	);
+	-- One row per generated enrolment QR, and one per complete download of
+	-- the APK that QR points at. See store/provision.go.
+	CREATE TABLE IF NOT EXISTS provision_claims(
+		nonce TEXT PRIMARY KEY,
+		group_id TEXT NOT NULL DEFAULT '',
+		label TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS provision_downloads(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		nonce TEXT NOT NULL,
+		ip TEXT NOT NULL,
+		user_agent TEXT NOT NULL,
+		at TEXT NOT NULL,
+		claimed_by TEXT NOT NULL DEFAULT ''
+	);
 	
 	-- Indexes for the queries that run on a schedule rather than on a click.
 	-- Without them every one of these is a full table scan, and they are the

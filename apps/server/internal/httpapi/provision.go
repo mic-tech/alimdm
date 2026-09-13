@@ -13,10 +13,18 @@ package httpapi
 // not recognised, and a wizard scanning it appears to do nothing at all.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
+	"time"
+
+	"ali-mdm/server/internal/store"
 )
 
 // env mirrors cmd/api's lookup: ALIMDM_<name> with a fallback to the older
@@ -62,6 +70,10 @@ func (s *Server) provisionQR(w http.ResponseWriter, r *http.Request) {
 		problems = append(problems, "The APK download URL is not HTTPS ("+apkURL+"). Some Android versions reject non-HTTPS provisioning downloads.")
 	}
 
+	// Each code names its own download, so a tablet whose token is lost on the
+	// way into the app can still be matched to the group and label it was
+	// generated with. The APK served is the same either way.
+	claim := store.ProvisionClaim{Nonce: randomNonce()}
 	extras := map[string]any{
 		"enroll_token": s.enrollToken,
 		"cloud_url":    strings.TrimRight(s.baseURL, "/"),
@@ -73,6 +85,7 @@ func (s *Server) provisionQR(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		extras["group_id"] = g
+		claim.GroupID = g
 	}
 	// Naming the tablet as it provisions. One code carries one label, so a
 	// per-tablet name means generating a code per tablet; a shared code simply
@@ -82,11 +95,17 @@ func (s *Server) provisionQR(w http.ResponseWriter, r *http.Request) {
 			l = l[:64]
 		}
 		extras["device_label"] = l
+		claim.Label = l
 	}
+	if err := s.st.CreateProvisionClaim(claim); err != nil {
+		http.Error(w, "could not record the code", http.StatusInternalServerError)
+		return
+	}
+	downloadURL := apkURL + "?claim=" + claim.Nonce
 
 	payload := map[string]any{
 		"android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME":            "com.alimdm/.DeviceAdminReceiver",
-		"android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION": apkURL,
+		"android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION": downloadURL,
 		"android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM":        checksum,
 		"android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE":                    extras,
 		// These tablets hold nothing at provisioning time, and requiring
@@ -126,4 +145,73 @@ func (s *Server) provisionQR(w http.ResponseWriter, r *http.Request) {
 		// nothing on screen to suggest it.
 		"build": staged,
 	})
+}
+
+// provisionClaimWindow is how long after its download a tablet can claim it.
+// Provisioning, the rest of the setup wizard and the app's first start take a
+// few minutes; anything much longer only widens who else could claim it.
+const provisionClaimWindow = 20 * time.Minute
+
+func randomNonce() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("randomNonce: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// clientIP is the address a request came from. Behind the reverse proxy the
+// TCP peer is the proxy, on loopback or a private network, and the client is
+// the last X-Forwarded-For entry — the one the proxy itself appended. A peer
+// on a public address is the client, whatever headers it sends.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peer := net.ParseIP(host)
+	if peer != nil && (peer.IsLoopback() || peer.IsPrivate()) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if ip := net.ParseIP(strings.TrimSpace(parts[len(parts)-1])); ip != nil {
+				return ip.String()
+			}
+		}
+		if ip := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); ip != nil {
+			return ip.String()
+		}
+	}
+	return host
+}
+
+// provisionClaim enrols a Device Owner tablet that has no token, by matching
+// it to the QR download it was provisioned from: same public IP, same model
+// and Android version, within provisionClaimWindow. It never returns the
+// enrolment token, only this device's own credentials.
+func (s *Server) provisionClaim(w http.ResponseWriter, r *http.Request) {
+	var req enrollRequest
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	model := deviceInfoString(req.DeviceInfo, "model")
+	version := deviceInfoString(req.DeviceInfo, "android_version")
+	id := enrollDeviceID(req.DeviceInfo)
+	ip := clientIP(r)
+	claim, err := s.st.ClaimProvisionDownload(ip, model, version, id, provisionClaimWindow)
+	switch {
+	case errors.Is(err, store.ErrAmbiguousProvision):
+		http.Error(w, "more than one enrolment code was downloaded from this network for this model; scan the code instead", http.StatusConflict)
+		return
+	case err != nil:
+		if !errors.Is(err, store.ErrNoProvisionMatch) {
+			log.Printf("provision claim: %v", err)
+		}
+		http.Error(w, "no recent enrolment download matches this device; scan the code instead", http.StatusNotFound)
+		return
+	}
+	req.Token = ""
+	req.GroupID = claim.GroupID
+	req.DeviceLabel = claim.Label
+	s.completeEnroll(w, req, id, " \u2014 matched to the QR it was provisioned from, as its token never reached the app")
 }

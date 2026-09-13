@@ -26,6 +26,22 @@ The signed release APK lands at:
 apps/android/android/app/build/outputs/apk/release/app-release.apk
 ```
 
+### Your server's address
+
+Tell the build which server it belongs to, once, in `~/.gradle/gradle.properties`:
+
+```
+cloudUrl=https://cloud.yourdomain.com
+```
+
+It is used in one situation only. Some pre-Android 10 tablets (the Lenovo
+TB-X304F on 8.1, for one) finish QR setup with Ali MDM installed as Device
+Owner but throw away the enrollment token the QR carried. With `cloudUrl` set,
+the app asks that server to match it to the QR download it was set up from and
+enrolls with that QR's group and label. Without it — or when no download
+matches — the app opens its camera on first start so you can scan the same QR
+again.
+
 ### Signing
 
 `assembleRelease` reads `apps/android/android/keystore.properties`, which names

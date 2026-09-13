@@ -169,6 +169,9 @@ func (s *Server) routes() *http.ServeMux {
 	// APK from here while scanning the QR. Open (no auth) — it runs before the
 	// device has an API key. 404 until a build is staged on the App update page.
 	mux.HandleFunc("GET /api/v1/provision/apk", s.provisionAPKHandler)
+	// For a tablet whose QR token never reached the app (see store/provision.go).
+	// Open for the same reason: it has no credentials yet.
+	mux.HandleFunc("POST /api/v1/provision/claim", s.provisionClaim)
 	// QR payload for setup-wizard provisioning (operator-only: it carries the
 	// enrolment token).
 	mux.HandleFunc("GET /api/v1/provision/qr", s.requireOperator(s.provisionQR))
@@ -417,16 +420,24 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid enrollment token", http.StatusUnauthorized)
 		return
 	}
-	strVal := func(v any) string {
-		if v == nil {
-			return ""
-		}
-		if s, ok := v.(string); ok {
-			return s
-		}
-		return fmt.Sprintf("%v", v)
+	s.completeEnroll(w, req, enrollDeviceID(req.DeviceInfo), "")
+}
+
+// deviceInfoString reads one field of an enrolment's device_info.
+func deviceInfoString(info map[string]any, key string) string {
+	v := info[key]
+	if v == nil {
+		return ""
 	}
-	id := strVal(req.DeviceInfo["serial_number"])
+	if s, ok := v.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// enrollDeviceID is the id a tablet enrols under: the identifier it reports.
+func enrollDeviceID(info map[string]any) string {
+	id := deviceInfoString(info, "serial_number")
 	if id == "" {
 		// Never derive the id from the enrolment token: a fleet shares one
 		// token, so every tablet would land on the same device id and each
@@ -436,6 +447,13 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		// better than two tablets silently sharing one.
 		id = "device-" + randomID()
 	}
+	return id
+}
+
+// completeEnroll creates the device once its right to enrol is established,
+// by the token or by a claimed provisioning download. via, when set, is
+// appended to the feed entry to say which.
+func (s *Server) completeEnroll(w http.ResponseWriter, req enrollRequest, id, via string) {
 	key, _ := auth.GenerateAPIKey()
 	now := time.Now().UTC().Format(time.RFC3339)
 	// Enroll into the requested group if it exists, else "default".
@@ -485,6 +503,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	case req.GroupID == "" && label == "":
 		summary += " \u2014 it asked for no group and no label"
 	}
+	summary += via
 	s.recordAs("device", "device_enrolled", sev, id, summary)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -925,7 +944,14 @@ func (s *Server) provisionAPKHandler(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
 	w.Header().Set("Content-Disposition", `attachment; filename="alimdm.apk"`)
-	io.Copy(w, f)
+	n, err := io.Copy(w, f)
+	// Only a whole download can have become an installed tablet; the download
+	// manager's interrupted attempts would otherwise leave claimable rows.
+	if nonce := r.URL.Query().Get("claim"); nonce != "" && err == nil {
+		if rel, rerr := s.st.GetAgentRelease(); rerr == nil && n == rel.Size {
+			_ = s.st.RecordProvisionDownload(nonce, clientIP(r), r.UserAgent())
+		}
+	}
 }
 
 // ── Operator console ─────────────────────────────────────────────────────────
@@ -992,9 +1018,9 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		Battery       int    `json:"battery"`
 		// Only meaningful while the device is checking in: a tablet that went
 		// offline on charge keeps the last value it sent.
-		Charging      bool   `json:"charging"`
-		AndroidVer    string `json:"android_ver"`
-		Model         string `json:"model"`
+		Charging   bool   `json:"charging"`
+		AndroidVer string `json:"android_ver"`
+		Model      string `json:"model"`
 		// What the tablet says it is running, and whether that matches the
 		// build that has been staged for the fleet. Reporting only the rollout
 		// status hid a tablet sitting on an old build with its update recorded

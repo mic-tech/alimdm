@@ -20,6 +20,8 @@ interface KioskModuleInterface {
   getDeviceIdentifier(): Promise<string>;
   /** Hardware serial, or "" when this device will not give it up. */
   getHardwareSerial(): Promise<string>;
+  /** The cloud URL baked into this build, or "". */
+  getBuildCloudUrl(): Promise<string>;
   setScreenLockCompatMode(enabled: boolean): Promise<boolean>;
   // #201 — Block/unblock the factory reset option in system Settings (Device Owner user restriction)
   setFactoryResetBlocked(blocked: boolean): Promise<boolean>;
