@@ -1577,7 +1577,7 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
             <Fact label="Serial number">
               {d.serial
                 ? <span className="mono">{d.serial}</span>
-                : <span className="subtle">Not reported — needs Ali MDM 1.2.62 or later</span>}
+                : <span className="subtle" title="Tablets report their serial from Ali MDM 1.2.62">Needs 1.2.62</span>}
             </Fact>
             <Fact label="Ali MDM">
               {!d.app_version_code ? "—" : d.stale ? (
