@@ -2493,6 +2493,14 @@ function QrEnrollCard({ onErr }) {
   const [info, setInfo] = useState(null);
   const [png, setPng] = useState("");
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState("");
+
+  function copy(text, key) {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied(key);
+      setTimeout(() => setCopied(""), 1500);
+    }).catch(() => onErr("Copy failed — select the text manually"));
+  }
 
   useEffect(() => { api.listGroups().then(setGroups).catch(() => {/* optional */}); }, []);
   // Any change to what the QR would encode invalidates the one on screen.
@@ -2582,6 +2590,29 @@ function QrEnrollCard({ onErr }) {
             </Alert>
             <img src={png} width="320" height="320" alt="Provisioning QR code"
               style={{ background: "#fff", padding: 8, borderRadius: 8 }} />
+            {/* For when a scan does not take: the same credentials, typed into
+                Ali MDM → Settings → Advanced → Cloud Management. */}
+            <div className="field-grid" style={{ width: "100%" }}>
+              {[["qr-manual-token", "Enrollment token", info.enroll_token, "token"],
+                ["qr-manual-url", "Cloud URL", info.cloud_url, "url"]].map(([id, name, value, key]) => (
+                <div className="form-row" key={key}>
+                  <label className="form-label" htmlFor={id}>{name}</label>
+                  <div className="form-control">
+                    <input id={id} readOnly value={value} className="mono"
+                      onFocus={(e) => e.target.select()} style={{ maxWidth: 380 }} />
+                    <button className="btn outline" onClick={() => copy(value, key)}>
+                      {copied === key ? <IconCheck /> : <IconCopy />}
+                      {copied === key ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="small subtle" style={{ margin: 0 }}>
+              If the scan does not take, enter these in Ali MDM under Settings → Advanced → Cloud
+              Management. That enrolls the device but does not make Ali MDM its Device Owner, and
+              the group and label above are not carried — set those on the device page afterwards.
+            </p>
             <div className="small subtle">
               {/* Which build a tablet scanning this will end up on. It is the
                   release staged on the App update page, so it cannot drift

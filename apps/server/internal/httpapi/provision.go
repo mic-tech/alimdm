@@ -113,8 +113,13 @@ func (s *Server) provisionQR(w http.ResponseWriter, r *http.Request) {
 		"payload":  string(encoded),
 		"apk_url":  apkURL,
 		"checksum": checksum,
-		"ready":    len(problems) == 0,
-		"problems": problems,
+		// Shown beside the QR for typing into Settings → Advanced when a scan
+		// does not take. Both are already in the payload, so this reveals
+		// nothing the QR on the same screen does not.
+		"enroll_token": s.enrollToken,
+		"cloud_url":    strings.TrimRight(s.baseURL, "/"),
+		"ready":        len(problems) == 0,
+		"problems":     problems,
 		// What a tablet scanning this will actually install. Worth saying out
 		// loud: it used to be a file on the server nobody had touched in days,
 		// so a new tablet could arrive nine versions behind the fleet with

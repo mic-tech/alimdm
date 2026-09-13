@@ -64,3 +64,18 @@ func TestProvisionQRCarriesTheGroup(t *testing.T) {
 		t.Errorf("group_id = %v, want default", got)
 	}
 }
+
+// The token and URL are returned alongside the QR for manual entry, and have
+// to be the ones the QR itself carries or typing them in enrols nowhere.
+func TestProvisionQRReturnsTheTokenForManualEntry(t *testing.T) {
+	e := newTestEnv(t)
+	tok := e.login("admin@x.com", "adminpassword")
+	_, body := e.do("GET", "/api/v1/provision/qr", tok, nil)
+	extras := qrExtras(t, body)
+	if body["enroll_token"] == "" || body["enroll_token"] != extras["enroll_token"] {
+		t.Errorf("enroll_token = %v, want the QR's %v", body["enroll_token"], extras["enroll_token"])
+	}
+	if body["cloud_url"] != extras["cloud_url"] {
+		t.Errorf("cloud_url = %v, want the QR's %v", body["cloud_url"], extras["cloud_url"])
+	}
+}
