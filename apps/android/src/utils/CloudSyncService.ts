@@ -259,6 +259,8 @@ class CloudSyncServiceClass {
             model: status.device.model,
             manufacturer: status.device.manufacturer,
             android_version: status.device.androidVersion,
+            // Not the device id, which for most of the fleet is ANDROID_ID.
+            serial_number: await KioskModule.getHardwareSerial().catch(() => ''),
             free_storage_mb: status.device.freeStorageMb,
             free_memory_mb: status.device.freeMemoryMb,
             uptime_seconds: status.device.uptime,

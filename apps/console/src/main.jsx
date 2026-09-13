@@ -1574,6 +1574,11 @@ function DeviceDetail({ deviceId, me, onErr, onTitle, navigate }) {
             </Fact>
             <Fact label="Android">{d.android_ver || "—"}</Fact>
             <Fact label="Model">{d.model || "—"}</Fact>
+            <Fact label="Serial number">
+              {d.serial
+                ? <span className="mono">{d.serial}</span>
+                : <span className="subtle">Not reported — needs Ali MDM 1.2.62 or later</span>}
+            </Fact>
             <Fact label="Ali MDM">
               {!d.app_version_code ? "—" : d.stale ? (
                 <span className="badge warning"

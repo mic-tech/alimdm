@@ -568,6 +568,7 @@ type heartbeatRequest struct {
 	System struct {
 		AndroidVersion string `json:"android_version"`
 		Model          string `json:"model"`
+		SerialNumber   string `json:"serial_number"`
 		// The Ali MDM build the tablet is actually running. Absent from builds
 		// older than v57, where the last known value is kept rather than
 		// overwritten with nothing.
@@ -599,6 +600,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	_ = s.st.UpdateHeartbeat(dev.ID, group.ConfigHash, req.Battery.Level, 0, req.Battery.Charging,
 		req.System.AndroidVersion, req.System.Model, lastSeen)
 	_ = s.st.SetDeviceAppVersion(dev.ID, req.System.AppVersionCode, req.System.AppVersionName)
+	_ = s.st.SetDeviceSerial(dev.ID, strings.TrimSpace(req.System.SerialNumber))
 
 	resp := map[string]any{
 		"status":           "ok",
@@ -1100,6 +1102,7 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 		"charging":         d.Charging,
 		"android_ver":      d.AndroidVer,
 		"model":            d.Model,
+		"serial":           d.Serial,
 		"app_version_code": d.AppVersionCode,
 		"app_version_name": d.AppVersionName,
 		"staged_version":   stagedName,

@@ -1009,6 +1009,56 @@ class KioskModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     }
 
     /**
+     * The hardware serial — what is printed on the box and what `adb devices`
+     * shows — or null when this device will not give it up.
+     *
+     * Build.getSerial() needs READ_PHONE_STATE on every version that has it, and
+     * from API 29 only a Device Owner holding that permission may call it at all.
+     * The permission was never declared, so every read threw and every tablet in
+     * the fleet was enrolled under its ANDROID_ID instead. A Device Owner grants
+     * it to itself here, silently; anything else gets null rather than a prompt
+     * asking a student about phone calls.
+     */
+    private fun readHardwareSerial(): String? {
+        val ctx = reactApplicationContext
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val dpm = ctx.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                if (ctx.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE)
+                    != PackageManager.PERMISSION_GRANTED &&
+                    dpm.isDeviceOwnerApp(ctx.packageName)
+                ) {
+                    dpm.setPermissionGrantState(
+                        ComponentName(ctx, DeviceAdminReceiver::class.java),
+                        ctx.packageName,
+                        android.Manifest.permission.READ_PHONE_STATE,
+                        DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED,
+                    )
+                }
+            }
+            val serial = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Build.getSerial()
+            } else {
+                @Suppress("DEPRECATION")
+                Build.SERIAL
+            }
+            if (!serial.isNullOrBlank() && !serial.equals(Build.UNKNOWN, ignoreCase = true)) {
+                return serial
+            }
+        } catch (e: Exception) {
+            // SecurityException when not Device Owner, or the grant was refused.
+            android.util.Log.w("KioskModule", "Serial unavailable: ${e.message}")
+        }
+        return null
+    }
+
+    /** The hardware serial for the heartbeat, or "" when unavailable. */
+    @ReactMethod
+    fun getHardwareSerial(promise: Promise) {
+        promise.resolve(readHardwareSerial() ?: "")
+    }
+
+    /**
      * A stable identifier for this tablet, used as its device id in the cloud.
      *
      * This must be unique per physical device: the server falls back to hashing
@@ -1028,23 +1078,9 @@ class KioskModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
     @ReactMethod
     fun getDeviceIdentifier(promise: Promise) {
         val ctx = reactApplicationContext
-        try {
-            val serial = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Build.getSerial()
-            } else {
-                @Suppress("DEPRECATION")
-                Build.SERIAL
-            }
-            if (!serial.isNullOrBlank() &&
-                !serial.equals(Build.UNKNOWN, ignoreCase = true) &&
-                !serial.equals("unknown", ignoreCase = true)
-            ) {
-                promise.resolve(serial)
-                return
-            }
-        } catch (e: Exception) {
-            // SecurityException when not Device Owner — fall through.
-            android.util.Log.w("KioskModule", "Serial unavailable: ${e.message}")
+        readHardwareSerial()?.let {
+            promise.resolve(it)
+            return
         }
         try {
             val androidId = Settings.Secure.getString(

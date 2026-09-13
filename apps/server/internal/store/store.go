@@ -32,9 +32,14 @@ type Device struct {
 	Wifi          int
 	// Charging is only meaningful while the device is checking in: a tablet
 	// that went offline on charge keeps the last value it sent.
-	Charging bool
-	AndroidVer    string
-	Model         string
+	Charging   bool
+	AndroidVer string
+	Model      string
+	// The hardware serial, as printed on the box and by `adb devices`. Not the
+	// id: tablets enrolled before the agent could read it are keyed by
+	// ANDROID_ID, and an id cannot change under a device's API key. Empty
+	// until a build that reports it checks in.
+	Serial string
 	// The Ali MDM build actually running on the tablet, reported on every
 	// heartbeat. Without it the console can only show what a device was *told*
 	// to install — which is how a tablet sat on an old build for half an hour
@@ -387,6 +392,7 @@ func migrate(db *sql.DB) error {
 	// plug a trolley in.
 	for _, c := range []struct{ name, ddl string }{
 		{"charging", `ALTER TABLE devices ADD COLUMN charging INTEGER NOT NULL DEFAULT 0`},
+		{"serial", `ALTER TABLE devices ADD COLUMN serial TEXT NOT NULL DEFAULT ''`},
 	} {
 		has, err := hasColumn(db, "devices", c.name)
 		if err != nil {
@@ -453,24 +459,24 @@ func hasColumn(db *sql.DB, table, col string) (bool, error) {
 
 func (s *Store) CreateDevice(d *Device) error {
 	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO devices(id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,charging,android_ver,model,app_version_code,app_version_name,last_seen,created_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT OR REPLACE INTO devices(id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,charging,android_ver,model,serial,app_version_code,app_version_name,last_seen,created_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		d.ID, d.Name, d.GroupID, d.APIKeyHash, d.LastAppliedHash, d.ConfigVersion,
-		d.Battery, d.Wifi, d.Charging, d.AndroidVer, d.Model, d.AppVersionCode, d.AppVersionName, d.LastSeen, d.CreatedAt)
+		d.Battery, d.Wifi, d.Charging, d.AndroidVer, d.Model, d.Serial, d.AppVersionCode, d.AppVersionName, d.LastSeen, d.CreatedAt)
 	return err
 }
 
 func (s *Store) GetDevice(id string) (*Device, error) {
-	row := s.db.QueryRow(`SELECT id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,charging,android_ver,model,app_version_code,app_version_name,last_seen,created_at FROM devices WHERE id=?`, id)
+	row := s.db.QueryRow(`SELECT id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,charging,android_ver,model,serial,app_version_code,app_version_name,last_seen,created_at FROM devices WHERE id=?`, id)
 	var d Device
-	if err := row.Scan(&d.ID, &d.Name, &d.GroupID, &d.APIKeyHash, &d.LastAppliedHash, &d.ConfigVersion, &d.Battery, &d.Wifi, &d.Charging, &d.AndroidVer, &d.Model, &d.AppVersionCode, &d.AppVersionName, &d.LastSeen, &d.CreatedAt); err != nil {
+	if err := row.Scan(&d.ID, &d.Name, &d.GroupID, &d.APIKeyHash, &d.LastAppliedHash, &d.ConfigVersion, &d.Battery, &d.Wifi, &d.Charging, &d.AndroidVer, &d.Model, &d.Serial, &d.AppVersionCode, &d.AppVersionName, &d.LastSeen, &d.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &d, nil
 }
 
 func (s *Store) ListDevices() ([]Device, error) {
-	rows, err := s.db.Query(`SELECT id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,charging,android_ver,model,app_version_code,app_version_name,last_seen,created_at FROM devices ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id,name,group_id,api_key_hash,last_applied_hash,config_version,battery,wifi,charging,android_ver,model,serial,app_version_code,app_version_name,last_seen,created_at FROM devices ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -478,7 +484,7 @@ func (s *Store) ListDevices() ([]Device, error) {
 	var out []Device
 	for rows.Next() {
 		var d Device
-		if err := rows.Scan(&d.ID, &d.Name, &d.GroupID, &d.APIKeyHash, &d.LastAppliedHash, &d.ConfigVersion, &d.Battery, &d.Wifi, &d.Charging, &d.AndroidVer, &d.Model, &d.AppVersionCode, &d.AppVersionName, &d.LastSeen, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.GroupID, &d.APIKeyHash, &d.LastAppliedHash, &d.ConfigVersion, &d.Battery, &d.Wifi, &d.Charging, &d.AndroidVer, &d.Model, &d.Serial, &d.AppVersionCode, &d.AppVersionName, &d.LastSeen, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -499,6 +505,17 @@ func (s *Store) UpdateHeartbeat(id, appliedHash string, battery, wifi int, charg
 func (s *Store) SetDeviceAppVersion(id string, code int, name string) error {
 	_, err := s.db.Exec(
 		`UPDATE devices SET app_version_code=?, app_version_name=? WHERE id=?`, code, name, id)
+	return err
+}
+
+// SetDeviceSerial records the hardware serial a tablet reports. An empty value
+// is ignored rather than stored: builds before 1.2.62 send none, and a tablet
+// that has told us its serial once has not stopped having one.
+func (s *Store) SetDeviceSerial(id, serial string) error {
+	if serial == "" {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE devices SET serial=? WHERE id=?`, serial, id)
 	return err
 }
 

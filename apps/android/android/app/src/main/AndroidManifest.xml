@@ -49,6 +49,9 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!-- Permissions pour la Status Bar -->
+    <!-- Only for Build.getSerial(), so the console can show the serial on the
+         box. Granted by the app to itself as Device Owner; never prompted for. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
