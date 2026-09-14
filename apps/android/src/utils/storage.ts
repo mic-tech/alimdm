@@ -195,6 +195,7 @@ export const KEYS = {
   // The command currently being executed, persisted before dispatch so a command that
   // kills the process (reboot, self-update) can still be reported after the restart.
   CLOUD_INFLIGHT_COMMAND: '@cloud_inflight_command',
+  CLOUD_INFLIGHT_INSTALL: '@cloud_inflight_install',
   // Mirrors "this device is enrolled" as a plain boolean, because the credentials
   // themselves live encrypted in the Keychain and KioskWatchdogService reads its flags
   // straight out of the AsyncStorage SQLite file, with no JS bridge available.
@@ -2947,6 +2948,22 @@ export const StorageService = {
       if (cmd === null) await AsyncStorage.removeItem(KEYS.CLOUD_INFLIGHT_COMMAND);
       else await AsyncStorage.setItem(KEYS.CLOUD_INFLIGHT_COMMAND, JSON.stringify(cmd));
     } catch (error) { console.error('Error saving in-flight cloud command:', error); }
+  },
+
+  // Installs run beside commands, so each keeps its own in-flight marker.
+  getInflightInstall: async (): Promise<Record<string, unknown> | null> => {
+    try {
+      const raw = await AsyncStorage.getItem(KEYS.CLOUD_INFLIGHT_INSTALL);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return isPlainObject(parsed) ? parsed : null;
+    } catch { return null; }
+  },
+
+  saveInflightInstall: async (cmd: Record<string, unknown> | null): Promise<void> => {
+    try {
+      if (cmd === null) await AsyncStorage.removeItem(KEYS.CLOUD_INFLIGHT_INSTALL);
+      else await AsyncStorage.setItem(KEYS.CLOUD_INFLIGHT_INSTALL, JSON.stringify(cmd));
+    } catch (error) { console.error('Error saving in-flight cloud install:', error); }
   },
 
   // ============ CONFIG EXPORT / IMPORT ============

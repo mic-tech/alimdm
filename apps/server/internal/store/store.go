@@ -422,6 +422,10 @@ func migrate(db *sql.DB) error {
 	}
 	for _, c := range []struct{ name, ddl string }{
 		{"last_error", `ALTER TABLE apk_updates ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`},
+		// When the tablet took the install. Rows already sent when the column
+		// arrives are stamped with that moment: some of them are installs still
+		// downloading, which an empty value would have judged stale at once.
+		{"sent_at", `ALTER TABLE apk_updates ADD COLUMN sent_at TEXT NOT NULL DEFAULT ''`},
 	} {
 		has, err := hasColumn(db, "apk_updates", c.name)
 		if err != nil {
@@ -430,6 +434,11 @@ func migrate(db *sql.DB) error {
 		if !has {
 			if _, err := db.Exec(c.ddl); err != nil {
 				return err
+			}
+			if c.name == "sent_at" {
+				if _, err := db.Exec(`UPDATE apk_updates SET sent_at=? WHERE status='sent'`, nowISO()); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -853,7 +862,7 @@ func (s *Store) ClaimPendingAPKUpdates(deviceID string) ([]APKUpdate, error) {
 		out = append(out, u)
 	}
 	for _, u := range out {
-		s.db.Exec(`UPDATE apk_updates SET status='sent' WHERE command_id=?`, u.CommandID)
+		s.db.Exec(`UPDATE apk_updates SET status='sent', sent_at=? WHERE command_id=?`, nowISO(), u.CommandID)
 	}
 	return out, nil
 }

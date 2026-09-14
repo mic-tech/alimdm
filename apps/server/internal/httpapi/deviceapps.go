@@ -15,8 +15,10 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"ali-mdm/server/internal/store"
 )
@@ -121,5 +123,28 @@ func (s *Server) reportDeviceApps(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not store the inventory", http.StatusInternalServerError)
 		return
 	}
+	s.settleStaleInstalls(dev)
 	writeJSON(w, map[string]any{"stored": len(req.Entries)})
+}
+
+// settleStaleInstalls closes installs the device took and never reported on,
+// using its app list, and asks for a fresh list when the one on file is too
+// old to judge them. See store/staleinstalls.go.
+func (s *Server) settleStaleInstalls(dev *store.Device) {
+	now := time.Now()
+	settled, err := s.st.SettleStaleInstalls(dev.ID, now)
+	if err != nil {
+		log.Printf("settle stale installs for %s: %v", dev.ID, err)
+	}
+	for _, st := range settled {
+		// Rows from before results were kept are cleanup, not news.
+		if st.Legacy || st.Installed {
+			continue
+		}
+		s.recordAs("system", "app_install_failed", store.EventWarn, dev.ID,
+			deviceLabel(dev.ID, dev.Name)+" never reported installing "+st.Package+", and its app list does not have it")
+	}
+	if s.st.StaleInstallsNeedInventory(dev.ID, now) && !s.st.HasRecentOpenCommand(dev.ID, "list_apps", now) {
+		_ = s.queueDeviceCommand(dev.ID, "list_apps", nil)
+	}
 }

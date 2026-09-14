@@ -115,6 +115,11 @@ class CloudCommandServiceClass {
   // Guards against re-dispatching the same command if two polls overlap. The
   // server already only returns 'pending' commands, so this is belt-and-braces.
   private processed = new Set<string>();
+  // Installs run on their own track. A 770MB split set took most of an hour on
+  // a Lenovo TB-X304F, and while it ran inside the poll no screenshot, live
+  // view or log request reached the tablet at all.
+  private isInstalling = false;
+  private installsProcessed = new Set<string>();
 
   /**
    * Fetch + execute any pending commands and APK updates. Safe to call on every
@@ -128,8 +133,9 @@ class CloudCommandServiceClass {
     this.isPolling = true;
     try {
       await this.settleOutstanding(c);
-      // APK updates first — these are the slowest, and ordering doesn't matter.
-      await this.pollUpdates(c);
+      // Not awaited: an install can take many heartbeats, and commands must not
+      // wait behind it. Its own guard keeps one install pass at a time.
+      this.runInstalls(c);
       await this.pollCommands(c);
     } catch (error) {
       console.error('[CloudCommand] Poll error:', error);
@@ -201,13 +207,25 @@ class CloudCommandServiceClass {
    * reported as a success; anything else was interrupted and says so honestly.
    */
   private async reportInflightCommand(c: CloudCredentials): Promise<void> {
+    // An install marker belongs to this process while an install pass is
+    // running; only a leftover from a previous process is reportable.
+    if (!this.isInstalling) {
+      const install = await StorageService.getInflightInstall();
+      if (install) {
+        await StorageService.saveInflightInstall(null);
+        await this.reportInterrupted(c, install as InflightCommand);
+      }
+    }
     const raw = await StorageService.getInflightCommand();
     if (!raw) return;
     await StorageService.saveInflightCommand(null);
+    await this.reportInterrupted(c, raw as InflightCommand);
+  }
 
-    const inflight = raw as InflightCommand;
+  private async reportInterrupted(c: CloudCredentials, inflight: InflightCommand): Promise<void> {
     if (!inflight.commandId) return;
     this.processed.add(inflight.commandId);
+    this.installsProcessed.add(inflight.commandId);
 
     await this.reportResult(
       c,
@@ -430,6 +448,19 @@ class CloudCommandServiceClass {
 
   // ─── APK update channel (install_apk) ────────────────────────────────────────
 
+  private async runInstalls(c: CloudCredentials): Promise<void> {
+    if (this.isInstalling) return;
+    this.isInstalling = true;
+    try {
+      await this.pollUpdates(c);
+    } catch (error) {
+      console.error('[CloudCommand] Install poll error:', error);
+    } finally {
+      this.isInstalling = false;
+      if (this.installsProcessed.size > 200) this.installsProcessed.clear();
+    }
+  }
+
   private async pollUpdates(c: CloudCredentials): Promise<void> {
     const res = await fetch(`${c.cloudUrl}/api/v1/devices/${c.deviceId}/updates/`, {
       method: 'GET',
@@ -440,12 +471,12 @@ class CloudCommandServiceClass {
     const updates: CloudUpdate[] = (await res.json()) ?? [];
 
     for (const u of updates) {
-      if (!u.command_id || this.processed.has(u.command_id)) continue;
-      this.processed.add(u.command_id);
+      if (!u.command_id || this.installsProcessed.has(u.command_id)) continue;
+      this.installsProcessed.add(u.command_id);
 
       // A self-update replaces this process mid-install, so the marker is what
       // lets the result be reported once the new version comes up.
-      await StorageService.saveInflightCommand({
+      await StorageService.saveInflightInstall({
         commandId: u.command_id,
         type: 'install_apk',
         killsProcess: u.package_name === OWN_PACKAGE,
@@ -467,7 +498,7 @@ class CloudCommandServiceClass {
               c.apiKey,
               u.package_name ?? null,
             );
-        await StorageService.saveInflightCommand(null);
+        await StorageService.saveInflightInstall(null);
         await this.reportResult(c, u.command_id, {
           ok: true,
           result: {
@@ -477,7 +508,7 @@ class CloudCommandServiceClass {
           },
         });
       } catch (error: any) {
-        await StorageService.saveInflightCommand(null);
+        await StorageService.saveInflightInstall(null);
         await this.reportResult(c, u.command_id, {
           ok: false,
           error: error?.message ?? String(error),
